@@ -76,12 +76,24 @@ a distinct persona; a cautious first-timer and a min-maxer break different
 things. Cheap models confabulate, so the evaluator's verification pass is
 load-bearing, not ceremony.
 
+## Git
+
+**One branch. Linear history. No merge commits.** The repo is configured for
+it - `merge.ff = only`, `pull.rebase = true`, and a `pre-merge-commit` hook in
+`.githooks` that refuses outright, because an explicit `--no-ff` overrides
+config but not a hook. If you do use a branch, land it with:
+
+    git rebase main <branch> && git checkout main && git merge --ff-only <branch>
+
+`core.hooksPath` is set to `.githooks`, so the hook is version-controlled and
+survives a fresh clone as soon as that config is set again.
+
 ## Definition of done for any change
 
     export PATH="$HOME/.cargo/bin:$PATH"
     cargo fmt
     cargo clippy --all-targets -- -D warnings   # must print nothing
-    cargo test                                  # 283 tests today
+    cargo test                                  # 287 tests today
 
 Lints are deliberately brutal: `pedantic` + `nursery` + `cargo` + `style`,
 `unsafe_code = "forbid"`. Every `allow` in `Cargo.toml` carries a written
