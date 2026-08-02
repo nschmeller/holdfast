@@ -10,7 +10,10 @@ use bevy::prelude::*;
 
 use crate::arena::{ArenaBounds, Gust, ObstacleField};
 use crate::art::{GameArt, Glow};
-use crate::common::*;
+use crate::common::{
+    Altitude, Body, DamageEvent, DamageSource, DeathEvent, Doomed, Health, RunEntity, VisualScale,
+    to_world,
+};
 use crate::environments::EnvKind;
 use crate::palette as pal;
 use crate::player::Player;
@@ -35,7 +38,7 @@ pub enum EnemyKind {
 }
 
 impl EnemyKind {
-    pub const ALL: [EnemyKind; 12] = [
+    pub const ALL: [Self; 12] = [
         Self::DustBunny,
         Self::Ant,
         Self::ClipCrawler,
@@ -51,7 +54,7 @@ impl EnemyKind {
     ];
 
     /// The nine that the spawn director draws from, in unlock order.
-    pub const FODDER: [EnemyKind; 9] = [
+    pub const FODDER: [Self; 9] = [
         Self::DustBunny,
         Self::Ant,
         Self::ClipCrawler,
@@ -63,7 +66,7 @@ impl EnemyKind {
         Self::Gremlin,
     ];
 
-    pub const BOSSES: [EnemyKind; 3] = [Self::BossStapler, Self::BossHolePunch, Self::BossLamp];
+    pub const BOSSES: [Self; 3] = [Self::BossStapler, Self::BossHolePunch, Self::BossLamp];
 
     pub fn is_boss(self) -> bool {
         matches!(
@@ -144,18 +147,84 @@ impl EnemyKind {
     pub fn name(self, env: EnvKind) -> &'static str {
         const NAMES: [[&str; EnvKind::COUNT]; 12] = [
             // Desk              Forest            Rooftop            Grid                Arcane
-            ["Dust Bunny",      "Spore Puff",     "Litter Wad",      "Nanite Cluster",   "Mote Wisp"],
-            ["Sugar Ant",       "Forage Ant",     "Roach",           "Skitterbot",       "Familiar"],
-            ["Clip Crawler",    "Pincer Beetle",  "Wire Crab",       "Servo Crawler",    "Rune Scuttler"],
-            ["Staple Skitter",  "Thorn Tick",     "Rebar Tick",      "Shard Tick",       "Shard Imp"],
-            ["Crumb Blob",      "Moss Lump",      "Tar Lump",        "Slag Mass",        "Golem Spawn"],
-            ["Tack Lobber",     "Burr Slinger",   "Gravel Slinger",  "Flechette Drone",  "Hex Caster"],
-            ["Coffee Stain",    "Bog Seep",       "Oil Seep",        "Coolant Leak",     "Void Seep"],
-            ["Lamp Moth",       "Night Moth",     "Grease Moth",     "Hover Mite",       "Pixie Swarm"],
-            ["USB Gremlin",     "Hollow Sprite",  "Meter Gremlin",   "Phase Imp",        "Blink Fiend"],
-            ["THE STAPLER",     "THE SNAPJAW",    "THE CRUSHER",     "CLAMP UNIT-7",     "THE MAW GATE"],
-            ["THE HOLE PUNCH",  "THE STOMPER",    "THE PILEDRIVER",  "SIEGE FRAME",      "THE STONE WARDEN"],
-            ["THE DESK LAMP",   "THE WILL-O-WISP","THE FLOODLIGHT",  "BEACON PRIME",     "THE EYE OF DAWN"],
+            [
+                "Dust Bunny",
+                "Spore Puff",
+                "Litter Wad",
+                "Nanite Cluster",
+                "Mote Wisp",
+            ],
+            ["Sugar Ant", "Forage Ant", "Roach", "Skitterbot", "Familiar"],
+            [
+                "Clip Crawler",
+                "Pincer Beetle",
+                "Wire Crab",
+                "Servo Crawler",
+                "Rune Scuttler",
+            ],
+            [
+                "Staple Skitter",
+                "Thorn Tick",
+                "Rebar Tick",
+                "Shard Tick",
+                "Shard Imp",
+            ],
+            [
+                "Crumb Blob",
+                "Moss Lump",
+                "Tar Lump",
+                "Slag Mass",
+                "Golem Spawn",
+            ],
+            [
+                "Tack Lobber",
+                "Burr Slinger",
+                "Gravel Slinger",
+                "Flechette Drone",
+                "Hex Caster",
+            ],
+            [
+                "Coffee Stain",
+                "Bog Seep",
+                "Oil Seep",
+                "Coolant Leak",
+                "Void Seep",
+            ],
+            [
+                "Lamp Moth",
+                "Night Moth",
+                "Grease Moth",
+                "Hover Mite",
+                "Pixie Swarm",
+            ],
+            [
+                "USB Gremlin",
+                "Hollow Sprite",
+                "Meter Gremlin",
+                "Phase Imp",
+                "Blink Fiend",
+            ],
+            [
+                "THE STAPLER",
+                "THE SNAPJAW",
+                "THE CRUSHER",
+                "CLAMP UNIT-7",
+                "THE MAW GATE",
+            ],
+            [
+                "THE HOLE PUNCH",
+                "THE STOMPER",
+                "THE PILEDRIVER",
+                "SIEGE FRAME",
+                "THE STONE WARDEN",
+            ],
+            [
+                "THE DESK LAMP",
+                "THE WILL-O-WISP",
+                "THE FLOODLIGHT",
+                "BEACON PRIME",
+                "THE EYE OF DAWN",
+            ],
         ];
         NAMES[self as usize][env as usize]
     }
@@ -172,7 +241,7 @@ impl EnemyKind {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct EnemyStats {
     pub hp: f32,
     pub speed: f32,
@@ -205,7 +274,7 @@ pub enum Rank {
     Boss,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Enemy {
     pub kind: EnemyKind,
     pub rank: Rank,
@@ -224,7 +293,7 @@ pub struct Enemy {
 }
 
 /// Slow / stun effects applied by hazards and weapons.
-#[derive(Component, Default)]
+#[derive(Debug, Component, Default)]
 pub struct StatusEffects {
     pub slow: f32,
     pub slow_time: f32,
@@ -260,7 +329,7 @@ impl StatusEffects {
 }
 
 /// Marks the health bar that floats above elites and bosses.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct BossBarTarget;
 
 // -- the director -----------------------------------------------------------
@@ -268,7 +337,7 @@ pub struct BossBarTarget;
 /// Decides what spawns and when. Reads `Threat` for pressure, `RunClock` for
 /// the unlock schedule, and keeps its own budget so bursts feel authored rather
 /// than uniformly random.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct Director {
     pub spawn_accum: f32,
     pub elite_timer: f32,
@@ -296,6 +365,7 @@ impl Default for Director {
     }
 }
 
+#[derive(Debug)]
 pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
@@ -303,17 +373,16 @@ impl Plugin for EnemyPlugin {
         app.init_resource::<Director>()
             .add_systems(
                 Update,
-                (
-                    direct_spawns,
-                    enemy_think,
-                    enemy_status_tick,
-                )
+                (direct_spawns, enemy_think, enemy_status_tick)
                     .chain()
                     .in_set(GameSet::Think),
             )
             .add_systems(Update, enemy_contact.in_set(GameSet::Combat))
             .add_systems(Update, enemy_fall_off.in_set(GameSet::Resolve))
-            .add_systems(OnExit(AppState::Menu), reset_director.in_set(RunSetup::Reset));
+            .add_systems(
+                OnExit(AppState::Menu),
+                reset_director.in_set(RunSetup::Reset),
+            );
     }
 }
 
@@ -343,13 +412,13 @@ fn direct_spawns(
     if director.boss_timer <= 0.0 {
         let kind = EnemyKind::BOSSES[director.boss_index % EnemyKind::BOSSES.len()];
         director.boss_index += 1;
-        if director.boss_index % EnemyKind::BOSSES.len() == 0 {
+        if director.boss_index.is_multiple_of(EnemyKind::BOSSES.len()) {
             director.boss_cycle += 1;
         }
         // Each full rotation makes bosses meaningfully harder, which is what
         // keeps an endless run from flattening out.
         let cycle_scale = 1.0 + director.boss_cycle as f32 * 0.85;
-        let pos = spawn_point(&bounds, &obstacles, &mut rng, 2.2);
+        let pos = spawn_point(*bounds, &obstacles, &mut rng, 2.2);
         spawn_enemy(
             &mut commands,
             &art,
@@ -382,8 +451,8 @@ fn direct_spawns(
             };
             // Elites prefer to arrive near the player rather than trickling in
             // from the rim, so they read as an event.
-            let anchor = player.iter().next().map(|b| b.pos).unwrap_or(Vec2::ZERO);
-            let pos = near_point(&bounds, &obstacles, &mut rng, anchor, 9.0, 15.0, 1.0);
+            let anchor = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
+            let pos = near_point(*bounds, &obstacles, &mut rng, anchor, 9.0, 15.0, 1.0);
             spawn_enemy(
                 &mut commands,
                 &art,
@@ -411,7 +480,7 @@ fn direct_spawns(
             let Some(kind) = pick_kind(&mut rng, minutes) else {
                 continue;
             };
-            let pos = spawn_point(&bounds, &obstacles, &mut rng, kind.stats().radius);
+            let pos = spawn_point(*bounds, &obstacles, &mut rng, kind.stats().radius);
             spawn_enemy(
                 &mut commands,
                 &art,
@@ -462,12 +531,7 @@ fn pick_kind(rng: &mut Rng, minutes: f32) -> Option<EnemyKind> {
 }
 
 /// A clear point on the arena rim.
-fn spawn_point(
-    bounds: &ArenaBounds,
-    obstacles: &ObstacleField,
-    rng: &mut Rng,
-    radius: f32,
-) -> Vec2 {
+fn spawn_point(bounds: ArenaBounds, obstacles: &ObstacleField, rng: &mut Rng, radius: f32) -> Vec2 {
     for _ in 0..12 {
         let p = bounds.perimeter_point(rng.f32());
         // Pull slightly inward so spawns are not clipped by the edge test.
@@ -481,7 +545,7 @@ fn spawn_point(
 
 /// A clear point in an annulus around `anchor`.
 fn near_point(
-    bounds: &ArenaBounds,
+    bounds: ArenaBounds,
     obstacles: &ObstacleField,
     rng: &mut Rng,
     anchor: Vec2,
@@ -513,9 +577,9 @@ pub fn spawn_enemy(
     let s = kind.stats();
 
     let (hp_mult, dmg_mult, scale, xp_mult) = match rank {
-        Rank::Normal => (1.0, 1.0, 1.0, 1.0),
         Rank::Elite => (4.2, 1.5, 1.42, 5.0),
-        Rank::Boss => (1.0, 1.0, 1.0, 1.0),
+        // Bosses already carry their multipliers in their base stats.
+        Rank::Normal | Rank::Boss => (1.0, 1.0, 1.0, 1.0),
     };
 
     let hp = s.hp * power * hp_mult;
@@ -591,8 +655,11 @@ pub fn spawn_enemy(
             .spawn((
                 Mesh3d(art.ring.clone()),
                 MeshMaterial3d(art.glow(glow)),
-                Transform::from_xyz(0.0, 0.06, 0.0)
-                    .with_scale(Vec3::new(radius * 1.5, 1.0, radius * 1.5)),
+                Transform::from_xyz(0.0, 0.06, 0.0).with_scale(Vec3::new(
+                    radius * 1.5,
+                    1.0,
+                    radius * 1.5,
+                )),
                 RunEntity,
             ))
             .id();
@@ -602,12 +669,12 @@ pub fn spawn_enemy(
     id
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct RankAura {
     pub color: Color,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct EnvTint(pub Color);
 
 // -- behaviour --------------------------------------------------------------
@@ -936,7 +1003,10 @@ mod tests {
         // The dash multiplier is 2.4x and the boss charge is 2.2x; both must
         // stay survivable, which in practice means under about triple.
         let dasher = EnemyKind::StapleSkitter.stats().speed * 2.4;
-        assert!(dasher < crate::player::BASE_SPEED * 1.2, "dash hits {dasher}");
+        assert!(
+            dasher < crate::player::BASE_SPEED * 1.2,
+            "dash hits {dasher}"
+        );
         let charger = EnemyKind::BossStapler.stats().speed * 2.2;
         assert!(charger < crate::player::BASE_SPEED, "charge hits {charger}");
     }
@@ -986,7 +1056,7 @@ mod tests {
     #[test]
     fn every_archetype_is_named_in_every_world() {
         for kind in EnemyKind::ALL {
-            for env in crate::environments::EnvKind::ALL {
+            for env in EnvKind::ALL {
                 let name = kind.name(env);
                 assert!(!name.is_empty(), "{kind:?} unnamed in {env:?}");
             }
@@ -995,7 +1065,7 @@ mod tests {
 
     #[test]
     fn names_are_distinct_within_a_world() {
-        for env in crate::environments::EnvKind::ALL {
+        for env in EnvKind::ALL {
             let mut names: Vec<_> = EnemyKind::ALL.iter().map(|k| k.name(env)).collect();
             let total = names.len();
             names.sort_unstable();
@@ -1006,7 +1076,7 @@ mod tests {
 
     #[test]
     fn boss_names_read_as_bosses() {
-        for env in crate::environments::EnvKind::ALL {
+        for env in EnvKind::ALL {
             for boss in EnemyKind::BOSSES {
                 let name = boss.name(env);
                 assert_eq!(
@@ -1041,14 +1111,8 @@ mod tests {
     fn the_name_table_is_indexed_by_the_enum_order() {
         // If someone reorders EnemyKind without reordering the table, this
         // catches it: the desk names are the ones we can eyeball.
-        assert_eq!(
-            EnemyKind::DustBunny.name(crate::environments::EnvKind::Desk),
-            "Dust Bunny"
-        );
-        assert_eq!(
-            EnemyKind::BossLamp.name(crate::environments::EnvKind::Desk),
-            "THE DESK LAMP"
-        );
+        assert_eq!(EnemyKind::DustBunny.name(EnvKind::Desk), "Dust Bunny");
+        assert_eq!(EnemyKind::BossLamp.name(EnvKind::Desk), "THE DESK LAMP");
     }
 
     // -- status effects -----------------------------------------------------

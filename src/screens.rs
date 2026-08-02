@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 
 use crate::allies::Economy;
-use crate::common::*;
+use crate::common::{RunEntity, SfxEvent, format_count, format_time};
 use crate::environments::{EnvDirty, EnvKind};
 use crate::hud::text;
 use crate::onboarding::Unlocks;
@@ -31,6 +31,7 @@ struct ResearchCursor {
     row: usize,
 }
 
+#[derive(Debug)]
 pub struct ScreensPlugin;
 
 impl Plugin for ScreensPlugin {
@@ -286,20 +287,25 @@ fn menu_input(
     )>,
     mut panel: Query<&mut BorderColor, (With<EnvDetailPanel>, Without<WorldChip>)>,
     mut chips: Query<
-        (&WorldChip, &mut BackgroundColor, &mut BorderColor, &Children),
+        (
+            &WorldChip,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &Children,
+        ),
         Without<EnvDetailPanel>,
     >,
     mut chip_text: Query<&mut TextColor, (Without<EnvQuirk>, Without<EnvTitle>)>,
 ) {
-    let mut changed = false;
-    if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
+    let back = keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA);
+    let forward = keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD);
+    if back {
         *env = env.prev();
-        changed = true;
     }
-    if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
+    if forward {
         *env = env.next();
-        changed = true;
     }
+    let changed = back || forward;
 
     if changed {
         let selected = *env;
@@ -324,7 +330,11 @@ fn menu_input(
             *border = BorderColor::all(chip_border(chip.0, active));
             for child in children.iter() {
                 if let Ok(mut color) = chip_text.get_mut(child) {
-                    color.0 = if active { chip.0.accent() } else { pal::HUD_DIM };
+                    color.0 = if active {
+                        chip.0.accent()
+                    } else {
+                        pal::HUD_DIM
+                    };
                 }
             }
         }
@@ -365,41 +375,35 @@ fn build_levelup(mut commands: Commands, offer: Res<CardOffer>, mut sfx: Message
         root.spawn(text("LEVEL UP", 44.0, pal::ACCENT));
         root.spawn(text("Pick one. Press the number.", 15.0, pal::HUD_DIM));
 
-        root.spawn((
-            Node {
-                margin: UiRect::top(Val::Px(10.0)),
-                column_gap: Val::Px(18.0),
-                ..default()
-            },
-        ))
-        .with_children(|row| {
-            for (i, card) in offer.cards.iter().enumerate() {
-                let accent = card_color(card.rarity);
-                row.spawn(card_panel(accent)).with_children(|p| {
-                    p.spawn(text(format!("{}", i + 1), 26.0, accent));
-                    p.spawn((
-                        Node {
-                            margin: UiRect::top(Val::Px(2.0)),
-                            ..default()
-                        },
-                        text(card.title.clone(), 21.0, pal::HUD_TEXT),
-                    ));
-                    p.spawn(text(
-                        pal::rarity_name(card.rarity),
-                        11.0,
-                        accent,
-                    ));
-                    p.spawn((
-                        Node {
-                            margin: UiRect::top(Val::Px(6.0)),
-                            max_width: Val::Px(228.0),
-                            ..default()
-                        },
-                        text(card.detail.clone(), 14.0, pal::HUD_DIM),
-                    ));
-                });
-            }
-        });
+        root.spawn((Node {
+            margin: UiRect::top(Val::Px(10.0)),
+            column_gap: Val::Px(18.0),
+            ..default()
+        },))
+            .with_children(|row| {
+                for (i, card) in offer.cards.iter().enumerate() {
+                    let accent = card_color(card.rarity);
+                    row.spawn(card_panel(accent)).with_children(|p| {
+                        p.spawn(text(format!("{}", i + 1), 26.0, accent));
+                        p.spawn((
+                            Node {
+                                margin: UiRect::top(Val::Px(2.0)),
+                                ..default()
+                            },
+                            text(card.title.clone(), 21.0, pal::HUD_TEXT),
+                        ));
+                        p.spawn(text(pal::rarity_name(card.rarity), 11.0, accent));
+                        p.spawn((
+                            Node {
+                                margin: UiRect::top(Val::Px(6.0)),
+                                max_width: Val::Px(228.0),
+                                ..default()
+                            },
+                            text(card.detail.clone(), 14.0, pal::HUD_DIM),
+                        ));
+                    });
+                }
+            });
 
         root.spawn((
             Node {
@@ -585,6 +589,7 @@ fn build_research(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::useless_let_if_seq)]
 fn research_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -597,6 +602,8 @@ fn research_input(
     mut sfx: MessageWriter<SfxEvent>,
     roots: Query<Entity, With<ScreenRoot>>,
 ) {
+    // Accumulated across five independent input checks below; there is no
+    // single initialiser expression that reads better than the flag.
     let mut dirty = false;
 
     if keys.just_pressed(KeyCode::ArrowLeft) {
@@ -647,7 +654,13 @@ fn research_input(
         }
         // Rebuilding the whole panel is cheap and keeps the draw code in one
         // place rather than duplicating it as an update path.
-        build_research(commands, research.into(), progression, economy.into(), cursor.into());
+        build_research(
+            commands,
+            research.into(),
+            progression,
+            economy.into(),
+            cursor.into(),
+        );
     }
 }
 
@@ -680,44 +693,40 @@ fn build_pause(
             ..default()
         },))
             .with_children(|row| {
-                row.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(4.0),
-                        ..default()
-                    },
-                ))
-                .with_children(|col| {
-                    col.spawn(text("WEAPONS", 16.0, pal::ACCENT));
-                    for slot in &loadout.slots {
-                        col.spawn(text(
-                            format!("{}  lv {}", slot.kind.name(), slot.level),
-                            14.0,
-                            pal::HUD_TEXT,
-                        ));
-                    }
-                });
+                row.spawn((Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(4.0),
+                    ..default()
+                },))
+                    .with_children(|col| {
+                        col.spawn(text("WEAPONS", 16.0, pal::ACCENT));
+                        for slot in &loadout.slots {
+                            col.spawn(text(
+                                format!("{}  lv {}", slot.kind.name(), slot.level),
+                                14.0,
+                                pal::HUD_TEXT,
+                            ));
+                        }
+                    });
 
-                row.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(4.0),
-                        ..default()
-                    },
-                ))
-                .with_children(|col| {
-                    col.spawn(text("GEAR", 16.0, pal::ACCENT));
-                    for slot in GearSlot::ALL {
-                        let line = equipped.get(slot).map_or_else(
-                            || format!("{}: -", slot.label()),
-                            |g| format!("{}: {} ({})", slot.label(), g.name, g.describe()),
-                        );
-                        let color = equipped
-                            .get(slot)
-                            .map_or(pal::HUD_DIM, |g| pal::RARITY[g.rarity]);
-                        col.spawn(text(line, 13.0, color));
-                    }
-                });
+                row.spawn((Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(4.0),
+                    ..default()
+                },))
+                    .with_children(|col| {
+                        col.spawn(text("GEAR", 16.0, pal::ACCENT));
+                        for slot in GearSlot::ALL {
+                            let line = equipped.get(slot).map_or_else(
+                                || format!("{}: -", slot.label()),
+                                |g| format!("{}: {} ({})", slot.label(), g.name, g.describe()),
+                            );
+                            let color = equipped
+                                .get(slot)
+                                .map_or(pal::HUD_DIM, |g| pal::RARITY[g.rarity]);
+                            col.spawn(text(line, 13.0, color));
+                        }
+                    });
             });
 
         root.spawn((
@@ -773,9 +782,21 @@ fn build_gameover(
             },
             BackgroundColor(pal::HUD_PANEL_SOLID),
             children![
-                text(format!("SURVIVED   {}", format_time(clock.elapsed)), 30.0, pal::ACCENT),
-                text(format!("Wave {}   Level {}", cycle.wave, progression.level), 17.0, pal::HUD_TEXT),
-                text(format!("{} kills", format_count(clock.kills)), 16.0, pal::HUD_DIM),
+                text(
+                    format!("SURVIVED   {}", format_time(clock.elapsed)),
+                    30.0,
+                    pal::ACCENT
+                ),
+                text(
+                    format!("Wave {}   Level {}", cycle.wave, progression.level),
+                    17.0,
+                    pal::HUD_TEXT
+                ),
+                text(
+                    format!("{} kills", format_count(clock.kills)),
+                    16.0,
+                    pal::HUD_DIM
+                ),
                 text(
                     format!(
                         "Peak threat {:.1}   {} scrap   {} cores earned",

@@ -93,7 +93,7 @@ impl Sfx {
 }
 
 /// The generated bank, indexed by `Sfx as usize`.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct SoundBank {
     clips: Vec<Handle<AudioSource>>,
 }
@@ -108,6 +108,7 @@ impl SoundBank {
 #[derive(Component)]
 struct OneShot(f32);
 
+#[derive(Debug)]
 pub struct AudioFxPlugin;
 
 impl Plugin for AudioFxPlugin {
@@ -129,10 +130,6 @@ impl Synth {
         Self {
             buf: vec![0.0; (seconds * SAMPLE_RATE as f32) as usize],
         }
-    }
-
-    fn len_secs(&self) -> f32 {
-        self.buf.len() as f32 / SAMPLE_RATE as f32
     }
 
     /// Additive tone with a linear frequency sweep and exponential decay.

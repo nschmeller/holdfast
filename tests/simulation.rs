@@ -174,7 +174,10 @@ fn calling_a_wave_early_shortens_the_prep_and_pays_a_bonus() {
         cycle.call_early();
         pending
     };
-    assert!(bonus > 0.5, "a near-full window should pay well, got {bonus}");
+    assert!(
+        bonus > 0.5,
+        "a near-full window should pay well, got {bonus}"
+    );
 
     // The very next tick should flip into the assault.
     advance(&mut app, 0.2);

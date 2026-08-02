@@ -10,14 +10,14 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
+use crate::AppState;
 use crate::arena::ArenaBounds;
 use crate::common::{ShakeEvent, damp, damp_vec3, to_world};
 use crate::player::Player;
-use crate::{AppState, GameSet};
 
 /// Camera framing. Yaw is player-controlled in 45-degree steps; everything
 /// else is derived.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct CameraRig {
     pub yaw: f32,
     pub target_yaw: f32,
@@ -53,9 +53,10 @@ const BASE_DISTANCE: f32 = 34.0;
 /// board is visible while they think.
 const PLAN_DISTANCE: f32 = 52.0;
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct MainCamera;
 
+#[derive(Debug)]
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
@@ -64,8 +65,7 @@ impl Plugin for CameraPlugin {
             .add_systems(Startup, spawn_camera)
             .add_systems(
                 Update,
-                (rotate_camera, absorb_shake)
-                    .run_if(not(in_state(AppState::Menu))),
+                (rotate_camera, absorb_shake).run_if(not(in_state(AppState::Menu))),
             )
             // Runs outside the gameplay set so the camera keeps tracking while
             // overlays are open and time is stopped.

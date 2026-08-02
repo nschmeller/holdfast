@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["game", "roguelite", "bevy", "strategy"]
 categories = ["games"]
+repository = "https://github.com/nschmeller/holdfast"
+documentation = "https://github.com/nschmeller/holdfast#readme"
+homepage = "https://github.com/nschmeller/holdfast"
 
 [lib]
 name = "holdfast"
@@ -47,6 +50,14 @@ trivial_casts = "warn"
 trivial_numeric_casts = "warn"
 unused_import_braces = "warn"
 variant_size_differences = "warn"
+missing_debug_implementations = "warn"
+
+# Every Bevy system parameter is a lifetime-generic type used with its
+# lifetimes elided - `Res<T>`, `Query<A, B>`, `Commands`. Writing `Res<'_, T>`
+# on all several hundred of them would be noise, and it is not how any Bevy
+# code is written. This is the one `rust_2018_idioms` lint the framework
+# genuinely precludes; the rest of the group stays on.
+elided_lifetimes_in_paths = "allow"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -85,6 +96,11 @@ missing_const_for_fn = "allow"
 float_cmp = "allow"
 # Deliberate: the option/result chains this fires on are less readable rewritten.
 option_if_let_else = "allow"
+# Rewriting `a * b + c` as `a.mul_add(b, c)` is a pessimisation on any target
+# without hardware FMA - notably wasm without the relaxed-simd proposal, where
+# it lowers to a libm call. It also reads worse in the geometry and tuning
+# code where it fires most.
+suboptimal_flops = "allow"
 
 [profile.dev]
 opt-level = 1

@@ -6,12 +6,12 @@
 //! prop instead of one per part, and a single shared material for the whole
 //! scene.
 
-use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use bevy::prelude::*;
 
 /// Accumulates transformed primitives into one mesh.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct MeshWeld {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
@@ -56,20 +56,19 @@ impl MeshWeld {
             let world = affine.transform_point3(Vec3::from_array(*p));
             self.positions.push(world.to_array());
 
-            let n = src_nrm
-                .map(|n| Vec3::from_array(n[i]))
-                .unwrap_or(Vec3::Y);
+            let n = src_nrm.map_or(Vec3::Y, |n| Vec3::from_array(n[i]));
             self.normals
                 .push((normal_matrix * n).normalize_or_zero().to_array());
 
-            self.uvs.push(src_uv.map(|u| u[i]).unwrap_or([0.0, 0.0]));
+            self.uvs.push(src_uv.map_or([0.0, 0.0], |u| u[i]));
             self.colors.push(rgba);
         }
 
         match mesh.indices() {
             Some(Indices::U32(idx)) => self.indices.extend(idx.iter().map(|i| i + base)),
             Some(Indices::U16(idx)) => {
-                self.indices.extend(idx.iter().map(|i| *i as u32 + base))
+                self.indices
+                    .extend(idx.iter().map(|i| u32::from(*i) + base));
             }
             None => self.indices.extend(0..src_pos.len() as u32),
         }
@@ -132,6 +131,7 @@ pub fn boxed(min: Vec3, max: Vec3) -> (Cuboid, Transform) {
 }
 
 /// One cell of a procedural floor.
+#[derive(Debug)]
 pub struct GroundCell {
     pub color: Color,
     /// Vertical offset, for cobbles, floorboards and hex plates.
@@ -246,7 +246,12 @@ pub fn cone(r: f32, h: f32) -> Mesh {
 }
 
 pub fn torus(inner: f32, outer: f32) -> Mesh {
-    Mesh::from(Torus::new(inner, outer).mesh().major_resolution(16).minor_resolution(8))
+    Mesh::from(
+        Torus::new(inner, outer)
+            .mesh()
+            .major_resolution(16)
+            .minor_resolution(8),
+    )
 }
 
 pub fn cube(x: f32, y: f32, z: f32) -> Mesh {
@@ -308,7 +313,10 @@ mod tests {
             panic!("expected u32 indices");
         };
         assert!(idx.iter().all(|i| *i < count), "index out of range");
-        assert!(idx.iter().any(|i| *i >= count / 2), "second mesh not offset");
+        assert!(
+            idx.iter().any(|i| *i >= count / 2),
+            "second mesh not offset"
+        );
     }
 
     #[test]
@@ -347,7 +355,11 @@ mod tests {
     #[test]
     fn the_shape_helper_matches_adding_a_mesh() {
         let mut a = MeshWeld::new();
-        a.shape(Cuboid::new(1.0, 1.0, 1.0), Transform::IDENTITY, Color::WHITE);
+        a.shape(
+            Cuboid::new(1.0, 1.0, 1.0),
+            Transform::IDENTITY,
+            Color::WHITE,
+        );
         let mut b = MeshWeld::new();
         b.add(&cube(1.0, 1.0, 1.0), Transform::IDENTITY, Color::WHITE);
         assert_eq!(count_vertices(&a.build()), count_vertices(&b.build()));

@@ -7,8 +7,10 @@ use bevy::prelude::*;
 
 use super::{HazardSpec, PropSpec, SceneData, Surface};
 use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
-use crate::art::Glow;
-use crate::meshgen::*;
+use crate::meshgen::{
+    GroundCell, MeshWeld, at, at_rot_x, at_rot_y, at_rot_z, cone, cube, cylinder, cylinder_hi,
+    ground_grid, noise_soft, sphere, torus,
+};
 use crate::palette as pal;
 use crate::rng::Rng;
 
@@ -52,20 +54,22 @@ pub fn build(rng: &mut Rng) -> SceneData {
 
     // -- the big furniture -------------------------------------------------
     s.prop(
-        PropSpec::new(monitor(), Vec2::new(-5.0, -11.0))
-            .solid(ColliderShape::rect(3.6, 1.0), 3.0),
+        PropSpec::new(monitor(), Vec2::new(-5.0, -11.0)).solid(ColliderShape::rect(3.6, 1.0), 3.0),
     );
-    s.light(Vec3::new(-5.0, 3.2, -9.0), pal::SCREEN_GLOW, 260_000.0, 26.0);
+    s.light(
+        Vec3::new(-5.0, 3.2, -9.0),
+        pal::SCREEN_GLOW,
+        260_000.0,
+        26.0,
+    );
 
     s.prop(
-        PropSpec::new(desk_lamp(), Vec2::new(14.0, -10.0))
-            .solid(ColliderShape::Circle(1.3), 2.4),
+        PropSpec::new(desk_lamp(), Vec2::new(14.0, -10.0)).solid(ColliderShape::Circle(1.3), 2.4),
     );
     s.light(Vec3::new(13.2, 5.0, -9.2), pal::LAMP_GLOW, 700_000.0, 34.0);
 
     s.prop(
-        PropSpec::new(keyboard(), Vec2::new(-1.0, 8.4))
-            .solid(ColliderShape::rect(6.6, 2.3), 0.55),
+        PropSpec::new(keyboard(), Vec2::new(-1.0, 8.4)).solid(ColliderShape::rect(6.6, 2.3), 0.55),
     );
 
     // Mousepad: pure decoration, nothing collides with it.
@@ -77,12 +81,10 @@ pub fn build(rng: &mut Rng) -> SceneData {
 
     // -- mid clutter -------------------------------------------------------
     s.prop(
-        PropSpec::new(coffee_mug(), Vec2::new(-13.5, 2.0))
-            .solid(ColliderShape::Circle(1.15), 1.7),
+        PropSpec::new(coffee_mug(), Vec2::new(-13.5, 2.0)).solid(ColliderShape::Circle(1.15), 1.7),
     );
     s.prop(
-        PropSpec::new(pen_holder(), Vec2::new(7.0, -6.5))
-            .solid(ColliderShape::Circle(0.95), 2.2),
+        PropSpec::new(pen_holder(), Vec2::new(7.0, -6.5)).solid(ColliderShape::Circle(0.95), 2.2),
     );
     s.prop(
         PropSpec::new(book_stack(), Vec2::new(-16.0, -6.0))
@@ -95,8 +97,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
             .solid(ColliderShape::Circle(1.9), 1.0),
     );
     s.prop(
-        PropSpec::new(plant_pot(), Vec2::new(17.5, -2.0))
-            .solid(ColliderShape::Circle(1.25), 2.6),
+        PropSpec::new(plant_pot(), Vec2::new(17.5, -2.0)).solid(ColliderShape::Circle(1.25), 2.6),
     );
     s.prop(
         PropSpec::new(tape_dispenser(), Vec2::new(-17.0, 9.0))
@@ -209,7 +210,7 @@ fn floor() -> Mesh {
 
         // Subtle radial warmth towards the lamp corner.
         let warmth = 1.0 - (c - Vec2::new(12.0, -8.0)).length() / 46.0;
-        crate::meshgen::GroundCell {
+        GroundCell {
             color: pal::shade(base, 0.82 + grain * 0.2 + warmth * 0.18),
             height: 0.0,
         }
@@ -316,7 +317,11 @@ fn keyboard() -> Mesh {
 fn mousepad() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(9.0, 0.05, 7.0), at(0.0, 0.0, 0.0), pal::MOUSEPAD);
-    b.add(&cube(9.4, 0.03, 7.4), at(0.0, -0.01, 0.0), pal::MOUSEPAD_TRIM);
+    b.add(
+        &cube(9.4, 0.03, 7.4),
+        at(0.0, -0.01, 0.0),
+        pal::MOUSEPAD_TRIM,
+    );
     b.build()
 }
 
@@ -325,14 +330,26 @@ fn coffee_mug() -> Mesh {
     b.add(&cylinder_hi(1.0, 1.7), at(0.0, 0.85, 0.0), pal::CERAMIC);
     b.add(&cylinder_hi(0.88, 0.1), at(0.0, 1.62, 0.0), pal::COFFEE);
     b.add(&cylinder_hi(1.02, 0.2), at(0.0, 1.1, 0.0), pal::SCREEN_GLOW);
-    b.add(&torus(0.11, 0.42), at_rot_y(1.15, 0.9, 0.0, 90.0), pal::CERAMIC);
+    b.add(
+        &torus(0.11, 0.42),
+        at_rot_y(1.15, 0.9, 0.0, 90.0),
+        pal::CERAMIC,
+    );
     b.build()
 }
 
 fn pen_holder() -> Mesh {
     let mut b = MeshWeld::new();
-    b.add(&cylinder_hi(0.85, 1.7), at(0.0, 0.85, 0.0), pal::PLASTIC_MID);
-    b.add(&cylinder_hi(0.72, 0.1), at(0.0, 1.6, 0.0), pal::PLASTIC_DARK);
+    b.add(
+        &cylinder_hi(0.85, 1.7),
+        at(0.0, 0.85, 0.0),
+        pal::PLASTIC_MID,
+    );
+    b.add(
+        &cylinder_hi(0.72, 0.1),
+        at(0.0, 1.6, 0.0),
+        pal::PLASTIC_DARK,
+    );
     // Pens and pencils leaning at different angles.
     let pens = [
         (0.2f32, 0.1f32, 8.0f32, pal::PENCIL_YELLOW),
@@ -392,8 +409,16 @@ fn headphones() -> Mesh {
 
 fn plant_pot() -> Mesh {
     let mut b = MeshWeld::new();
-    b.add(&cone(1.1, 1.5), at_rot_x(0.0, 0.75, 0.0, 180.0), pal::TERRACOTTA);
-    b.add(&cylinder_hi(1.0, 0.2), at(0.0, 1.4, 0.0), pal::shade(pal::TERRACOTTA, 0.8));
+    b.add(
+        &cone(1.1, 1.5),
+        at_rot_x(0.0, 0.75, 0.0, 180.0),
+        pal::TERRACOTTA,
+    );
+    b.add(
+        &cylinder_hi(1.0, 0.2),
+        at(0.0, 1.4, 0.0),
+        pal::shade(pal::TERRACOTTA, 0.8),
+    );
     // A small succulent: overlapping leaf blades.
     let mut rng = Rng::seeded(0x9F1A);
     for i in 0..11 {
@@ -401,9 +426,8 @@ fn plant_pot() -> Mesh {
         let lean = rng.range(35.0, 65.0);
         b.add(
             &cone(0.2, rng.range(0.8, 1.4)),
-            at(a.cos() * 0.3, 1.8, a.sin() * 0.3).with_rotation(
-                Quat::from_rotation_y(a) * Quat::from_rotation_x(lean.to_radians()),
-            ),
+            at(a.cos() * 0.3, 1.8, a.sin() * 0.3)
+                .with_rotation(Quat::from_rotation_y(a) * Quat::from_rotation_x(lean.to_radians())),
             pal::shade(pal::LEAF, rng.range(0.75, 1.2)),
         );
     }
@@ -414,7 +438,11 @@ fn tape_dispenser() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(2.6, 0.5, 1.4), at(0.0, 0.25, 0.0), pal::PLASTIC_DARK);
     b.add(&cube(1.2, 1.0, 1.2), at(-0.6, 0.7, 0.0), pal::PLASTIC_MID);
-    b.add(&torus(0.34, 0.66), at_rot_y(0.5, 0.95, 0.0, 90.0), pal::CERAMIC);
+    b.add(
+        &torus(0.34, 0.66),
+        at_rot_y(0.5, 0.95, 0.0, 90.0),
+        pal::CERAMIC,
+    );
     b.add(&cube(0.7, 0.1, 1.2), at(1.2, 0.5, 0.0), pal::METAL);
     b.build()
 }
@@ -427,7 +455,11 @@ fn stapler_prop() -> Mesh {
         at(0.1, 0.6, 0.0).with_rotation(Quat::from_rotation_z(0.06)),
         pal::DANGER,
     );
-    b.add(&cylinder(0.22, 1.0), at_rot_z(-1.5, 0.5, 0.0, 90.0), pal::METAL);
+    b.add(
+        &cylinder(0.22, 1.0),
+        at_rot_z(-1.5, 0.5, 0.0, 90.0),
+        pal::METAL,
+    );
     b.build()
 }
 
@@ -455,7 +487,11 @@ fn rubiks_cube() -> Mesh {
         pal::DUCK_BEAK,
         pal::PAPER,
     ];
-    b.add(&cube(1.44, 1.44, 1.44), at(0.0, 0.72, 0.0), pal::PLASTIC_DARK);
+    b.add(
+        &cube(1.44, 1.44, 1.44),
+        at(0.0, 0.72, 0.0),
+        pal::PLASTIC_DARK,
+    );
     // Sticker grid on each face.
     for (fi, normal) in [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
         .iter()
@@ -470,13 +506,13 @@ fn rubiks_cube() -> Mesh {
                 } else {
                     (Vec3::X, Vec3::Y)
                 };
-                let p = *normal * 0.735 + a * (u as f32 * 0.46) + bb * (v as f32 * 0.46)
+                let p = *normal * 0.735
+                    + a * (u as f32 * 0.46)
+                    + bb * (v as f32 * 0.46)
                     + Vec3::new(0.0, 0.72, 0.0);
                 b.add(
                     &cube(0.4, 0.4, 0.4),
-                    Transform::from_translation(p).with_scale(
-                        Vec3::ONE - normal.abs() * 0.88,
-                    ),
+                    Transform::from_translation(p).with_scale(Vec3::ONE - normal.abs() * 0.88),
                     faces[fi],
                 );
             }
@@ -522,7 +558,11 @@ fn eraser() -> Mesh {
 
 fn usb_stick() -> Mesh {
     let mut b = MeshWeld::new();
-    b.add(&cube(1.1, 0.26, 0.44), at(0.0, 0.13, 0.0), pal::PLASTIC_DARK);
+    b.add(
+        &cube(1.1, 0.26, 0.44),
+        at(0.0, 0.13, 0.0),
+        pal::PLASTIC_DARK,
+    );
     b.add(&cube(0.5, 0.16, 0.34), at(0.7, 0.13, 0.0), pal::METAL);
     b.build()
 }

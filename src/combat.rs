@@ -4,21 +4,24 @@ use bevy::prelude::*;
 
 use crate::arena::{ArenaBounds, Hazard, HazardKind, ObstacleField};
 use crate::art::{GameArt, Glow};
-use crate::common::*;
+use crate::common::{
+    Altitude, Body, BurstEvent, DamageEvent, DamageSource, DeathEvent, Doomed, Ephemeral,
+    FloatingTextEvent, Health, RunEntity, SfxEvent, ShakeEvent, VisualScale, damp, damp_vec2,
+    to_world, yaw_towards,
+};
 use crate::enemy::{Enemy, StatusEffects};
 use crate::player::{Player, PlayerStats};
 use crate::rng::Rng;
-use crate::threat::Threat;
 use crate::{AppState, GameSet};
 
 /// Marks anything enemies are willing to attack.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Damageable {
     pub hostile_target: bool,
 }
 
 /// Non-player actors that integrate through the shared movement pass.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Actor {
     /// Whether the actor is stopped by obstacles. Flyers are not.
     pub collides: bool,
@@ -43,7 +46,7 @@ impl Default for Actor {
 /// Weapons, turrets and allies all need "what is near this point" many times
 /// per frame; doing that against a flat list is the one thing that would
 /// actually fall over at the enemy counts this game reaches.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct EnemyGrid {
     cell: f32,
     cols: usize,
@@ -52,7 +55,7 @@ pub struct EnemyGrid {
     buckets: Vec<Vec<GridEntry>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct GridEntry {
     pub entity: Entity,
     pub pos: Vec2,
@@ -73,18 +76,18 @@ impl Default for EnemyGrid {
 }
 
 impl EnemyGrid {
-    fn rebuild(&mut self, bounds: &ArenaBounds) {
+    fn rebuild(&mut self, bounds: ArenaBounds) {
         self.min = Vec2::new(-bounds.half_x - 8.0, -bounds.half_z - 8.0);
         let span = Vec2::new(bounds.half_x + 8.0, bounds.half_z + 8.0) - self.min;
         self.cols = (span.x / self.cell).ceil() as usize + 1;
         self.rows = (span.y / self.cell).ceil() as usize + 1;
         let needed = self.cols * self.rows;
-        if self.buckets.len() != needed {
-            self.buckets = vec![Vec::new(); needed];
-        } else {
+        if self.buckets.len() == needed {
             for b in &mut self.buckets {
                 b.clear();
             }
+        } else {
+            self.buckets = vec![Vec::new(); needed];
         }
     }
 
@@ -108,21 +111,23 @@ impl EnemyGrid {
 
     /// Visit every enemy whose centre lies within `radius` of `pos`.
     pub fn for_each_near(&self, pos: Vec2, radius: f32, mut f: impl FnMut(&GridEntry)) {
-        let r_cells = (radius / self.cell).ceil() as isize + 1;
         let Some(centre) = self.index(pos) else {
             return;
         };
-        let cx = (centre % self.cols) as isize;
-        let cy = (centre / self.cols) as isize;
+        let reach = (radius / self.cell).ceil() as usize + 1;
+        let (cx, cy) = (centre % self.cols, centre / self.cols);
+
+        // Clamping the window in unsigned space avoids the signed round-trip
+        // entirely; the saturating_sub is the whole edge case.
+        let x0 = cx.saturating_sub(reach);
+        let x1 = (cx + reach).min(self.cols - 1);
+        let y0 = cy.saturating_sub(reach);
+        let y1 = (cy + reach).min(self.rows - 1);
         let r_sq = radius * radius;
 
-        for dy in -r_cells..=r_cells {
-            for dx in -r_cells..=r_cells {
-                let (x, y) = (cx + dx, cy + dy);
-                if x < 0 || y < 0 || x >= self.cols as isize || y >= self.rows as isize {
-                    continue;
-                }
-                for e in &self.buckets[y as usize * self.cols + x as usize] {
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                for e in &self.buckets[y * self.cols + x] {
                     if e.pos.distance_squared(pos) <= r_sq {
                         f(e);
                     }
@@ -210,7 +215,7 @@ impl ShotVisual {
     }
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Projectile {
     pub vel: Vec2,
     pub damage: f32,
@@ -235,7 +240,7 @@ pub struct Projectile {
 
 /// Request a projectile. A message rather than a direct spawn so weapons,
 /// enemies, allies and turrets all funnel through one construction path.
-#[derive(Message, Clone)]
+#[derive(Debug, Message, Clone)]
 pub struct SpawnShot {
     pub pos: Vec2,
     pub dir: Vec2,
@@ -289,7 +294,7 @@ impl SpawnShot {
     }
 }
 
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct SpawnHazard {
     pub pos: Vec2,
     pub radius: f32,
@@ -300,6 +305,7 @@ pub struct SpawnHazard {
     pub hurts_enemies: bool,
 }
 
+#[derive(Debug)]
 pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
@@ -344,7 +350,7 @@ fn rebuild_grid(
     mut grid: ResMut<EnemyGrid>,
     q: Query<(Entity, &Body, &Enemy)>,
 ) {
-    grid.rebuild(&bounds);
+    grid.rebuild(*bounds);
     for (entity, body, enemy) in &q {
         grid.insert(GridEntry {
             entity,
@@ -379,11 +385,7 @@ fn integrate_actors(
     }
 }
 
-fn spawn_shots(
-    mut commands: Commands,
-    art: Res<GameArt>,
-    mut shots: MessageReader<SpawnShot>,
-) {
+fn spawn_shots(mut commands: Commands, art: Res<GameArt>, mut shots: MessageReader<SpawnShot>) {
     for s in shots.read() {
         let yaw = yaw_towards(s.dir);
         commands.spawn((
@@ -431,7 +433,11 @@ fn spawn_hazards(
                 kind: h.kind,
                 radius: h.radius,
                 dps: h.dps,
-                slow: if h.kind == HazardKind::Sticky { 0.5 } else { 1.0 },
+                slow: if h.kind == HazardKind::Sticky {
+                    0.5
+                } else {
+                    1.0
+                },
                 life: Some(h.life),
                 hurts_player: h.hurts_player,
                 hurts_enemies: h.hurts_enemies,
@@ -473,8 +479,7 @@ fn move_projectiles(
         body.pos += step;
 
         // Walls: bounce if the shot has bounces left, otherwise expire.
-        let hit_wall = !bounds.contains(body.pos)
-            || obstacles.blocks_segment(prev, body.pos, 0.55);
+        let hit_wall = !bounds.contains(body.pos) || obstacles.blocks_segment(prev, body.pos, 0.55);
         if hit_wall {
             if proj.bounces > 0 {
                 proj.bounces -= 1;
@@ -786,7 +791,7 @@ mod tests {
 
     fn grid_with(points: &[(u32, Vec2)]) -> EnemyGrid {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(&ArenaBounds {
+        grid.rebuild(ArenaBounds {
             half_x: 20.0,
             half_z: 13.0,
         });
@@ -825,14 +830,9 @@ mod tests {
     fn for_each_near_matches_a_brute_force_scan() {
         // The grid is an optimisation; it must return exactly what a linear
         // scan would, or weapons will silently miss targets near cell edges.
-        let mut rng = crate::rng::Rng::seeded(4242);
+        let mut rng = Rng::seeded(4242);
         let points: Vec<(u32, Vec2)> = (0..400)
-            .map(|i| {
-                (
-                    i,
-                    Vec2::new(rng.range(-20.0, 20.0), rng.range(-13.0, 13.0)),
-                )
-            })
+            .map(|i| (i, Vec2::new(rng.range(-20.0, 20.0), rng.range(-13.0, 13.0))))
             .collect();
         let grid = grid_with(&points);
 
@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn entries_outside_the_grid_are_dropped_not_panicked_on() {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(&ArenaBounds {
+        grid.rebuild(ArenaBounds {
             half_x: 5.0,
             half_z: 5.0,
         });
@@ -884,7 +884,7 @@ mod tests {
     #[test]
     fn best_target_prefers_a_boss_over_closer_chaff() {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(&ArenaBounds::default());
+        grid.rebuild(ArenaBounds::default());
         grid.insert(GridEntry {
             entity: entity(1),
             pos: Vec2::new(1.0, 0.0),
@@ -917,7 +917,7 @@ mod tests {
     fn rebuilding_clears_the_previous_frame() {
         let mut grid = grid_with(&[(1, Vec2::ZERO)]);
         assert!(grid.nearest(Vec2::ZERO, 5.0).is_some());
-        grid.rebuild(&ArenaBounds::default());
+        grid.rebuild(ArenaBounds::default());
         assert!(
             grid.nearest(Vec2::ZERO, 5.0).is_none(),
             "stale entries would let weapons shoot dead enemies"
@@ -927,11 +927,11 @@ mod tests {
     #[test]
     fn rebuilding_to_a_different_arena_size_is_safe() {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(&ArenaBounds {
+        grid.rebuild(ArenaBounds {
             half_x: 5.0,
             half_z: 5.0,
         });
-        grid.rebuild(&ArenaBounds {
+        grid.rebuild(ArenaBounds {
             half_x: 40.0,
             half_z: 30.0,
         });
@@ -954,7 +954,13 @@ mod tests {
 
     #[test]
     fn shot_directions_are_normalised() {
-        let s = SpawnShot::friendly(Vec2::ZERO, Vec2::new(30.0, 40.0), 10.0, 5.0, ShotVisual::Dart);
+        let s = SpawnShot::friendly(
+            Vec2::ZERO,
+            Vec2::new(30.0, 40.0),
+            10.0,
+            5.0,
+            ShotVisual::Dart,
+        );
         assert!((s.dir.length() - 1.0).abs() < 1e-5);
     }
 

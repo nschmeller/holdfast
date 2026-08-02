@@ -11,7 +11,7 @@
 use bevy::prelude::*;
 
 /// Playfield extents, set by whichever environment is loaded.
-#[derive(Resource, Clone, Copy)]
+#[derive(Debug, Resource, Clone, Copy)]
 pub struct ArenaBounds {
     pub half_x: f32,
     pub half_z: f32,
@@ -71,7 +71,10 @@ impl ArenaBounds {
 pub enum ColliderShape {
     Circle(f32),
     /// Axis-aligned in local space, rotated by `rot` radians about Y.
-    Rect { half: Vec2, rot: f32 },
+    Rect {
+        half: Vec2,
+        rot: f32,
+    },
 }
 
 impl ColliderShape {
@@ -99,7 +102,7 @@ impl ColliderShape {
 
 /// Cached obstacle list, rebuilt whenever an environment loads. Iterating a
 /// flat `Vec` beats querying the world once per actor per frame.
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct ObstacleField {
     pub items: Vec<PlacedObstacle>,
 }
@@ -180,7 +183,10 @@ fn penetration(pos: Vec2, radius: f32, ob: &PlacedObstacle) -> Option<Vec2> {
             let (sin, cos) = rot.sin_cos();
             let delta = pos - ob.pos;
             // Into the rect's local frame.
-            let local = Vec2::new(delta.x * cos + delta.y * sin, -delta.x * sin + delta.y * cos);
+            let local = Vec2::new(
+                delta.x * cos + delta.y * sin,
+                -delta.x * sin + delta.y * cos,
+            );
             let clamped = local.clamp(-half, half);
             let offset = local - clamped;
             let dist_sq = offset.length_squared();
@@ -250,7 +256,7 @@ pub enum HazardKind {
     Font,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Hazard {
     pub kind: HazardKind,
     pub radius: f32,
@@ -288,16 +294,19 @@ impl Hazard {
         }
     }
 
+    #[must_use]
     pub fn with_life(mut self, life: f32) -> Self {
         self.life = Some(life);
         self
     }
 
+    #[must_use]
     pub fn enemies_only(mut self) -> Self {
         self.hurts_player = false;
         self
     }
 
+    #[must_use]
     pub fn player_only(mut self) -> Self {
         self.hurts_enemies = false;
         self
@@ -306,7 +315,7 @@ impl Hazard {
 
 /// A recurring directional sweep across one lane of the arena: the desk's USB
 /// fan, the forest's wind, the rooftop's downdraft, the grid's gravity shear.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct Gust {
     pub interval: f32,
     pub duration: f32,
@@ -347,7 +356,7 @@ impl Gust {
 
 /// A pool of light that rewards standing in it. Standing there is a real
 /// choice: more damage, but it is also where the director aims its elites.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct Spotlight {
     pub center: Vec2,
     pub radius: f32,
@@ -588,8 +597,8 @@ mod tests {
         };
         for i in 0..400 {
             let p = b.perimeter_point(i as f32 / 400.0);
-            let on_edge = (p.x.abs() - b.half_x).abs() < 1e-3
-                || (p.y.abs() - b.half_z).abs() < 1e-3;
+            let on_edge =
+                (p.x.abs() - b.half_x).abs() < 1e-3 || (p.y.abs() - b.half_z).abs() < 1e-3;
             assert!(on_edge, "t={i} gave {p:?}");
             assert!(b.contains(p + Vec2::splat(1e-4)) || on_edge);
         }
@@ -611,7 +620,9 @@ mod tests {
             half_x: 10.0,
             half_z: 5.0,
         };
-        let pts: Vec<Vec2> = (0..200).map(|i| b.perimeter_point(i as f32 / 200.0)).collect();
+        let pts: Vec<Vec2> = (0..200)
+            .map(|i| b.perimeter_point(i as f32 / 200.0))
+            .collect();
         assert!(pts.iter().any(|p| p.y <= -b.half_z + 1e-3));
         assert!(pts.iter().any(|p| p.y >= b.half_z - 1e-3));
         assert!(pts.iter().any(|p| p.x <= -b.half_x + 1e-3));
@@ -635,7 +646,10 @@ mod tests {
             lane_half_width: 2.0,
             ..Gust::default()
         };
-        assert!(!g.affects(Vec2::new(0.0, 4.0)), "a still gust affects nothing");
+        assert!(
+            !g.affects(Vec2::new(0.0, 4.0)),
+            "a still gust affects nothing"
+        );
         g.blowing = true;
         assert!(g.affects(Vec2::new(0.0, 4.0)));
         assert!(g.affects(Vec2::new(99.0, 6.0)), "lanes are unbounded in X");
@@ -653,7 +667,10 @@ mod tests {
         assert!(s.contains(Vec2::new(2.0, 4.0)));
         assert!(!s.contains(Vec2::new(2.0, 9.0)));
         s.enabled = false;
-        assert!(!s.contains(Vec2::new(2.0, 2.0)), "disabled means never inside");
+        assert!(
+            !s.contains(Vec2::new(2.0, 2.0)),
+            "disabled means never inside"
+        );
     }
 
     #[test]

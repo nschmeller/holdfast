@@ -8,8 +8,10 @@ use bevy::prelude::*;
 
 use super::{HazardSpec, PropSpec, SceneData, Surface};
 use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
-use crate::art::Glow;
-use crate::meshgen::*;
+use crate::meshgen::{
+    GroundCell, MeshWeld, at, at_rot_x, at_rot_z, cone, cube, cylinder, cylinder_hi, ground_grid,
+    noise_soft, noise2, sphere, torus,
+};
 use crate::palette as pal;
 use crate::rng::Rng;
 
@@ -62,10 +64,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
     broken_edge(&mut s);
 
     // -- the obelisk -------------------------------------------------------
-    s.prop(
-        PropSpec::new(obelisk(), Vec2::new(0.0, -6.0))
-            .solid(ColliderShape::Circle(1.6), 7.0),
-    );
+    s.prop(PropSpec::new(obelisk(), Vec2::new(0.0, -6.0)).solid(ColliderShape::Circle(1.6), 7.0));
     s.light(Vec3::new(0.0, 5.0, -6.0), CRYSTAL_VIOLET, 460_000.0, 30.0);
 
     // -- the portal arch ---------------------------------------------------
@@ -133,10 +132,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
         Vec2::new(-5.0, -11.0),
         Vec2::new(5.0, -11.0),
     ] {
-        s.prop(
-            PropSpec::new(brazier(), p)
-                .solid(ColliderShape::Circle(0.7), 1.9),
-        );
+        s.prop(PropSpec::new(brazier(), p).solid(ColliderShape::Circle(0.7), 1.9));
         s.light(Vec3::new(p.x, 2.2, p.y), FLAME, 130_000.0, 14.0);
     }
 
@@ -156,10 +152,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
 
     // -- floating rubble, purely atmospheric --------------------------------
     for _ in 0..16 {
-        let p = Vec2::new(
-            rng.range(-HALF_X, HALF_X),
-            rng.range(-HALF_Z, HALF_Z),
-        );
+        let p = Vec2::new(rng.range(-HALF_X, HALF_X), rng.range(-HALF_Z, HALF_Z));
         s.prop(
             PropSpec::new(rubble(rng), p)
                 .raised(rng.range(2.5, 8.0))
@@ -264,7 +257,7 @@ fn floor(rng: &mut Rng) -> Mesh {
 
         // A great inscribed circle around the obelisk.
         let r = (c - Vec2::new(0.0, -6.0)).length();
-        let ring = (r - 8.5).abs() < 0.35 || (r - 5.2).abs() < 0.22;
+        let inscribed_ring = (r - 8.5).abs() < 0.35 || (r - 5.2).abs() < 0.22;
         // Radial rune ticks around it.
         let spoke = {
             let a = (c.y + 6.0).atan2(c.x);
@@ -272,7 +265,7 @@ fn floor(rng: &mut Rng) -> Mesh {
             ticks && r < 8.8 && r > 5.0
         };
 
-        let color = if ring || spoke {
+        let color = if inscribed_ring || spoke {
             RUNE_GOLD
         } else if seam {
             STONE_DARK
@@ -286,7 +279,7 @@ fn floor(rng: &mut Rng) -> Mesh {
             pal::shade(STONE_LIGHT, 0.85 + n * 0.3)
         };
 
-        crate::meshgen::GroundCell {
+        GroundCell {
             color,
             height: if seam { -0.04 } else { (n - 0.5) * 0.04 },
         }
@@ -295,8 +288,8 @@ fn floor(rng: &mut Rng) -> Mesh {
 
 /// A crumbling border instead of a clean rim: the sanctum is falling into the
 /// void a piece at a time.
-fn broken_edge(s: &mut SceneData) {
-    let mut b = MeshWeld::new();
+fn broken_edge(scene: &mut SceneData) {
+    let mut weld = MeshWeld::new();
     let mut rng = Rng::seeded(0xA2CA4E);
     for (cx, cz, sx, sz) in [
         (0.0f32, -HALF_Z, HALF_X, 0.4f32),
@@ -305,46 +298,46 @@ fn broken_edge(s: &mut SceneData) {
         (HALF_X, 0.0, 0.4, HALF_Z),
     ] {
         let along_x = sx > sz;
-        let n = if along_x { 26 } else { 18 };
-        for i in 0..n {
-            let t = i as f32 / (n - 1) as f32 - 0.5;
+        let segments = if along_x { 26 } else { 18 };
+        for index in 0..segments {
+            let along = index as f32 / (segments - 1) as f32 - 0.5;
             // Random gaps where the wall has fallen away.
             if rng.chance(0.22) {
                 continue;
             }
-            let h = rng.range(0.5, 1.5);
-            let (x, z) = if along_x {
-                (cx + t * sx * 2.0, cz)
+            let height = rng.range(0.5, 1.5);
+            let (px, pz) = if along_x {
+                (cx + along * sx * 2.0, cz)
             } else {
-                (cx, cz + t * sz * 2.0)
+                (cx, cz + along * sz * 2.0)
             };
-            b.add(
+            weld.add(
                 &cube(
                     if along_x { 1.5 } else { 0.8 },
-                    h,
+                    height,
                     if along_x { 0.8 } else { 1.5 },
                 ),
-                at(x, h * 0.5, z).with_rotation(Quat::from_rotation_y(rng.range(-0.1, 0.1))),
+                at(px, height * 0.5, pz).with_rotation(Quat::from_rotation_y(rng.range(-0.1, 0.1))),
                 if rng.chance(0.5) { STONE } else { STONE_LIGHT },
             );
         }
     }
     // Understructure so the platform reads as floating.
-    b.add(
+    weld.add(
         &cube(HALF_X * 2.0, 1.2, HALF_Z * 2.0),
         at(0.0, -0.7, 0.0),
         STONE_DARK,
     );
-    for i in 0..10 {
-        let a = i as f32 / 10.0 * std::f32::consts::TAU;
-        b.add(
+    for index in 0..10 {
+        let a = index as f32 / 10.0 * std::f32::consts::TAU;
+        weld.add(
             &cone(1.4, 3.5),
             at(a.cos() * HALF_X * 0.7, -2.6, a.sin() * HALF_Z * 0.7)
                 .with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
             STONE_DARK,
         );
     }
-    s.prop(PropSpec::new(b.build(), Vec2::ZERO));
+    scene.prop(PropSpec::new(weld.build(), Vec2::ZERO));
 }
 
 // -- props ------------------------------------------------------------------
@@ -397,11 +390,7 @@ fn portal_arch() -> Mesh {
         b.add(&cube(0.95, 0.7, 1.0), at(x, y, 0.0), STONE_LIGHT);
     }
     // The gate itself.
-    b.add(
-        &cube(4.4, 4.6, 0.12),
-        at(0.0, 2.7, 0.0),
-        CRYSTAL_CYAN,
-    );
+    b.add(&cube(4.4, 4.6, 0.12), at(0.0, 2.7, 0.0), CRYSTAL_CYAN);
     b.build()
 }
 
@@ -410,7 +399,11 @@ fn pillar(height: f32) -> Mesh {
     b.add(&cylinder_hi(1.1, 0.4), at(0.0, 0.2, 0.0), STONE_LIGHT);
     b.add(&cylinder_hi(0.9, 0.3), at(0.0, 0.5, 0.0), STONE);
     // Fluted shaft.
-    b.add(&cylinder_hi(0.75, height), at(0.0, 0.65 + height * 0.5, 0.0), STONE);
+    b.add(
+        &cylinder_hi(0.75, height),
+        at(0.0, 0.65 + height * 0.5, 0.0),
+        STONE,
+    );
     for i in 0..10 {
         let a = i as f32 / 10.0 * std::f32::consts::TAU;
         b.add(
@@ -444,35 +437,47 @@ fn broken_pillar(rng: &mut Rng) -> Mesh {
 
 fn fallen_drum() -> Mesh {
     let mut b = MeshWeld::new();
-    b.add(&cylinder_hi(0.75, 1.6), at_rot_z(0.0, 0.75, 0.0, 90.0), STONE);
-    b.add(&cylinder_hi(0.8, 0.1), at_rot_z(0.82, 0.75, 0.0, 90.0), STONE_LIGHT);
-    b.add(&cylinder_hi(0.8, 0.1), at_rot_z(-0.82, 0.75, 0.0, 90.0), STONE_LIGHT);
+    b.add(
+        &cylinder_hi(0.75, 1.6),
+        at_rot_z(0.0, 0.75, 0.0, 90.0),
+        STONE,
+    );
+    b.add(
+        &cylinder_hi(0.8, 0.1),
+        at_rot_z(0.82, 0.75, 0.0, 90.0),
+        STONE_LIGHT,
+    );
+    b.add(
+        &cylinder_hi(0.8, 0.1),
+        at_rot_z(-0.82, 0.75, 0.0, 90.0),
+        STONE_LIGHT,
+    );
     b.build()
 }
 
 fn crystal_cluster(scale: f32, color: Color, rng: &mut Rng) -> Mesh {
-    let mut b = MeshWeld::new();
+    let mut weld = MeshWeld::new();
     // A base rock the shards grow out of.
-    b.add(
+    weld.add(
         &sphere(0.9 * scale),
         at(0.0, 0.25 * scale, 0.0).with_scale(Vec3::new(1.0, 0.45, 1.0)),
         STONE_DARK,
     );
-    let n = 4 + rng.below(4);
-    for i in 0..n {
-        let a = i as f32 / n as f32 * std::f32::consts::TAU + rng.range(-0.4, 0.4);
-        let d = rng.range(0.1, 0.6) * scale;
-        let h = rng.range(1.2, 2.8) * scale;
+    let shards = 4 + rng.below(4);
+    for index in 0..shards {
+        let angle = index as f32 / shards as f32 * std::f32::consts::TAU + rng.range(-0.4, 0.4);
+        let offset = rng.range(0.1, 0.6) * scale;
+        let height = rng.range(1.2, 2.8) * scale;
         let lean = rng.range(-22.0, 22.0);
-        b.add(
-            &Mesh::from(Cone::new(0.28 * scale, h).mesh().resolution(6)),
-            at(a.cos() * d, h * 0.45, a.sin() * d).with_rotation(
-                Quat::from_rotation_y(a) * Quat::from_rotation_x(lean.to_radians()),
+        weld.add(
+            &Mesh::from(Cone::new(0.28 * scale, height).mesh().resolution(6)),
+            at(angle.cos() * offset, height * 0.45, angle.sin() * offset).with_rotation(
+                Quat::from_rotation_y(angle) * Quat::from_rotation_x(lean.to_radians()),
             ),
             pal::shade(color, rng.range(0.7, 1.3)),
         );
     }
-    b.build()
+    weld.build()
 }
 
 fn brazier() -> Mesh {
@@ -511,14 +516,12 @@ fn pedestal() -> Mesh {
     b.add(&cube(0.9, 0.1, 0.66), t, pal::PAPER);
     b.add(
         &cube(0.44, 0.14, 0.68),
-        t * Transform::from_xyz(-0.24, -0.02, 0.0)
-            .with_rotation(Quat::from_rotation_z(0.16)),
+        t * Transform::from_xyz(-0.24, -0.02, 0.0).with_rotation(Quat::from_rotation_z(0.16)),
         Color::srgb(0.4, 0.16, 0.2),
     );
     b.add(
         &cube(0.44, 0.14, 0.68),
-        t * Transform::from_xyz(0.24, -0.02, 0.0)
-            .with_rotation(Quat::from_rotation_z(-0.16)),
+        t * Transform::from_xyz(0.24, -0.02, 0.0).with_rotation(Quat::from_rotation_z(-0.16)),
         Color::srgb(0.4, 0.16, 0.2),
     );
     b.add(&sphere(0.14), at(0.0, 2.0, 0.0), RUNE_GOLD);
@@ -568,12 +571,15 @@ fn mana_font() -> Mesh {
         let a = i as f32 / 6.0 * std::f32::consts::TAU;
         b.add(
             &cube(0.2, 0.2, 0.06),
-            at(a.cos() * 1.2, 0.9, a.sin() * 1.2)
-                .with_rotation(Quat::from_rotation_y(-a)),
+            at(a.cos() * 1.2, 0.9, a.sin() * 1.2).with_rotation(Quat::from_rotation_y(-a)),
             RUNE_GOLD,
         );
     }
-    b.add(&Sphere::new(0.34).mesh().ico(0).unwrap(), at(0.0, 1.3, 0.0), LEY);
+    b.add(
+        &Sphere::new(0.34).mesh().ico(0).unwrap(),
+        at(0.0, 1.3, 0.0),
+        LEY,
+    );
     b.build()
 }
 

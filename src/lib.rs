@@ -85,7 +85,7 @@ pub enum GameSet {
     /// Despawn everything marked `Doomed`.
     ///
     /// Strictly last. Several systems can condemn the same entity in one frame
-    /// - a projectile, a hazard tick and a fall off the edge all racing - and
+    /// (a projectile, a hazard tick and a fall off the edge all racing), and
     /// reaping mid-frame would leave the others writing to a dead entity.
     Reap,
 }

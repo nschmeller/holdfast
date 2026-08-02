@@ -7,8 +7,10 @@ use bevy::prelude::*;
 
 use super::{HazardSpec, PropSpec, SceneData, Surface};
 use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
-use crate::art::Glow;
-use crate::meshgen::*;
+use crate::meshgen::{
+    GroundCell, MeshWeld, at, cube, cylinder, cylinder_hi, ground_grid, noise_soft, noise2, sphere,
+    torus,
+};
 use crate::palette as pal;
 use crate::rng::Rng;
 
@@ -60,10 +62,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
     edge_rail(&mut s);
 
     // -- the core pylon at the centre --------------------------------------
-    s.prop(
-        PropSpec::new(core_pylon(), Vec2::ZERO)
-            .solid(ColliderShape::Circle(1.5), 5.0),
-    );
+    s.prop(PropSpec::new(core_pylon(), Vec2::ZERO).solid(ColliderShape::Circle(1.5), 5.0));
     s.light(Vec3::new(0.0, 4.0, 0.0), CYAN, 500_000.0, 30.0);
 
     // -- corner pylons ------------------------------------------------------
@@ -77,10 +76,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
     .enumerate()
     {
         let color = if i % 2 == 0 { CYAN } else { MAGENTA };
-        s.prop(
-            PropSpec::new(energy_pylon(color), p)
-                .solid(ColliderShape::Circle(1.0), 4.2),
-        );
+        s.prop(PropSpec::new(energy_pylon(color), p).solid(ColliderShape::Circle(1.0), 4.2));
         s.light(Vec3::new(p.x, 3.4, p.y), color, 260_000.0, 22.0);
     }
 
@@ -209,7 +205,7 @@ fn floor(rng: &mut Rng) -> Mesh {
         } else {
             PLATE
         };
-        crate::meshgen::GroundCell {
+        GroundCell {
             color,
             height: if seam { -0.03 } else { 0.0 },
         }
@@ -226,11 +222,23 @@ fn edge_rail(s: &mut SceneData) {
         (-HALF_X, 0.0, t, HALF_Z),
         (HALF_X, 0.0, t, HALF_Z),
     ] {
-        b.add(&cube(sx * 2.0, 0.12, sz * 2.0), at(cx, 0.06, cz), STEEL_DARK);
-        b.add(&cube(sx * 2.0, 0.06, sz * 2.0 * 0.5), at(cx, 0.16, cz), CYAN);
+        b.add(
+            &cube(sx * 2.0, 0.12, sz * 2.0),
+            at(cx, 0.06, cz),
+            STEEL_DARK,
+        );
+        b.add(
+            &cube(sx * 2.0, 0.06, sz * 2.0 * 0.5),
+            at(cx, 0.16, cz),
+            CYAN,
+        );
     }
     // Under-platform structure, visible past the edge.
-    b.add(&cube(HALF_X * 2.0, 0.8, HALF_Z * 2.0), at(0.0, -0.5, 0.0), STEEL_DARK);
+    b.add(
+        &cube(HALF_X * 2.0, 0.8, HALF_Z * 2.0),
+        at(0.0, -0.5, 0.0),
+        STEEL_DARK,
+    );
     for i in 0..12 {
         let a = i as f32 / 12.0 * std::f32::consts::TAU;
         b.add(
@@ -258,7 +266,11 @@ fn core_pylon() -> Mesh {
             STEEL,
         );
     }
-    b.add(&Sphere::new(0.9).mesh().ico(1).unwrap(), at(0.0, 4.4, 0.0), CYAN);
+    b.add(
+        &Sphere::new(0.9).mesh().ico(1).unwrap(),
+        at(0.0, 4.4, 0.0),
+        CYAN,
+    );
     b.add(&torus(0.09, 1.4), at(0.0, 4.4, 0.0), MAGENTA);
     b.add(
         &torus(0.09, 1.4),
@@ -276,7 +288,11 @@ fn energy_pylon(color: Color) -> Mesh {
     for i in 0..4 {
         b.add(&torus(0.06, 0.6), at(0.0, 0.9 + i as f32 * 0.8, 0.0), color);
     }
-    b.add(&Sphere::new(0.55).mesh().ico(1).unwrap(), at(0.0, 3.9, 0.0), color);
+    b.add(
+        &Sphere::new(0.55).mesh().ico(1).unwrap(),
+        at(0.0, 3.9, 0.0),
+        color,
+    );
     b.build()
 }
 
@@ -311,7 +327,11 @@ fn holo_barrier() -> Mesh {
     // The field itself.
     b.add(&cube(6.0, 2.4, 0.08), at(0.0, 1.4, 0.0), CYAN);
     for i in 0..5 {
-        b.add(&cube(6.0, 0.05, 0.12), at(0.0, 0.5 + i as f32 * 0.5, 0.0), CYAN);
+        b.add(
+            &cube(6.0, 0.05, 0.12),
+            at(0.0, 0.5 + i as f32 * 0.5, 0.0),
+            CYAN,
+        );
     }
     b.build()
 }
@@ -335,7 +355,11 @@ fn bollard() -> Mesh {
 fn conduit(len: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(len, 0.06, 2.0), Transform::IDENTITY, SEAM);
-    b.add(&cube(len, 0.08, 1.2), at(0.0, 0.02, 0.0), pal::shade(MAGENTA, 0.5));
+    b.add(
+        &cube(len, 0.08, 1.2),
+        at(0.0, 0.02, 0.0),
+        pal::shade(MAGENTA, 0.5),
+    );
     // Rails either side.
     for z in [-1.05f32, 1.05] {
         b.add(&cube(len, 0.14, 0.16), at(0.0, 0.05, z), STEEL_DARK);

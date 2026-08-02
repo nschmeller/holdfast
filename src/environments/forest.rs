@@ -7,8 +7,10 @@ use bevy::prelude::*;
 
 use super::{HazardSpec, PropSpec, SceneData, Surface};
 use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
-use crate::art::Glow;
-use crate::meshgen::*;
+use crate::meshgen::{
+    GroundCell, MeshWeld, at, at_rot_z, cone, cube, cylinder, cylinder_hi, ground_grid, noise_soft,
+    noise2, sphere, sphere_hi,
+};
 use crate::palette as pal;
 use crate::rng::Rng;
 
@@ -215,7 +217,7 @@ fn floor(rng: &mut Rng) -> Mesh {
         } else {
             pal::shade(SOIL, 0.85 + n * 0.35)
         };
-        crate::meshgen::GroundCell {
+        GroundCell {
             color,
             // A little unevenness so the ground does not read as a table.
             height: (n - 0.5) * 0.09,
@@ -228,11 +230,7 @@ fn floor(rng: &mut Rng) -> Mesh {
 fn fallen_log() -> Mesh {
     let mut b = MeshWeld::new();
     // Trunk lying along X.
-    b.add(
-        &cylinder_hi(1.5, 17.0),
-        at_rot_z(0.0, 1.5, 0.0, 90.0),
-        BARK,
-    );
+    b.add(&cylinder_hi(1.5, 17.0), at_rot_z(0.0, 1.5, 0.0, 90.0), BARK);
     // Bark ridges.
     let mut rng = Rng::seeded(0xB4B4);
     for _ in 0..22 {
@@ -240,9 +238,12 @@ fn fallen_log() -> Mesh {
         let a = rng.range(0.0, std::f32::consts::TAU);
         b.add(
             &cube(rng.range(0.7, 2.0), 0.16, 0.4),
-            at(x, 1.5 + a.sin() * 1.45, a.cos() * 1.45)
-                .with_rotation(Quat::from_rotation_x(-a)),
-            if rng.chance(0.5) { BARK_LIGHT } else { SOIL_DARK },
+            at(x, 1.5 + a.sin() * 1.45, a.cos() * 1.45).with_rotation(Quat::from_rotation_x(-a)),
+            if rng.chance(0.5) {
+                BARK_LIGHT
+            } else {
+                SOIL_DARK
+            },
         );
     }
     // Cut end with rings.
@@ -282,9 +283,8 @@ fn stump(r: f32) -> Mesh {
         let a = i as f32 / 6.0 * std::f32::consts::TAU + rng.range(-0.2, 0.2);
         b.add(
             &cone(0.3, r * 1.2),
-            at(a.cos() * r * 0.8, 0.2, a.sin() * r * 0.8).with_rotation(
-                Quat::from_rotation_y(-a) * Quat::from_rotation_x(1.4),
-            ),
+            at(a.cos() * r * 0.8, 0.2, a.sin() * r * 0.8)
+                .with_rotation(Quat::from_rotation_y(-a) * Quat::from_rotation_x(1.4)),
             BARK,
         );
     }
@@ -332,8 +332,7 @@ fn glow_mushroom(scale: f32) -> Mesh {
         );
         b.add(
             &sphere(0.42 * ss * 2.0),
-            at(a.cos() * d, 0.62 * ss * 2.0, a.sin() * d)
-                .with_scale(Vec3::new(1.0, 0.6, 1.0)),
+            at(a.cos() * d, 0.62 * ss * 2.0, a.sin() * d).with_scale(Vec3::new(1.0, 0.6, 1.0)),
             MUSHROOM_GLOW,
         );
     }
@@ -341,17 +340,21 @@ fn glow_mushroom(scale: f32) -> Mesh {
 }
 
 fn root_arch(len: f32) -> Mesh {
-    let mut b = MeshWeld::new();
+    let mut weld = MeshWeld::new();
     // Three segments forming a shallow arch out of and back into the soil.
     let steps = 7;
-    for i in 0..steps {
-        let t = i as f32 / (steps - 1) as f32;
-        let x = (t - 0.5) * len;
-        let y = (t * std::f32::consts::PI).sin() * 1.4;
-        let r = 0.34 * (1.0 - (t - 0.5).abs() * 0.7);
-        b.add(&sphere(r.max(0.12)), at(x, y.max(0.05), 0.0), BARK);
+    for index in 0..steps {
+        let along = index as f32 / (steps - 1) as f32;
+        let px = (along - 0.5) * len;
+        let py = (along * std::f32::consts::PI).sin() * 1.4;
+        let thickness = 0.34 * (1.0 - (along - 0.5).abs() * 0.7);
+        weld.add(
+            &sphere(thickness.max(0.12)),
+            at(px, py.max(0.05), 0.0),
+            BARK,
+        );
     }
-    b.build()
+    weld.build()
 }
 
 fn pebble(r: f32, rng: &mut Rng) -> Mesh {
@@ -387,12 +390,11 @@ fn fern(rng: &mut Rng) -> Mesh {
     for i in 0..fronds {
         let a = i as f32 / fronds as f32 * std::f32::consts::TAU;
         let len = rng.range(1.1, 2.0);
-        let lean = rng.range(45.0, 72.0);
+        let tilt = rng.range(45.0, 72.0);
         b.add(
             &cone(0.16, len),
-            at(a.cos() * 0.15, len * 0.3, a.sin() * 0.15).with_rotation(
-                Quat::from_rotation_y(a) * Quat::from_rotation_x(lean.to_radians()),
-            ),
+            at(a.cos() * 0.15, len * 0.3, a.sin() * 0.15)
+                .with_rotation(Quat::from_rotation_y(a) * Quat::from_rotation_x(tilt.to_radians())),
             pal::shade(MOSS_LIGHT, rng.range(0.7, 1.25)),
         );
     }
@@ -427,7 +429,11 @@ fn mud_patch(r: f32) -> Mesh {
     for _ in 0..8 {
         let p = rng.in_disc(r * 0.9);
         b.add(
-            &Mesh::from(Cylinder::new(rng.range(0.3, 0.8), 0.05).mesh().resolution(10)),
+            &Mesh::from(
+                Cylinder::new(rng.range(0.3, 0.8), 0.05)
+                    .mesh()
+                    .resolution(10),
+            ),
             Transform::from_translation(p + Vec3::Y * 0.01),
             pal::shade(SOIL_DARK, rng.range(0.7, 1.3)),
         );

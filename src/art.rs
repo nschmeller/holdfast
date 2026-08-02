@@ -10,10 +10,11 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::enemy::EnemyKind;
-use crate::meshgen::*;
+use crate::meshgen::{MeshWeld, cube, sphere, sphere_hi};
 use crate::models;
 use crate::palette;
 
+#[derive(Debug)]
 pub struct ArtPlugin;
 
 impl Plugin for ArtPlugin {
@@ -71,7 +72,7 @@ impl Glow {
 
 /// Handles for everything spawnable. Meshes indexed by an enum's discriminant
 /// are stored in `Vec`s so lookup is a bounds-checked index, not a hash.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct GameArt {
     // materials
     pub solid: Handle<StandardMaterial>,
@@ -276,7 +277,10 @@ fn build_art(
         b.build()
     });
     let ring = meshes.add(Mesh::from(
-        Torus::new(0.94, 1.0).mesh().major_resolution(40).minor_resolution(6),
+        Torus::new(0.94, 1.0)
+            .mesh()
+            .major_resolution(40)
+            .minor_resolution(6),
     ));
     let disc = meshes.add(Mesh::from(Cylinder::new(1.0, 0.04).mesh().resolution(40)));
     let shadow = meshes.add(Mesh::from(Cylinder::new(1.0, 0.01).mesh().resolution(14)));

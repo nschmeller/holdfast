@@ -22,7 +22,10 @@ const UNLOCK_ALLIES: f32 = 165.0;
 const UNLOCK_RESEARCH: f32 = 240.0;
 const UNLOCK_THREAT: f32 = 300.0;
 
-#[derive(Resource, Default)]
+// Five independent feature switches. A bitfield would be smaller and far less
+// readable at every call site, and these are read far more often than stored.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Resource, Default)]
 pub struct Unlocks {
     pub build: bool,
     pub territory: bool,
@@ -51,7 +54,7 @@ impl Unlocks {
 }
 
 /// A queued banner. The HUD drains this; nothing else needs to know it exists.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Hint {
     pub headline: String,
     pub detail: String,
@@ -59,7 +62,7 @@ pub struct Hint {
     pub life: f32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HintTone {
     /// A new system is available.
     Unlock,
@@ -69,7 +72,7 @@ pub enum HintTone {
     Tip,
 }
 
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct HintQueue {
     pub active: Option<Hint>,
     pub pending: Vec<Hint>,
@@ -111,6 +114,7 @@ impl HintQueue {
     }
 }
 
+#[derive(Debug)]
 pub struct OnboardingPlugin;
 
 impl Plugin for OnboardingPlugin {
@@ -119,8 +123,7 @@ impl Plugin for OnboardingPlugin {
             .init_resource::<HintQueue>()
             .add_systems(
                 Update,
-                (tick_unlocks, tick_hints, notice_new_enemies)
-                    .in_set(GameSet::Present),
+                (tick_unlocks, tick_hints, notice_new_enemies).in_set(GameSet::Present),
             )
             .add_systems(
                 OnExit(AppState::Menu),

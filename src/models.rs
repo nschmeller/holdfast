@@ -8,7 +8,9 @@ use bevy::prelude::*;
 
 use crate::allies::{AllyKind, TurretKind};
 use crate::enemy::EnemyKind;
-use crate::meshgen::*;
+use crate::meshgen::{
+    MeshWeld, at, at_rot_x, at_rot_z, cone, cube, cylinder, sphere, sphere_hi, torus,
+};
 use crate::palette as pal;
 use crate::rng::Rng;
 
@@ -109,8 +111,7 @@ fn dust_bunny() -> Mesh {
         let p = dir * rng.range(0.36, 0.52) + Vec3::new(0.0, 0.42, 0.0);
         b.add(
             &cone(rng.range(0.07, 0.13), rng.range(0.18, 0.34)),
-            Transform::from_translation(p)
-                .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir)),
+            Transform::from_translation(p).with_rotation(Quat::from_rotation_arc(Vec3::Y, dir)),
             if rng.chance(0.5) {
                 pal::DUST_GREY
             } else {
@@ -196,7 +197,11 @@ fn clip_crawler() -> Mesh {
 fn staple_skitter() -> Mesh {
     let mut b = MeshWeld::new();
     // A staple: a flat crown with two legs bent down.
-    b.add(&cube(0.62, 0.09, 0.11), at(0.0, 0.4, 0.0), pal::STAPLE_STEEL);
+    b.add(
+        &cube(0.62, 0.09, 0.11),
+        at(0.0, 0.4, 0.0),
+        pal::STAPLE_STEEL,
+    );
     for side in [-1.0f32, 1.0] {
         b.add(
             &cube(0.09, 0.36, 0.11),
@@ -336,7 +341,11 @@ fn gremlin() -> Mesh {
     b.add(&cube(0.44, 0.5, 0.7), at(0.0, 0.45, 0.0), pal::GREMLIN_TEAL);
     // The metal connector as a snout.
     b.add(&cube(0.3, 0.22, 0.3), at(0.0, 0.44, 0.44), pal::METAL);
-    b.add(&cube(0.22, 0.12, 0.06), at(0.0, 0.44, 0.58), pal::PLASTIC_DARK);
+    b.add(
+        &cube(0.22, 0.12, 0.06),
+        at(0.0, 0.44, 0.58),
+        pal::PLASTIC_DARK,
+    );
     // Arms and legs.
     for side in [-1.0f32, 1.0] {
         b.add(
@@ -345,7 +354,11 @@ fn gremlin() -> Mesh {
                 .with_rotation(Quat::from_rotation_z(side * 50.0f32.to_radians())),
             pal::PLASTIC_DARK,
         );
-        b.add(&cylinder(0.055, 0.24), at(side * 0.14, 0.12, 0.0), pal::PLASTIC_DARK);
+        b.add(
+            &cylinder(0.055, 0.24),
+            at(side * 0.14, 0.12, 0.0),
+            pal::PLASTIC_DARK,
+        );
     }
     eyes(&mut b, 0.6, 0.32, 0.12, 0.07);
     b.build()
@@ -355,7 +368,11 @@ fn boss_stapler() -> Mesh {
     let mut b = MeshWeld::new();
     // Base.
     b.add(&cube(1.5, 0.36, 3.4), at(0.0, 0.2, 0.0), pal::METAL_DARK);
-    b.add(&cube(1.35, 0.2, 3.1), at(0.0, 0.42, 0.05), pal::PLASTIC_DARK);
+    b.add(
+        &cube(1.35, 0.2, 3.1),
+        at(0.0, 0.42, 0.05),
+        pal::PLASTIC_DARK,
+    );
     // Hinged upper jaw, tilted open and menacing.
     b.add(
         &cube(1.35, 0.5, 2.9),
@@ -389,7 +406,11 @@ fn boss_hole_punch() -> Mesh {
     // Two punch pistons.
     for side in [-1.0f32, 1.0] {
         b.add(&cylinder(0.3, 1.5), at(side * 0.7, 1.5, 0.0), pal::METAL);
-        b.add(&cylinder(0.4, 0.24), at(side * 0.7, 2.3, 0.0), pal::PLASTIC_DARK);
+        b.add(
+            &cylinder(0.4, 0.24),
+            at(side * 0.7, 2.3, 0.0),
+            pal::PLASTIC_DARK,
+        );
     }
     // Chad tray, mouth-like.
     b.add(&cube(2.3, 0.3, 0.5), at(0.0, 0.3, 0.95), pal::PLASTIC_MID);
@@ -416,8 +437,7 @@ fn boss_lamp() -> Mesh {
     // Shade.
     b.add(
         &cone(1.05, 1.5),
-        at(0.0, y + 0.5, z + 0.5)
-            .with_rotation(Quat::from_rotation_x(145.0f32.to_radians())),
+        at(0.0, y + 0.5, z + 0.5).with_rotation(Quat::from_rotation_x(145.0f32.to_radians())),
         pal::LAMP_SHADE,
     );
     // The bulb: an eye that stares.
@@ -442,7 +462,11 @@ pub fn ally_mesh(kind: AllyKind) -> Mesh {
     // Visor.
     b.add(&cube(0.26, 0.09, 0.06), at(0.0, 0.68, 0.21), trim);
     for side in [-1.0f32, 1.0] {
-        b.add(&cylinder(0.05, 0.26), at(side * 0.13, 0.12, 0.0), pal::PLASTIC_DARK);
+        b.add(
+            &cylinder(0.05, 0.26),
+            at(side * 0.13, 0.12, 0.0),
+            pal::PLASTIC_DARK,
+        );
     }
 
     match kind {
@@ -459,7 +483,11 @@ pub fn ally_mesh(kind: AllyKind) -> Mesh {
                 at_rot_x(0.2, 0.46, 0.22, 90.0),
                 pal::METAL_DARK,
             );
-            b.add(&cube(0.16, 0.16, 0.2), at(0.2, 0.46, -0.06), pal::PLASTIC_DARK);
+            b.add(
+                &cube(0.16, 0.16, 0.2),
+                at(0.2, 0.46, -0.06),
+                pal::PLASTIC_DARK,
+            );
             b.add(&sphere(0.05), at(0.2, 0.46, 0.54), trim);
         }
         AllyKind::Bulwark => {
@@ -494,7 +522,11 @@ pub fn turret_mesh(kind: TurretKind) -> Mesh {
     match kind {
         TurretKind::Tack => {
             b.add(&sphere(0.3), at(0.0, 0.42, 0.0), pal::PLASTIC_MID);
-            b.add(&cylinder(0.09, 0.7), at_rot_x(0.0, 0.46, 0.3, 90.0), pal::METAL);
+            b.add(
+                &cylinder(0.09, 0.7),
+                at_rot_x(0.0, 0.46, 0.3, 90.0),
+                pal::METAL,
+            );
             b.add(&cylinder(0.13, 0.1), at_rot_x(0.0, 0.46, 0.62, 90.0), trim);
         }
         TurretKind::Lobber => {
@@ -524,7 +556,11 @@ pub fn turret_mesh(kind: TurretKind) -> Mesh {
             b.add(&cube(1.9, 0.9, 0.34), at(0.0, 0.5, 0.0), pal::PLASTIC_MID);
             b.add(&cube(1.9, 0.12, 0.4), at(0.0, 0.94, 0.0), trim);
             for side in [-1.0f32, 1.0] {
-                b.add(&cube(0.2, 1.0, 0.5), at(side * 0.85, 0.5, 0.0), pal::METAL_DARK);
+                b.add(
+                    &cube(0.2, 1.0, 0.5),
+                    at(side * 0.85, 0.5, 0.0),
+                    pal::METAL_DARK,
+                );
             }
         }
         TurretKind::Generator => {
@@ -538,7 +574,11 @@ pub fn turret_mesh(kind: TurretKind) -> Mesh {
                     pal::METAL_DARK,
                 );
             }
-            b.add(&Sphere::new(0.28).mesh().ico(1).unwrap(), at(0.0, 1.15, 0.0), trim);
+            b.add(
+                &Sphere::new(0.28).mesh().ico(1).unwrap(),
+                at(0.0, 1.15, 0.0),
+                trim,
+            );
             b.add(&torus(0.05, 0.42), at(0.0, 1.15, 0.0), trim);
         }
     }
@@ -557,17 +597,37 @@ pub fn pencil_dart() -> Mesh {
         pal::PENCIL_YELLOW,
     );
     b.add(&cone(0.09, 0.24), at_rot_x(0.0, 0.0, 0.5, 90.0), pal::CORK);
-    b.add(&cone(0.04, 0.1), at_rot_x(0.0, 0.0, 0.62, 90.0), pal::GRAPHITE);
-    b.add(&cylinder(0.095, 0.1), at_rot_x(0.0, 0.0, -0.42, 90.0), pal::METAL);
-    b.add(&cylinder(0.09, 0.12), at_rot_x(0.0, 0.0, -0.52, 90.0), pal::ERASER_PINK);
+    b.add(
+        &cone(0.04, 0.1),
+        at_rot_x(0.0, 0.0, 0.62, 90.0),
+        pal::GRAPHITE,
+    );
+    b.add(
+        &cylinder(0.095, 0.1),
+        at_rot_x(0.0, 0.0, -0.42, 90.0),
+        pal::METAL,
+    );
+    b.add(
+        &cylinder(0.09, 0.12),
+        at_rot_x(0.0, 0.0, -0.52, 90.0),
+        pal::ERASER_PINK,
+    );
     b.build()
 }
 
 pub fn staple() -> Mesh {
     let mut b = MeshWeld::new();
-    b.add(&cube(0.36, 0.07, 0.07), at(0.0, 0.0, 0.1), pal::STAPLE_STEEL);
+    b.add(
+        &cube(0.36, 0.07, 0.07),
+        at(0.0, 0.0, 0.1),
+        pal::STAPLE_STEEL,
+    );
     for side in [-1.0f32, 1.0] {
-        b.add(&cube(0.07, 0.07, 0.22), at(side * 0.15, 0.0, -0.04), pal::STAPLE_STEEL);
+        b.add(
+            &cube(0.07, 0.07, 0.22),
+            at(side * 0.15, 0.0, -0.04),
+            pal::STAPLE_STEEL,
+        );
     }
     b.build()
 }
@@ -579,7 +639,11 @@ pub fn thumbtack() -> Mesh {
         at(0.0, 0.0, -0.08).with_scale(Vec3::new(1.0, 1.0, 0.6)),
         pal::TACK_RED,
     );
-    b.add(&cone(0.05, 0.34), at_rot_x(0.0, 0.0, 0.16, 90.0), pal::METAL);
+    b.add(
+        &cone(0.05, 0.34),
+        at_rot_x(0.0, 0.0, 0.16, 90.0),
+        pal::METAL,
+    );
     b.build()
 }
 
@@ -598,8 +662,7 @@ pub fn paperclip() -> Mesh {
     for (i, s) in [1.0f32, 0.62].iter().enumerate() {
         b.add(
             &torus(0.035, 0.24 * s),
-            at_rot_x(0.0, 0.0, -0.03 + i as f32 * 0.06, 90.0)
-                .with_scale(Vec3::new(0.55, 1.0, 1.0)),
+            at_rot_x(0.0, 0.0, -0.03 + i as f32 * 0.06, 90.0).with_scale(Vec3::new(0.55, 1.0, 1.0)),
             pal::CLIP_STEEL,
         );
     }
@@ -662,7 +725,11 @@ pub fn supply_crate() -> Mesh {
     // Straps.
     b.add(&cube(0.66, 0.1, 0.12), at(0.0, 0.3, 0.0), pal::GEAR_GOLD);
     b.add(&cube(0.12, 0.1, 0.66), at(0.0, 0.3, 0.0), pal::GEAR_GOLD);
-    b.add(&cube(0.66, 0.08, 0.66), at(0.0, 0.52, 0.0), pal::shade(pal::CORK, 1.2));
+    b.add(
+        &cube(0.66, 0.08, 0.66),
+        at(0.0, 0.52, 0.0),
+        pal::shade(pal::CORK, 1.2),
+    );
     b.build()
 }
 
@@ -683,6 +750,10 @@ pub fn zone_pillar() -> Mesh {
 pub fn arrow() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(0.14, 0.06, 0.4), at(0.0, 0.0, -0.1), Color::WHITE);
-    b.add(&cone(0.2, 0.34), at_rot_x(0.0, 0.0, 0.24, 90.0), Color::WHITE);
+    b.add(
+        &cone(0.2, 0.34),
+        at_rot_x(0.0, 0.0, 0.24, 90.0),
+        Color::WHITE,
+    );
     b.build()
 }

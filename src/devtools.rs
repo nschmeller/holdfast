@@ -22,10 +22,10 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::{MonitorSelection, WindowPosition};
 
-use crate::environments::EnvKind;
 use crate::AppState;
+use crate::environments::EnvKind;
 
-#[derive(Resource, Default, Clone)]
+#[derive(Debug, Resource, Default, Clone)]
 pub struct DevConfig {
     pub arena: Option<EnvKind>,
     pub autostart: bool,
@@ -41,19 +41,20 @@ pub struct DevConfig {
 
 impl DevConfig {
     fn from_env() -> Self {
-        let arena = env::var("DFFA_ARENA").ok().and_then(|v| {
-            match v.to_ascii_lowercase().as_str() {
-                "desk" => Some(EnvKind::Desk),
-                "forest" => Some(EnvKind::Forest),
-                "rooftop" | "urban" => Some(EnvKind::Rooftop),
-                "grid" | "future" => Some(EnvKind::Grid),
-                "arcane" | "magic" => Some(EnvKind::Arcane),
-                other => {
-                    warn!("DFFA_ARENA: unknown arena {other:?}");
-                    None
-                }
-            }
-        });
+        let arena =
+            env::var("DFFA_ARENA")
+                .ok()
+                .and_then(|v| match v.to_ascii_lowercase().as_str() {
+                    "desk" => Some(EnvKind::Desk),
+                    "forest" => Some(EnvKind::Forest),
+                    "rooftop" | "urban" => Some(EnvKind::Rooftop),
+                    "grid" | "future" => Some(EnvKind::Grid),
+                    "arcane" | "magic" => Some(EnvKind::Arcane),
+                    other => {
+                        warn!("DFFA_ARENA: unknown arena {other:?}");
+                        None
+                    }
+                });
 
         // `name.png@seconds`, with the delay optional.
         let shot = env::var("DFFA_SHOT").ok().map(|v| {
@@ -97,6 +98,7 @@ struct DevTimers {
     shot_taken: bool,
 }
 
+#[derive(Debug)]
 pub struct DevToolsPlugin;
 
 impl Plugin for DevToolsPlugin {
@@ -118,10 +120,7 @@ impl Plugin for DevToolsPlugin {
             // Startup, not PreStartup: the primary window has to exist first.
             .add_systems(Startup, place_window)
             .add_systems(Update, (force_unlocks, tick_dev))
-            .add_systems(
-                Update,
-                autopick_card.run_if(in_state(AppState::LevelUp)),
-            );
+            .add_systems(Update, autopick_card.run_if(in_state(AppState::LevelUp)));
     }
 }
 
@@ -228,20 +227,21 @@ fn tick_dev(
 ) {
     timers.elapsed += time.delta_secs();
 
-    if let Some((path, at)) = &config.shot {
-        if !timers.shot_taken && timers.elapsed >= *at {
-            timers.shot_taken = true;
-            info!("devtools: capturing {path}");
-            commands
-                .spawn(Screenshot::primary_window())
-                .observe(save_to_disk(path.clone()));
-        }
+    if let Some((path, at)) = &config.shot
+        && !timers.shot_taken
+        && timers.elapsed >= *at
+    {
+        timers.shot_taken = true;
+        info!("devtools: capturing {path}");
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path.clone()));
     }
 
-    if let Some(at) = config.exit_after {
-        if timers.elapsed >= at {
-            info!("devtools: exiting after {at}s");
-            exit.write(AppExit::Success);
-        }
+    if let Some(at) = config.exit_after
+        && timers.elapsed >= at
+    {
+        info!("devtools: exiting after {at}s");
+        exit.write(AppExit::Success);
     }
 }

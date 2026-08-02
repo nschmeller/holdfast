@@ -7,8 +7,10 @@ use bevy::prelude::*;
 
 use super::{HazardSpec, PropSpec, SceneData, Surface};
 use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
-use crate::art::Glow;
-use crate::meshgen::*;
+use crate::meshgen::{
+    GroundCell, MeshWeld, at, at_rot_x, at_rot_z, cone, cube, cylinder, cylinder_hi, ground_grid,
+    noise_soft, noise2, sphere, torus,
+};
 use crate::palette as pal;
 use crate::rng::Rng;
 
@@ -62,8 +64,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
 
     // -- water tower: the landmark ----------------------------------------
     s.prop(
-        PropSpec::new(water_tower(), Vec2::new(13.0, -9.0))
-            .solid(ColliderShape::Circle(3.0), 8.0),
+        PropSpec::new(water_tower(), Vec2::new(13.0, -9.0)).solid(ColliderShape::Circle(3.0), 8.0),
     );
 
     // -- HVAC plant: the cover ---------------------------------------------
@@ -100,8 +101,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
             .solid(ColliderShape::rect_rot(1.9, 1.6, -8.0), 3.4),
     );
     s.prop(
-        PropSpec::new(chimney(), Vec2::new(6.0, -12.0))
-            .solid(ColliderShape::rect(1.5, 1.5), 5.0),
+        PropSpec::new(chimney(), Vec2::new(6.0, -12.0)).solid(ColliderShape::rect(1.5, 1.5), 5.0),
     );
 
     // -- satellite dishes ---------------------------------------------------
@@ -133,7 +133,12 @@ pub fn build(rng: &mut Rng) -> SceneData {
                 .solid(ColliderShape::rect(1.8, 1.4), 0.7)
                 .passthrough(),
         );
-        s.light(Vec3::new(p.x, 1.2, p.y), Color::srgb(1.0, 0.85, 0.5), 60_000.0, 10.0);
+        s.light(
+            Vec3::new(p.x, 1.2, p.y),
+            Color::srgb(1.0, 0.85, 0.5),
+            60_000.0,
+            10.0,
+        );
     }
 
     // -- clutter ------------------------------------------------------------
@@ -224,15 +229,14 @@ fn floor(rng: &mut Rng) -> Mesh {
             CONCRETE_DARK
         } else if patch {
             RUST
-        } else if (strip + ix as i32 + iz as i32) % 2 == 0 {
+        // `strip` goes negative on the near half of the roof, so fold it into
+        // {0, 1} before mixing it with the unsigned cell indices.
+        } else if (strip.rem_euclid(2) as usize + ix + iz).is_multiple_of(2) {
             pal::shade(TAR, 0.9 + n * 0.3)
         } else {
             pal::shade(TAR_LIGHT, 0.85 + n * 0.3)
         };
-        crate::meshgen::GroundCell {
-            color,
-            height: 0.0,
-        }
+        GroundCell { color, height: 0.0 }
     })
 }
 
@@ -276,13 +280,16 @@ fn water_tower() -> Mesh {
         b.add(&torus(0.07, 2.1), at(0.0, y, 0.0), RUST);
     }
     // Tank.
-    b.add(&cylinder_hi(2.5, 3.4), at(0.0, 6.2, 0.0), Color::srgb(0.36, 0.28, 0.22));
+    b.add(
+        &cylinder_hi(2.5, 3.4),
+        at(0.0, 6.2, 0.0),
+        Color::srgb(0.36, 0.28, 0.22),
+    );
     for i in 0..14 {
         let a = i as f32 / 14.0 * std::f32::consts::TAU;
         b.add(
             &cube(0.18, 3.4, 0.2),
-            at(a.cos() * 2.5, 6.2, a.sin() * 2.5)
-                .with_rotation(Quat::from_rotation_y(-a)),
+            at(a.cos() * 2.5, 6.2, a.sin() * 2.5).with_rotation(Quat::from_rotation_y(-a)),
             Color::srgb(0.3, 0.23, 0.18),
         );
     }
@@ -295,7 +302,11 @@ fn water_tower() -> Mesh {
 fn ac_unit(w: f32, d: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(w * 2.0, 2.0, d * 2.0), at(0.0, 1.0, 0.0), DUCT);
-    b.add(&cube(w * 2.1, 0.2, d * 2.1), at(0.0, 2.05, 0.0), CONCRETE_DARK);
+    b.add(
+        &cube(w * 2.1, 0.2, d * 2.1),
+        at(0.0, 2.05, 0.0),
+        CONCRETE_DARK,
+    );
     // Fan grille on top.
     b.add(&cylinder(w * 0.62, 0.14), at(0.0, 2.2, 0.0), CONCRETE_DARK);
     for i in 0..4 {
@@ -324,7 +335,11 @@ fn duct_run(len: f32) -> Mesh {
     let segs = (len / 1.4).ceil() as i32;
     for i in 0..=segs {
         let x = -len * 0.5 + i as f32 * (len / segs as f32);
-        b.add(&torus(0.08, 0.74), at_rot_z(x, 0.9, 0.0, 90.0), CONCRETE_DARK);
+        b.add(
+            &torus(0.08, 0.74),
+            at_rot_z(x, 0.9, 0.0, 90.0),
+            CONCRETE_DARK,
+        );
     }
     // Feet.
     for x in [-len * 0.4, len * 0.4] {
@@ -344,7 +359,11 @@ fn roof_door() -> Mesh {
 
 fn chimney() -> Mesh {
     let mut b = MeshWeld::new();
-    b.add(&cube(2.8, 5.0, 2.8), at(0.0, 2.5, 0.0), Color::srgb(0.36, 0.22, 0.18));
+    b.add(
+        &cube(2.8, 5.0, 2.8),
+        at(0.0, 2.5, 0.0),
+        Color::srgb(0.36, 0.22, 0.18),
+    );
     // Brick courses.
     for i in 0..10 {
         b.add(
@@ -393,7 +412,11 @@ fn neon_sign() -> Mesh {
 fn skylight() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(3.8, 0.36, 3.0), at(0.0, 0.18, 0.0), CONCRETE_DARK);
-    b.add(&cube(3.4, 0.14, 2.6), at(0.0, 0.42, 0.0), Color::srgb(0.8, 0.7, 0.45));
+    b.add(
+        &cube(3.4, 0.14, 2.6),
+        at(0.0, 0.42, 0.0),
+        Color::srgb(0.8, 0.7, 0.45),
+    );
     // Mullions.
     b.add(&cube(3.5, 0.18, 0.14), at(0.0, 0.44, 0.0), CONCRETE_DARK);
     b.add(&cube(0.14, 0.18, 2.7), at(0.0, 0.44, 0.0), CONCRETE_DARK);
@@ -421,8 +444,12 @@ fn crate_stack(rng: &mut Rng) -> Mesh {
         let s = 1.4 - i as f32 * 0.16;
         b.add(
             &cube(s, 0.8, s),
-            at(rng.range(-0.12, 0.12), 0.4 + i as f32 * 0.8, rng.range(-0.12, 0.12))
-                .with_rotation(Quat::from_rotation_y(rng.range(-0.3, 0.3))),
+            at(
+                rng.range(-0.12, 0.12),
+                0.4 + i as f32 * 0.8,
+                rng.range(-0.12, 0.12),
+            )
+            .with_rotation(Quat::from_rotation_y(rng.range(-0.3, 0.3))),
             if rng.chance(0.5) { RUST } else { CONCRETE_DARK },
         );
     }

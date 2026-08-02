@@ -10,16 +10,18 @@ use bevy::prelude::*;
 use crate::arena::ObstacleField;
 use crate::art::{GameArt, Glow};
 use crate::combat::{Actor, Damageable, EnemyGrid, ShotVisual, SpawnShot};
-use crate::common::*;
+use crate::common::{
+    Altitude, Body, BurstEvent, DamageEvent, DamageSource, Health, RunEntity, SfxEvent,
+    VisualScale, damp, to_world, yaw_towards,
+};
 use crate::enemy::{Enemy, StatusEffects};
-use crate::palette as pal;
 use crate::player::{Player, PlayerStats};
 use crate::threat::Threat;
 use crate::{AppState, GameSet, RunSetup};
 
 // -- economy ----------------------------------------------------------------
 
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct Economy {
     pub scrap: f32,
     pub cores: f32,
@@ -105,8 +107,7 @@ impl AllyKind {
         match self {
             Self::Scout => 2.0,
             Self::Gunner => 3.0,
-            Self::Bulwark => 4.0,
-            Self::Medic => 4.0,
+            Self::Bulwark | Self::Medic => 4.0,
         }
     }
 
@@ -155,6 +156,7 @@ impl Stance {
         }
     }
 
+    #[must_use]
     pub fn next(self) -> Self {
         match self {
             Self::Follow => Self::Hold,
@@ -164,7 +166,7 @@ impl Stance {
     }
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Ally {
     pub kind: AllyKind,
     pub stance: Stance,
@@ -180,7 +182,7 @@ pub struct Ally {
 }
 
 /// Squad-wide state the HUD and input both need.
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct Squad {
     pub stance: Stance,
     pub count: u32,
@@ -274,7 +276,7 @@ impl TurretKind {
     }
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Turret {
     pub kind: TurretKind,
     pub cooldown: f32,
@@ -296,7 +298,7 @@ pub enum ZoneOwner {
     Enemy,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Zone {
     pub owner: ZoneOwner,
     /// -1 fully enemy, 0 neutral, +1 fully player.
@@ -306,24 +308,25 @@ pub struct Zone {
 }
 
 /// Ask the arena to place a territory marker.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct SpawnZone {
     pub pos: Vec2,
 }
 
 /// Recruit request, raised by the input layer.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct RecruitRequest {
     pub kind: AllyKind,
 }
 
 /// Build request, raised by plan mode.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct BuildRequest {
     pub kind: TurretKind,
     pub pos: Vec2,
 }
 
+#[derive(Debug)]
 pub struct AlliesPlugin;
 
 impl Plugin for AlliesPlugin {
@@ -334,10 +337,7 @@ impl Plugin for AlliesPlugin {
             .add_message::<RecruitRequest>()
             .add_message::<BuildRequest>()
             .add_systems(Update, spawn_zones)
-            .add_systems(
-                Update,
-                (ally_think, turret_think).in_set(GameSet::Think),
-            )
+            .add_systems(Update, (ally_think, turret_think).in_set(GameSet::Think))
             .add_systems(
                 Update,
                 (
@@ -363,11 +363,7 @@ fn reset_command_state(mut economy: ResMut<Economy>, mut squad: ResMut<Squad>) {
     squad.reset();
 }
 
-fn spawn_zones(
-    mut commands: Commands,
-    art: Res<GameArt>,
-    mut requests: MessageReader<SpawnZone>,
-) {
+fn spawn_zones(mut commands: Commands, art: Res<GameArt>, mut requests: MessageReader<SpawnZone>) {
     for req in requests.read() {
         commands.spawn((
             Zone {
@@ -387,14 +383,17 @@ fn spawn_zones(
             ZoneRing(req.pos),
             Mesh3d(art.ring.clone()),
             MeshMaterial3d(art.glow(Glow::Zone)),
-            Transform::from_translation(to_world(req.pos, 0.05))
-                .with_scale(Vec3::new(ZONE_RADIUS, 1.0, ZONE_RADIUS)),
+            Transform::from_translation(to_world(req.pos, 0.05)).with_scale(Vec3::new(
+                ZONE_RADIUS,
+                1.0,
+                ZONE_RADIUS,
+            )),
             crate::environments::EnvEntity,
         ));
     }
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct ZoneRing(pub Vec2);
 
 fn handle_recruit(
@@ -873,9 +872,18 @@ fn structure_income(
 fn zone_visuals(
     time: Res<Time>,
     art: Res<GameArt>,
-    mut zones: Query<(&mut Zone, &Body, &mut Transform, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut zones: Query<(
+        &mut Zone,
+        &Body,
+        &mut Transform,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
     mut rings: Query<
-        (&ZoneRing, &mut Transform, &mut MeshMaterial3d<StandardMaterial>),
+        (
+            &ZoneRing,
+            &mut Transform,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
         Without<Zone>,
     >,
 ) {
@@ -905,14 +913,10 @@ fn zone_visuals(
         owners.push((body.pos, zone.progress, zone.owner));
     }
     for (ring, mut transform, mut material) in &mut rings {
-        let Some((_, progress, owner)) = owners
-            .iter()
-            .copied()
-            .min_by(|a, b| {
-                a.0.distance_squared(ring.0)
-                    .total_cmp(&b.0.distance_squared(ring.0))
-            })
-        else {
+        let Some((_, progress, owner)) = owners.iter().copied().min_by(|a, b| {
+            a.0.distance_squared(ring.0)
+                .total_cmp(&b.0.distance_squared(ring.0))
+        }) else {
             continue;
         };
         material.0 = art.glow(match owner {
@@ -950,7 +954,10 @@ mod tests {
         assert!(e.spend_scrap(30.0));
         assert!((e.scrap - 20.0).abs() < 1e-5);
         assert!(!e.spend_scrap(30.0), "overspending must fail");
-        assert!((e.scrap - 20.0).abs() < 1e-5, "a failed spend must not deduct");
+        assert!(
+            (e.scrap - 20.0).abs() < 1e-5,
+            "a failed spend must not deduct"
+        );
     }
 
     #[test]
@@ -1013,7 +1020,10 @@ mod tests {
         let bulwark_hp = AllyKind::Bulwark.stats().0;
         for kind in AllyKind::ALL {
             if kind != AllyKind::Bulwark {
-                assert!(bulwark_hp > kind.stats().0, "{kind:?} out-tanks the Bulwark");
+                assert!(
+                    bulwark_hp > kind.stats().0,
+                    "{kind:?} out-tanks the Bulwark"
+                );
             }
             assert!(AllyKind::Scout.core_cost() <= kind.core_cost());
         }
@@ -1081,7 +1091,10 @@ mod tests {
         assert_eq!(range, 0.0);
         assert_eq!(rate, 0.0);
         for kind in TurretKind::ALL {
-            assert!(barricade_hp >= kind.stats().0, "{kind:?} out-tanks the wall");
+            assert!(
+                barricade_hp >= kind.stats().0,
+                "{kind:?} out-tanks the wall"
+            );
             assert!(TurretKind::Barricade.scrap_cost() <= kind.scrap_cost());
         }
     }
@@ -1119,7 +1132,10 @@ mod tests {
     fn damage_turrets_trade_rate_against_punch() {
         let (_, tack_dmg, _, tack_rate, _) = TurretKind::Tack.stats();
         let (_, lob_dmg, _, lob_rate, _) = TurretKind::Lobber.stats();
-        assert!(tack_rate < lob_rate, "the tack turret should be the fast one");
+        assert!(
+            tack_rate < lob_rate,
+            "the tack turret should be the fast one"
+        );
         assert!(lob_dmg > tack_dmg, "the lobber should be the heavy one");
     }
 

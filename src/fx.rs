@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::art::GameArt;
 use crate::camera::MainCamera;
-use crate::common::*;
+use crate::common::{BurstEvent, FloatingTextEvent, RunEntity, to_world};
 use crate::rng::Rng;
 use crate::{AppState, GameSet};
 
@@ -18,7 +18,7 @@ use crate::{AppState, GameSet};
 const MAX_PARTICLES: usize = 420;
 const MAX_FLOATERS: usize = 44;
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Particle {
     pub vel: Vec3,
     pub life: f32,
@@ -29,7 +29,7 @@ pub struct Particle {
 }
 
 /// A world-anchored piece of UI text that drifts up and fades.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Floater {
     pub world: Vec2,
     pub height: f32,
@@ -39,12 +39,13 @@ pub struct Floater {
     pub drift: f32,
 }
 
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct FxCounts {
     pub particles: usize,
     pub floaters: usize,
 }
 
+#[derive(Debug)]
 pub struct FxPlugin;
 
 impl Plugin for FxPlugin {

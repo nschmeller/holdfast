@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 
 use crate::allies::{Economy, Squad, Zone, ZoneOwner};
-use crate::common::*;
+use crate::common::{Health, format_count, format_time};
 use crate::enemy::{BossBarTarget, Director, Enemy};
 use crate::environments::EnvKind;
 use crate::onboarding::{HintQueue, HintTone, Unlocks};
@@ -20,8 +20,8 @@ use crate::{AppState, GameSet};
 
 /// `TextFont::font_size` takes a `FontSize` in Bevy 0.19; this keeps call sites
 /// reading as plain pixel numbers.
-pub fn px(size: f32) -> bevy::text::FontSize {
-    bevy::text::FontSize::Px(size)
+pub fn px(size: f32) -> FontSize {
+    FontSize::Px(size)
 }
 
 pub fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
@@ -54,7 +54,7 @@ fn panel() -> impl Bundle {
 
 // -- markers ----------------------------------------------------------------
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct HudRoot;
 
 #[derive(Component)]
@@ -114,6 +114,7 @@ struct AnnounceText;
 #[derive(Component)]
 struct ControlsLabel;
 
+#[derive(Debug)]
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -133,10 +134,7 @@ impl Plugin for HudPlugin {
                 )
                     .in_set(GameSet::Present),
             )
-            .add_systems(
-                Update,
-                hud_visibility.run_if(state_changed::<AppState>),
-            )
+            .add_systems(Update, hud_visibility.run_if(state_changed::<AppState>))
             .add_systems(OnEnter(AppState::Menu), remove_hud);
     }
 }
@@ -183,7 +181,13 @@ fn ensure_hud(mut commands: Commands, existing: Query<Entity, With<HudRoot>>) {
         });
 }
 
-fn bar(parent: &mut ChildSpawnerCommands, width: f32, height: f32, color: Color, marker: impl Bundle) {
+fn bar(
+    parent: &mut ChildSpawnerCommands,
+    width: f32,
+    height: f32,
+    color: Color,
+    marker: impl Bundle,
+) {
     parent
         .spawn((
             Node {
@@ -556,10 +560,7 @@ fn update_threat(
         c.0 = color;
     }
     for mut t in &mut set.p2() {
-        t.0 = format!(
-            "x{:.2} rewards",
-            threat.reward_mult() * cycle.reward_mult()
-        );
+        t.0 = format!("x{:.2} rewards", threat.reward_mult() * cycle.reward_mult());
     }
     for (mut t, mut c) in &mut set.p3() {
         if !unlocks.threat_dial {
@@ -612,7 +613,10 @@ fn update_economy(
             squad.stance.label()
         );
     }
-    let held = zones.iter().filter(|z| z.owner == ZoneOwner::Player).count();
+    let held = zones
+        .iter()
+        .filter(|z| z.owner == ZoneOwner::Player)
+        .count();
     let total = zones.iter().count();
     for mut t in &mut set.p3() {
         t.0 = format!("ZONES {held}/{total}");
@@ -683,7 +687,7 @@ fn update_hint(
     }
     let Some(hint) = active else { return };
     for (mut t, mut c) in &mut headline {
-        t.0 = hint.headline.clone();
+        t.0.clone_from(&hint.headline);
         c.0 = match hint.tone {
             HintTone::Unlock => pal::ACCENT,
             HintTone::Discovery => pal::ELITE_TRIM,
@@ -691,7 +695,7 @@ fn update_hint(
         };
     }
     for mut t in &mut detail {
-        t.0 = hint.detail.clone();
+        t.0.clone_from(&hint.detail);
     }
 }
 
@@ -760,7 +764,7 @@ fn update_plan(
     );
 
     for (mut t, mut c) in &mut label {
-        t.0 = body.clone();
+        t.0.clone_from(&body);
         c.0 = if plan.valid && affordable {
             pal::ACCENT
         } else {

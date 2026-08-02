@@ -14,9 +14,11 @@ mod rooftop;
 
 use bevy::prelude::*;
 
-use crate::arena::{ArenaBounds, ColliderShape, Gust, Hazard, HazardKind, ObstacleField, Spotlight};
+use crate::arena::{
+    ArenaBounds, ColliderShape, Gust, Hazard, HazardKind, ObstacleField, Spotlight,
+};
 use crate::art::{GameArt, Glow};
-use crate::common::{Body, RunEntity, to_world};
+use crate::common::{Body, to_world};
 use crate::rng::Rng;
 use crate::{AppState, GameSet, RunSetup};
 
@@ -40,10 +42,12 @@ impl EnvKind {
         Self::Arcane,
     ];
 
+    #[must_use]
     pub fn next(self) -> Self {
         Self::ALL[(self as usize + 1) % Self::COUNT]
     }
 
+    #[must_use]
     pub fn prev(self) -> Self {
         Self::ALL[(self as usize + Self::COUNT - 1) % Self::COUNT]
     }
@@ -125,7 +129,7 @@ impl EnvKind {
 }
 
 /// Which shared material a prop renders with.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum Surface {
     Solid,
     Matte,
@@ -134,6 +138,7 @@ pub enum Surface {
     Glow(Glow),
 }
 
+#[derive(Debug)]
 pub struct PropSpec {
     pub mesh: Mesh,
     pub pos: Vec2,
@@ -160,6 +165,7 @@ impl PropSpec {
         }
     }
 
+    #[must_use]
     pub fn solid(mut self, shape: ColliderShape, height: f32) -> Self {
         self.collider = Some(shape);
         self.height = height;
@@ -169,27 +175,32 @@ impl PropSpec {
         self
     }
 
+    #[must_use]
     pub fn passthrough(mut self) -> Self {
         self.blocks_shots = false;
         self
     }
 
+    #[must_use]
     pub fn surface(mut self, surface: Surface) -> Self {
         self.surface = surface;
         self
     }
 
+    #[must_use]
     pub fn rot(mut self, degrees: f32) -> Self {
         self.rot_y = degrees.to_radians();
         self
     }
 
+    #[must_use]
     pub fn raised(mut self, y: f32) -> Self {
         self.y = y;
         self
     }
 }
 
+#[derive(Debug)]
 pub struct LightSpec {
     pub pos: Vec3,
     pub color: Color,
@@ -198,6 +209,7 @@ pub struct LightSpec {
     pub shadows: bool,
 }
 
+#[derive(Debug)]
 pub struct HazardSpec {
     pub pos: Vec2,
     pub radius: f32,
@@ -209,6 +221,7 @@ pub struct HazardSpec {
 }
 
 /// Everything an environment contributes.
+#[derive(Debug)]
 pub struct SceneData {
     pub bounds: ArenaBounds,
     pub ground: Mesh,
@@ -268,15 +281,15 @@ impl SceneData {
 
 /// Marker for everything spawned by the current environment, so switching
 /// arenas is a single despawn query.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct EnvEntity;
 
 /// Set when a rebuild is required (new run, or the player changed arena).
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct EnvDirty(pub bool);
 
 /// A permanent hazard that cycles on and off, like a steam vent.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct PulsingHazard {
     pub period: f32,
     pub on_fraction: f32,
@@ -284,6 +297,7 @@ pub struct PulsingHazard {
     pub base_dps: f32,
 }
 
+#[derive(Debug)]
 pub struct ArenaPlugin;
 
 impl Plugin for ArenaPlugin {
@@ -295,11 +309,11 @@ impl Plugin for ArenaPlugin {
             .init_resource::<Gust>()
             .init_resource::<Spotlight>()
             .add_systems(OnExit(AppState::Menu), mark_dirty.in_set(RunSetup::Reset))
+            .add_systems(Update, rebuild_environment.run_if(|d: Res<EnvDirty>| d.0))
             .add_systems(
                 Update,
-                rebuild_environment.run_if(|d: Res<EnvDirty>| d.0),
-            )
-            .add_systems(Update, (tick_gust, tick_pulsing_hazards).in_set(GameSet::Think));
+                (tick_gust, tick_pulsing_hazards).in_set(GameSet::Think),
+            );
     }
 }
 
@@ -547,7 +561,8 @@ mod tests {
                     continue;
                 }
                 let (x, y) = (a.accent().to_linear(), b.accent().to_linear());
-                let delta = (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs();
+                let delta =
+                    (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs();
                 assert!(delta > 0.2, "{a:?} and {b:?} look the same");
             }
         }
@@ -557,8 +572,16 @@ mod tests {
     fn every_arena_is_a_sensible_size() {
         for (kind, scene) in build_all() {
             let b = scene.bounds;
-            assert!(b.half_x >= 15.0 && b.half_x <= 40.0, "{kind:?} x {}", b.half_x);
-            assert!(b.half_z >= 10.0 && b.half_z <= 30.0, "{kind:?} z {}", b.half_z);
+            assert!(
+                b.half_x >= 15.0 && b.half_x <= 40.0,
+                "{kind:?} x {}",
+                b.half_x
+            );
+            assert!(
+                b.half_z >= 10.0 && b.half_z <= 30.0,
+                "{kind:?} z {}",
+                b.half_z
+            );
             // Wider than tall keeps the third-person overlook framing sane.
             assert!(b.half_x > b.half_z, "{kind:?} is taller than it is wide");
         }
@@ -687,17 +710,19 @@ mod tests {
                 }
             }
             let (mut open, mut total) = (0, 0);
-            let mut x = -scene.bounds.half_x;
-            while x <= scene.bounds.half_x {
-                let mut z = -scene.bounds.half_z;
-                while z <= scene.bounds.half_z {
+            let cols = (scene.bounds.half_x * 2.0) as i32;
+            let rows = (scene.bounds.half_z * 2.0) as i32;
+            for ix in 0..=cols {
+                for iz in 0..=rows {
+                    let p = Vec2::new(
+                        f32::from(i16::try_from(ix).unwrap()) - scene.bounds.half_x,
+                        f32::from(i16::try_from(iz).unwrap()) - scene.bounds.half_z,
+                    );
                     total += 1;
-                    if !field.overlaps(Vec2::new(x, z), crate::player::PLAYER_RADIUS) {
+                    if !field.overlaps(p, crate::player::PLAYER_RADIUS) {
                         open += 1;
                     }
-                    z += 1.0;
                 }
-                x += 1.0;
             }
             let share = f64::from(open) / f64::from(total);
             assert!(share > 0.6, "{kind:?} is only {share:.2} walkable");

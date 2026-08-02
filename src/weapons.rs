@@ -6,9 +6,9 @@
 
 use bevy::prelude::*;
 
-use crate::art::{GameArt, Glow};
+use crate::art::GameArt;
 use crate::combat::{Damageable, EnemyGrid, ShotVisual, SpawnHazard, SpawnShot};
-use crate::common::*;
+use crate::common::{Body, BurstEvent, DamageEvent, DamageSource, RunEntity, SfxEvent};
 use crate::enemy::{Enemy, StatusEffects};
 use crate::player::{Player, PlayerStats};
 use crate::rng::Rng;
@@ -123,14 +123,14 @@ impl WeaponKind {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct WeaponSlot {
     pub kind: WeaponKind,
     pub level: u32,
     pub timer: f32,
 }
 
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct Loadout {
     pub slots: Vec<WeaponSlot>,
 }
@@ -181,7 +181,7 @@ impl Loadout {
 }
 
 /// A paperclip circling the player.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Orbiter {
     pub index: u32,
     pub count: u32,
@@ -192,6 +192,7 @@ pub struct Orbiter {
     pub cooldown: f32,
 }
 
+#[derive(Debug)]
 pub struct WeaponPlugin;
 
 impl Plugin for WeaponPlugin {
@@ -203,7 +204,10 @@ impl Plugin for WeaponPlugin {
                     .chain()
                     .in_set(GameSet::Combat),
             )
-            .add_systems(OnExit(AppState::Menu), reset_loadout.in_set(RunSetup::Reset));
+            .add_systems(
+                OnExit(AppState::Menu),
+                reset_loadout.in_set(RunSetup::Reset),
+            );
     }
 }
 
@@ -278,8 +282,13 @@ fn fire_weapons(
                     // Fan the extras rather than stacking them.
                     let spread = (i as f32 - (count - 1) as f32 * 0.5) * 0.13;
                     let d = rotate(aim, spread);
-                    let mut shot =
-                        SpawnShot::friendly(origin, d, 26.0 * stats.projectile_speed, dmg, ShotVisual::Dart);
+                    let mut shot = SpawnShot::friendly(
+                        origin,
+                        d,
+                        26.0 * stats.projectile_speed,
+                        dmg,
+                        ShotVisual::Dart,
+                    );
                     shot.crit = crit;
                     shot.pierce = if mastered { 99 } else { i32::from(level >= 4) };
                     shot.knockback = stats.knockback;
@@ -335,9 +344,18 @@ fn fire_weapons(
                 let count = 1 + level / 4;
                 for i in 0..count {
                     let d = rotate(aim, (i as f32 - (count - 1) as f32 * 0.5) * 0.5);
-                    let mut shot =
-                        SpawnShot::friendly(origin, d, 18.0 * stats.projectile_speed, dmg, ShotVisual::Band);
-                    shot.bounces = if mastered { 99 } else { 2 + level as i32 / 2 };
+                    let mut shot = SpawnShot::friendly(
+                        origin,
+                        d,
+                        18.0 * stats.projectile_speed,
+                        dmg,
+                        ShotVisual::Band,
+                    );
+                    shot.bounces = if mastered {
+                        99
+                    } else {
+                        2 + i32::try_from(level / 2).unwrap_or(i32::MAX)
+                    };
                     shot.life = if mastered { 3.0 } else { 2.4 };
                     shot.pierce = 1;
                     shot.crit = crit;
@@ -352,8 +370,7 @@ fn fire_weapons(
                 for i in 0..pellets {
                     let spread = (i as f32 / (pellets - 1).max(1) as f32 - 0.5) * 0.7;
                     let d = rotate(aim, spread + rng.range(-0.05, 0.05));
-                    let mut shot =
-                        SpawnShot::friendly(origin, d, 22.0, dmg, ShotVisual::Staple);
+                    let mut shot = SpawnShot::friendly(origin, d, 22.0, dmg, ShotVisual::Staple);
                     // Short life is what makes this a close-range weapon.
                     shot.life = range / 22.0;
                     shot.crit = crit;
@@ -465,9 +482,10 @@ fn fire_weapons(
                 let mut hit_any = false;
                 let mut excluded: Option<Entity> = None;
                 for _ in 0..shots_to_fire {
-                    let Some(t) = grid.best_target(origin, range).filter(|t| {
-                        excluded.is_none_or(|ex| ex != t.entity)
-                    }) else {
+                    let Some(t) = grid
+                        .best_target(origin, range)
+                        .filter(|t| excluded.is_none_or(|ex| ex != t.entity))
+                    else {
                         break;
                     };
                     excluded = Some(t.entity);
@@ -721,7 +739,7 @@ mod tests {
 
     #[test]
     fn levelling_a_weapon_strictly_improves_it() {
-        let stats = crate::player::PlayerStats::default();
+        let stats = PlayerStats::default();
         for kind in WeaponKind::ALL {
             let mut previous_damage = 0.0;
             for level in 1..=MAX_LEVEL {
@@ -742,11 +760,13 @@ mod tests {
 
     #[test]
     fn player_stats_scale_weapon_output() {
-        let mut buffed = crate::player::PlayerStats::default();
-        buffed.damage_mult = 2.0;
-        buffed.haste = 2.0;
-        buffed.area = 2.0;
-        let base = crate::player::PlayerStats::default();
+        let buffed = PlayerStats {
+            damage_mult: 2.0,
+            haste: 2.0,
+            area: 2.0,
+            ..PlayerStats::default()
+        };
+        let base = PlayerStats::default();
 
         let kind = WeaponKind::PencilDart;
         assert!((kind.damage_at(1, &buffed) / kind.damage_at(1, &base) - 2.0).abs() < 1e-4);
@@ -756,8 +776,10 @@ mod tests {
 
     #[test]
     fn cooldowns_stay_positive_under_extreme_haste() {
-        let mut stats = crate::player::PlayerStats::default();
-        stats.haste = 1000.0;
+        let stats = PlayerStats {
+            haste: 1000.0,
+            ..PlayerStats::default()
+        };
         for kind in WeaponKind::ALL {
             let cd = kind.cooldown_at(MAX_LEVEL, &stats);
             assert!(cd >= 0.0 && cd.is_finite(), "{kind:?} cooldown {cd}");
@@ -766,7 +788,7 @@ mod tests {
 
     #[test]
     fn short_range_weapons_stay_short_range() {
-        let stats = crate::player::PlayerStats::default();
+        let stats = PlayerStats::default();
         let stapler = WeaponKind::Stapler.range_at(MAX_LEVEL, &stats);
         let dart = WeaponKind::PencilDart.range_at(1, &stats);
         assert!(stapler < dart, "the stapler lost its identity");

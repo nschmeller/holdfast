@@ -7,7 +7,10 @@ use bevy::prelude::*;
 
 use crate::allies::Economy;
 use crate::art::{GameArt, Glow};
-use crate::common::*;
+use crate::common::{
+    Altitude, Body, BurstEvent, DeathEvent, Doomed, FloatingTextEvent, Health, RunEntity, SfxEvent,
+    ShakeEvent, Spin, to_world,
+};
 use crate::enemy::{Director, Enemy, Rank};
 use crate::palette as pal;
 use crate::player::{Player, PlayerStats};
@@ -26,7 +29,7 @@ pub enum PickupKind {
     Gear,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Pickup {
     pub kind: PickupKind,
     pub value: f32,
@@ -35,6 +38,7 @@ pub struct Pickup {
     pub attracted: bool,
 }
 
+#[derive(Debug)]
 pub struct PickupPlugin;
 
 impl Plugin for PickupPlugin {
@@ -255,7 +259,10 @@ fn magnetise(
     time: Res<Time>,
     stats: Res<PlayerStats>,
     player: Query<&Body, With<Player>>,
-    mut pickups: Query<(&mut Pickup, &mut Body, &mut Altitude, &Spin, &mut Transform), Without<Player>>,
+    mut pickups: Query<
+        (&mut Pickup, &mut Body, &mut Altitude, &Spin, &mut Transform),
+        Without<Player>,
+    >,
 ) {
     let dt = time.delta_secs();
     let Some(player_body) = player.iter().next() else {
@@ -278,9 +285,7 @@ fn magnetise(
         }
 
         let to_player = player_body.pos - body.pos;
-        if pickup.settle <= 0.0
-            && (pickup.attracted || to_player.length_squared() <= radius_sq)
-        {
+        if pickup.settle <= 0.0 && (pickup.attracted || to_player.length_squared() <= radius_sq) {
             pickup.attracted = true;
             // Accelerating attraction feels far better than constant speed.
             let dist = to_player.length().max(0.001);
@@ -365,11 +370,7 @@ fn collect(
                     });
                     // Equip is automatic and always an upgrade, so gear never
                     // becomes an inventory-management chore mid-fight.
-                    match piece.slot {
-                        crate::progress::GearSlot::Head => equipped.head = Some(piece),
-                        crate::progress::GearSlot::Body => equipped.body = Some(piece),
-                        crate::progress::GearSlot::Trinket => equipped.trinket = Some(piece),
-                    }
+                    equipped.set(piece);
                     recompute.write(RecomputeStats);
                     sfx.write(SfxEvent::new(crate::audio::Sfx::Gear));
                 } else {

@@ -17,7 +17,7 @@ pub const MIN_INTENT: f32 = 0.5;
 pub const MAX_INTENT: f32 = 8.0;
 const STEP: f32 = 0.25;
 
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct Threat {
     /// What the dial actually reads right now; chases `intent`.
     pub level: f32,
@@ -150,7 +150,7 @@ impl Threat {
 
 /// Elapsed run time and the derived baseline difficulty. Split from `Threat` so
 /// the pacing dial stays purely about player choice.
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct RunClock {
     pub elapsed: f32,
     pub kills: u64,
@@ -186,11 +186,13 @@ pub enum Phase {
     Assault,
 }
 
-/// The main rhythm of a run. Prep gives the player a window to act on the board
-/// without being punished for it; calling the wave in early converts the unused
-/// window directly into reward. That is the cleanest expression of the pacing
-/// pillar: the player is always choosing between safety and payout.
-#[derive(Resource)]
+/// The main rhythm of a run.
+///
+/// Prep gives the player a window to act on the board without being punished
+/// for it; calling the wave in early converts the unused window directly into
+/// reward. That is the cleanest expression of the pacing pillar: the player is
+/// always choosing between safety and payout.
+#[derive(Debug, Resource)]
 pub struct WaveCycle {
     pub phase: Phase,
     pub timer: f32,
@@ -285,9 +287,8 @@ pub fn tick_waves(
             cycle.wave += 1;
             // Budget is "enemy value" the director may spend, scaled by both
             // clocks so waves keep pace with the rest of the escalation.
-            cycle.budget = (18.0 + cycle.wave as f32 * 6.0)
-                * threat.spawn_mult()
-                * clock.time_power().sqrt();
+            cycle.budget =
+                (18.0 + cycle.wave as f32 * 6.0) * threat.spawn_mult() * clock.time_power().sqrt();
             cycle.timer = cycle.assault_length();
             cycle.announce = 2.5;
         }
@@ -363,19 +364,25 @@ mod tests {
 
     #[test]
     fn the_dial_cannot_be_set_below_the_floor() {
-        let mut t = Threat::default();
-        t.floor = 3.0;
-        t.intent = 3.0;
+        let mut t = Threat {
+            floor: 3.0,
+            intent: 3.0,
+            ..Threat::default()
+        };
         t.lower();
         assert_eq!(t.intent, 3.0, "the floor is what stops turtling");
     }
 
     #[test]
     fn rewards_grow_with_threat() {
-        let mut low = Threat::default();
-        low.level = 1.0;
-        let mut high = Threat::default();
-        high.level = 6.0;
+        let low = Threat {
+            level: 1.0,
+            ..Threat::default()
+        };
+        let high = Threat {
+            level: 6.0,
+            ..Threat::default()
+        };
         assert!(high.reward_mult() > low.reward_mult() * 4.0);
     }
 
@@ -383,20 +390,22 @@ mod tests {
     fn rewards_are_monotonic_across_the_whole_range() {
         let mut previous = 0.0;
         let mut t = Threat::default();
-        let mut level = MIN_INTENT;
-        while level <= MAX_INTENT {
+        let steps = ((MAX_INTENT - MIN_INTENT) / 0.25) as u32;
+        for step in 0..=steps {
+            let level = MIN_INTENT + step as f32 * 0.25;
             t.level = level;
             let r = t.reward_mult();
             assert!(r > previous, "reward went down at level {level}");
             previous = r;
-            level += 0.25;
         }
     }
 
     #[test]
     fn surging_pays_a_premium() {
-        let mut t = Threat::default();
-        t.level = 3.0;
+        let mut t = Threat {
+            level: 3.0,
+            ..Threat::default()
+        };
         let calm = t.reward_mult();
         t.surge = 5.0;
         assert!(t.reward_mult() > calm * 1.5);
@@ -404,8 +413,10 @@ mod tests {
 
     #[test]
     fn spawn_and_power_scale_with_the_dial() {
-        let mut t = Threat::default();
-        t.level = 1.0;
+        let mut t = Threat {
+            level: 1.0,
+            ..Threat::default()
+        };
         let (s1, p1) = (t.spawn_mult(), t.power_mult());
         t.level = 5.0;
         assert!(t.spawn_mult() > s1);
@@ -414,8 +425,10 @@ mod tests {
 
     #[test]
     fn rarity_bonus_is_clamped() {
-        let mut t = Threat::default();
-        t.level = MIN_INTENT;
+        let mut t = Threat {
+            level: MIN_INTENT,
+            ..Threat::default()
+        };
         assert_eq!(t.rarity_bonus(), 0.0, "never negative");
         t.level = MAX_INTENT;
         t.territory = 10.0;
@@ -451,10 +464,12 @@ mod tests {
 
     #[test]
     fn effective_threat_includes_streak_and_territory() {
-        let mut t = Threat::default();
-        t.level = 2.0;
-        t.streak = 1.0;
-        t.territory = 0.4;
+        let t = Threat {
+            level: 2.0,
+            streak: 1.0,
+            territory: 0.4,
+            ..Threat::default()
+        };
         assert!((t.effective() - 2.9).abs() < 1e-5);
     }
 
@@ -462,16 +477,15 @@ mod tests {
     fn bands_and_colours_cover_the_whole_range() {
         let mut t = Threat::default();
         let mut seen = Vec::new();
-        let mut level = MIN_INTENT;
-        while level <= MAX_INTENT + 2.5 {
-            t.level = level;
+        let steps = ((MAX_INTENT + 2.5 - MIN_INTENT) / 0.1) as u32;
+        for step in 0..=steps {
+            t.level = MIN_INTENT + step as f32 * 0.1;
             let band = t.band();
             if seen.last() != Some(&band) {
                 seen.push(band);
             }
             // Every level must produce a colour without panicking.
             let _ = t.band_color();
-            level += 0.1;
         }
         assert_eq!(
             seen,
@@ -489,9 +503,11 @@ mod tests {
 
     #[test]
     fn reset_returns_to_the_default_state() {
-        let mut t = Threat::default();
-        t.level = 7.0;
-        t.streak = 1.0;
+        let mut t = Threat {
+            level: 7.0,
+            streak: 1.0,
+            ..Threat::default()
+        };
         t.start_surge();
         t.reset();
         assert_eq!(t.level, 1.0);
@@ -501,8 +517,10 @@ mod tests {
 
     #[test]
     fn time_power_compounds() {
-        let mut clock = RunClock::default();
-        clock.elapsed = 0.0;
+        let mut clock = RunClock {
+            elapsed: 0.0,
+            ..RunClock::default()
+        };
         let start = clock.time_power();
         clock.elapsed = 600.0;
         let ten_minutes = clock.time_power();
@@ -547,8 +565,10 @@ mod tests {
 
     #[test]
     fn calling_early_banks_the_unused_window() {
-        let mut c = WaveCycle::default();
-        c.timer = 20.0;
+        let mut c = WaveCycle {
+            timer: 20.0,
+            ..WaveCycle::default()
+        };
         let expected = c.pending_bonus();
         assert!((expected - 0.5).abs() < 1e-6, "20s at 2.5%/s");
         c.call_early();
@@ -558,9 +578,11 @@ mod tests {
 
     #[test]
     fn calling_early_during_an_assault_does_nothing() {
-        let mut c = WaveCycle::default();
-        c.phase = Phase::Assault;
-        c.timer = 10.0;
+        let mut c = WaveCycle {
+            phase: Phase::Assault,
+            timer: 10.0,
+            ..WaveCycle::default()
+        };
         assert_eq!(c.pending_bonus(), 0.0);
         c.call_early();
         assert_eq!(c.timer, 10.0);
@@ -568,21 +590,28 @@ mod tests {
 
     #[test]
     fn a_full_wait_earns_no_bonus() {
-        let mut c = WaveCycle::default();
-        c.timer = 0.0;
+        let c = WaveCycle {
+            timer: 0.0,
+            ..WaveCycle::default()
+        };
         assert_eq!(c.pending_bonus(), 0.0);
         assert_eq!(c.reward_mult(), 1.0);
     }
 
     #[test]
     fn assault_length_grows_but_is_capped() {
-        let mut c = WaveCycle::default();
-        c.wave = 1;
+        let mut c = WaveCycle {
+            wave: 1,
+            ..WaveCycle::default()
+        };
         let early = c.assault_length();
         c.wave = 500;
         let late = c.assault_length();
         assert!(late > early);
-        assert!(late <= 32.0 + 1e-6, "capped at base plus twelve, got {late}");
+        assert!(
+            late <= 32.0 + 1e-6,
+            "capped at base plus twelve, got {late}"
+        );
     }
 
     #[test]

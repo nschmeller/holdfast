@@ -11,8 +11,8 @@ use crate::allies::{
 };
 use crate::arena::{ArenaBounds, ObstacleField};
 use crate::art::{GameArt, Glow};
-use crate::common::*;
-use crate::onboarding::{HintTone, HintQueue, Unlocks};
+use crate::common::{Body, RunEntity, SfxEvent, to_world};
+use crate::onboarding::{HintQueue, HintTone, Unlocks};
 use crate::player::Player;
 use crate::threat::{Threat, WaveCycle};
 use crate::{AppState, GameSet, RunSetup};
@@ -22,7 +22,7 @@ use crate::{AppState, GameSet, RunSetup};
 const PLAN_TIME_SCALE: f32 = 0.12;
 const CURSOR_SPEED: f32 = 17.0;
 
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct PlanMode {
     pub active: bool,
     pub cursor: Vec2,
@@ -56,9 +56,10 @@ impl PlanMode {
 }
 
 /// The translucent preview of what is about to be built.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct BuildGhost;
 
+#[derive(Debug)]
 pub struct CommandPlugin;
 
 impl Plugin for CommandPlugin {
@@ -113,7 +114,7 @@ fn toggle_plan_mode(
 
 /// The baseline simulation rate that plan mode multiplies against. Normally
 /// 1.0; the dev harness overrides it to fast-forward a run.
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct SimSpeed(pub f32);
 
 impl Default for SimSpeed {
@@ -124,11 +125,7 @@ impl Default for SimSpeed {
 
 /// Plan mode slows the *virtual* clock, which is what every gameplay system
 /// reads. The camera and UI use real time, so they stay responsive.
-fn drive_time_scale(
-    plan: Res<PlanMode>,
-    base: Res<SimSpeed>,
-    mut time: ResMut<Time<Virtual>>,
-) {
+fn drive_time_scale(plan: Res<PlanMode>, base: Res<SimSpeed>, mut time: ResMut<Time<Virtual>>) {
     let want = base.0 * if plan.active { PLAN_TIME_SCALE } else { 1.0 };
     if (time.relative_speed() - want).abs() > 1e-3 {
         time.set_relative_speed(want);
@@ -165,7 +162,11 @@ fn plan_cursor(
     plan.cursor = bounds.clamp(moved, 1.0);
 
     let kind = plan.selected_kind();
-    let radius = if kind == TurretKind::Barricade { 1.1 } else { 0.8 };
+    let radius = if kind == TurretKind::Barricade {
+        1.1
+    } else {
+        0.8
+    };
     plan.valid = !obstacles.overlaps(plan.cursor, radius);
 
     if let Some((_, t)) = &mut plan.message {
@@ -424,11 +425,15 @@ fn update_ghost(
 
     let kind = plan.selected_kind();
     let mesh = art.turrets[kind as usize].clone();
-    let material = art.glow(if plan.valid { Glow::Ally } else { Glow::Warning });
+    let material = art.glow(if plan.valid {
+        Glow::Ally
+    } else {
+        Glow::Warning
+    });
     // A slow pulse keeps the ghost visually distinct from a real structure.
     let pulse = 1.0 + (time.elapsed_secs() * 4.0).sin() * 0.05;
-    let transform = Transform::from_translation(to_world(plan.cursor, 0.05))
-        .with_scale(Vec3::splat(pulse));
+    let transform =
+        Transform::from_translation(to_world(plan.cursor, 0.05)).with_scale(Vec3::splat(pulse));
 
     if let Some((_, mut t, mut m, mut mat)) = ghosts.iter_mut().next() {
         *t = transform;

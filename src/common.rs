@@ -2,10 +2,12 @@
 
 use bevy::prelude::*;
 
-/// Everything that moves on the desk keeps its authoritative position here, in
-/// the XZ plane. `Transform` is derived from it during the presentation phase,
-/// which keeps collision code free of `Vec3`/`Vec2` conversions.
-#[derive(Component, Clone, Copy, Default)]
+/// Authoritative position and velocity, in the XZ plane.
+///
+/// Everything that moves keeps its state here rather than in `Transform`, which
+/// is derived from it during the presentation phase. That keeps the collision
+/// code free of `Vec3`/`Vec2` conversions.
+#[derive(Debug, Component, Clone, Copy, Default)]
 pub struct Body {
     pub pos: Vec2,
     pub vel: Vec2,
@@ -30,7 +32,7 @@ impl Body {
 
 /// Height above the desk, kept separate from `Body` because it is decorative
 /// for most entities (bob, hover, tumble) and never affects collision.
-#[derive(Component, Clone, Copy)]
+#[derive(Debug, Component, Clone, Copy)]
 pub struct Altitude {
     pub y: f32,
     pub vy: f32,
@@ -47,7 +49,7 @@ impl Default for Altitude {
     }
 }
 
-#[derive(Component, Clone, Copy)]
+#[derive(Debug, Component, Clone, Copy)]
 pub struct Health {
     pub current: f32,
     pub max: f32,
@@ -81,14 +83,15 @@ impl Health {
     }
 }
 
-/// Marks an entity for removal at the end of the frame. Deferring despawns to
-/// one place avoids the classic "system A despawned what system B is holding"
-/// crash when several damage sources land on the same tick.
-#[derive(Component)]
+/// Marks an entity for removal at the end of the frame.
+///
+/// Deferring despawns to one place avoids the classic "system A despawned what
+/// system B is holding" crash when several damage sources land on one tick.
+#[derive(Debug, Component)]
 pub struct Doomed;
 
 /// Fades out and despawns after `life` seconds.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Ephemeral {
     pub life: f32,
     pub max_life: f32,
@@ -112,7 +115,7 @@ impl Ephemeral {
 }
 
 /// Continuous spin, used for pickups and orbiting weapons.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Spin {
     pub speed: f32,
     pub axis: Vec3,
@@ -128,7 +131,7 @@ impl Default for Spin {
 }
 
 /// Sinusoidal hover, offset per entity so a crowd does not bob in lockstep.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Hover {
     pub base: f32,
     pub amplitude: f32,
@@ -138,12 +141,12 @@ pub struct Hover {
 
 /// Everything spawned as part of a run, so a restart can clear the world in one
 /// query without touching the camera, lights or HUD.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct RunEntity;
 
 /// Scales the entity's visual size independently of `Transform`, so hit-flash
 /// squash and spawn pop-in can compose with per-entity base scale.
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct VisualScale {
     pub base: f32,
     pub pulse: f32,
@@ -159,7 +162,7 @@ impl VisualScale {
 
 /// A damage application. Routed through a message so that armour, crit, lamp
 /// bonuses and on-hit effects all resolve in one place.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct DamageEvent {
     pub target: Entity,
     pub amount: f32,
@@ -178,7 +181,7 @@ pub enum DamageSource {
 }
 
 /// An entity reached zero health.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct DeathEvent {
     pub entity: Entity,
     pub pos: Vec2,
@@ -186,13 +189,13 @@ pub struct DeathEvent {
 }
 
 /// Request a screen shake. Amplitude is in world units.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct ShakeEvent {
     pub amount: f32,
 }
 
 /// A short-lived line of text that floats up from a world position.
-#[derive(Message, Clone)]
+#[derive(Debug, Message, Clone)]
 pub struct FloatingTextEvent {
     pub pos: Vec2,
     pub height: f32,
@@ -202,7 +205,7 @@ pub struct FloatingTextEvent {
 }
 
 /// A burst of particles at a point.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct BurstEvent {
     pub pos: Vec2,
     pub height: f32,
@@ -213,7 +216,7 @@ pub struct BurstEvent {
 }
 
 /// Play one of the synthesized sound effects.
-#[derive(Message, Clone, Copy)]
+#[derive(Debug, Message, Clone, Copy)]
 pub struct SfxEvent {
     pub sound: crate::audio::Sfx,
     /// Multiplies the base volume for this one-shot.
@@ -222,10 +225,7 @@ pub struct SfxEvent {
 
 impl SfxEvent {
     pub fn new(sound: crate::audio::Sfx) -> Self {
-        Self {
-            sound,
-            volume: 1.0,
-        }
+        Self { sound, volume: 1.0 }
     }
 
     pub fn at(sound: crate::audio::Sfx, volume: f32) -> Self {

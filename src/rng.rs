@@ -6,14 +6,14 @@
 
 use bevy::prelude::*;
 
-#[derive(Resource, Clone)]
+#[derive(Debug, Resource, Clone)]
 pub struct Rng {
     s: [u64; 4],
 }
 
 impl Default for Rng {
     fn default() -> Self {
-        Self::seeded(0x5DE_5C_0FFEE)
+        Self::seeded(0x0005_DE5C_0FFE)
     }
 }
 
@@ -139,10 +139,10 @@ mod tests {
 
     #[test]
     fn f32_is_roughly_uniform() {
+        const N: u32 = 100_000;
         // Ten buckets over 100k samples: each should land near 10%.
         let mut rng = Rng::seeded(99);
         let mut buckets = [0u32; 10];
-        const N: u32 = 100_000;
         for _ in 0..N {
             buckets[(rng.f32() * 10.0) as usize % 10] += 1;
         }
@@ -220,14 +220,12 @@ mod tests {
 
     #[test]
     fn in_disc_is_area_uniform() {
+        const N: usize = 40_000;
         // Half the radius encloses a quarter of the area, so about a quarter
         // of the samples should land inside it. A naive r = rand() would put
         // half of them there.
         let mut rng = Rng::seeded(23);
-        const N: usize = 40_000;
-        let inner = (0..N)
-            .filter(|_| rng.in_disc(1.0).length() < 0.5)
-            .count();
+        let inner = (0..N).filter(|_| rng.in_disc(1.0).length() < 0.5).count();
         let share = inner as f64 / N as f64;
         assert!((0.23..0.27).contains(&share), "share was {share}");
     }

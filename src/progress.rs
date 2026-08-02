@@ -16,7 +16,7 @@ use crate::{AppState, GameSet, RunSetup};
 
 // -- experience -------------------------------------------------------------
 
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct Progression {
     pub level: u32,
     pub xp: f32,
@@ -48,12 +48,18 @@ impl Progression {
     pub fn gain(&mut self, amount: f32) {
         self.xp += amount;
         self.total_xp += f64::from(amount);
-        while self.xp >= self.to_next {
+        // Bounded rather than `while`: a single enormous XP grant should not
+        // be able to spin here, and nothing legitimately crosses 64 levels at
+        // once.
+        for _ in 0..64 {
+            if self.xp < self.to_next {
+                break;
+            }
             self.xp -= self.to_next;
             self.level += 1;
             self.pending_levels += 1;
             // Every third level also funds the research tree.
-            if self.level % 3 == 0 {
+            if self.level.is_multiple_of(3) {
                 self.skill_points += 1;
             }
             // Superlinear but gentle: level 30 costs roughly 12x level 1.
@@ -68,7 +74,7 @@ impl Progression {
 
 // -- upgrade cards ----------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Card {
     pub title: String,
     pub detail: String,
@@ -76,7 +82,7 @@ pub struct Card {
     pub rarity: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum CardKind {
     NewWeapon(WeaponKind),
     LevelWeapon(WeaponKind),
@@ -214,7 +220,7 @@ impl StatBoost {
 }
 
 /// The three cards currently on offer.
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct CardOffer {
     pub cards: Vec<Card>,
     /// One free reroll per level-up, because a dead offer is not a decision.
@@ -253,7 +259,7 @@ impl Branch {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ResearchNode {
     pub branch: Branch,
     pub title: &'static str,
@@ -277,7 +283,7 @@ impl ResearchNode {
     }
 }
 
-#[derive(Resource)]
+#[derive(Debug, Resource)]
 pub struct Research {
     pub nodes: Vec<ResearchNode>,
     pub cursor: usize,
@@ -321,26 +327,162 @@ fn default_nodes() -> Vec<ResearchNode> {
     };
     vec![
         // MIGHT
-        n(Might, "Honed Edge", "+10% weapon damage", 5, 3.0, StatBoost::Damage, false),
-        n(Might, "Weak Points", "+5% critical chance", 4, 4.0, StatBoost::Crit, false),
-        n(Might, "Broad Swing", "+10% area", 4, 4.0, StatBoost::Area, false),
-        n(Might, "Endless Edge", "+8% damage, forever", 0, 8.0, StatBoost::Damage, true),
+        n(
+            Might,
+            "Honed Edge",
+            "+10% weapon damage",
+            5,
+            3.0,
+            StatBoost::Damage,
+            false,
+        ),
+        n(
+            Might,
+            "Weak Points",
+            "+5% critical chance",
+            4,
+            4.0,
+            StatBoost::Crit,
+            false,
+        ),
+        n(
+            Might,
+            "Broad Swing",
+            "+10% area",
+            4,
+            4.0,
+            StatBoost::Area,
+            false,
+        ),
+        n(
+            Might,
+            "Endless Edge",
+            "+8% damage, forever",
+            0,
+            8.0,
+            StatBoost::Damage,
+            true,
+        ),
         // SWIFT
-        n(Swift, "Quick Hands", "+10% fire rate", 5, 3.0, StatBoost::Haste, false),
-        n(Swift, "Light Step", "+6% move speed", 4, 3.0, StatBoost::MoveSpeed, false),
-        n(Swift, "Extra Barrel", "+1 projectile", 2, 9.0, StatBoost::ProjectileCount, false),
-        n(Swift, "Endless Tempo", "+7% fire rate, forever", 0, 8.0, StatBoost::Haste, true),
+        n(
+            Swift,
+            "Quick Hands",
+            "+10% fire rate",
+            5,
+            3.0,
+            StatBoost::Haste,
+            false,
+        ),
+        n(
+            Swift,
+            "Light Step",
+            "+6% move speed",
+            4,
+            3.0,
+            StatBoost::MoveSpeed,
+            false,
+        ),
+        n(
+            Swift,
+            "Extra Barrel",
+            "+1 projectile",
+            2,
+            9.0,
+            StatBoost::ProjectileCount,
+            false,
+        ),
+        n(
+            Swift,
+            "Endless Tempo",
+            "+7% fire rate, forever",
+            0,
+            8.0,
+            StatBoost::Haste,
+            true,
+        ),
         // VITAL
-        n(Vital, "Hard Shell", "+20 max health", 5, 3.0, StatBoost::MaxHp, false),
-        n(Vital, "Plating", "+2 armour", 4, 4.0, StatBoost::Armor, false),
-        n(Vital, "Recovery", "+0.6 regen", 4, 4.0, StatBoost::Regen, false),
-        n(Vital, "Endless Vigour", "+18 health, forever", 0, 7.0, StatBoost::MaxHp, true),
+        n(
+            Vital,
+            "Hard Shell",
+            "+20 max health",
+            5,
+            3.0,
+            StatBoost::MaxHp,
+            false,
+        ),
+        n(
+            Vital,
+            "Plating",
+            "+2 armour",
+            4,
+            4.0,
+            StatBoost::Armor,
+            false,
+        ),
+        n(
+            Vital,
+            "Recovery",
+            "+0.6 regen",
+            4,
+            4.0,
+            StatBoost::Regen,
+            false,
+        ),
+        n(
+            Vital,
+            "Endless Vigour",
+            "+18 health, forever",
+            0,
+            7.0,
+            StatBoost::MaxHp,
+            true,
+        ),
         // COMMAND
-        n(Command, "Drill", "+15% ally power", 5, 3.0, StatBoost::AllyPower, false),
-        n(Command, "Machining", "+15% structure power", 5, 3.0, StatBoost::StructurePower, false),
-        n(Command, "Supply Lines", "+15% income", 4, 4.0, StatBoost::Income, false),
-        n(Command, "Flag Bearer", "+25% capture speed", 3, 5.0, StatBoost::CaptureRate, false),
-        n(Command, "Endless Logistics", "+12% income, forever", 0, 8.0, StatBoost::Income, true),
+        n(
+            Command,
+            "Drill",
+            "+15% ally power",
+            5,
+            3.0,
+            StatBoost::AllyPower,
+            false,
+        ),
+        n(
+            Command,
+            "Machining",
+            "+15% structure power",
+            5,
+            3.0,
+            StatBoost::StructurePower,
+            false,
+        ),
+        n(
+            Command,
+            "Supply Lines",
+            "+15% income",
+            4,
+            4.0,
+            StatBoost::Income,
+            false,
+        ),
+        n(
+            Command,
+            "Flag Bearer",
+            "+25% capture speed",
+            3,
+            5.0,
+            StatBoost::CaptureRate,
+            false,
+        ),
+        n(
+            Command,
+            "Endless Logistics",
+            "+12% income, forever",
+            0,
+            8.0,
+            StatBoost::Income,
+            true,
+        ),
     ]
 }
 
@@ -365,7 +507,7 @@ impl GearSlot {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GearPiece {
     pub name: String,
     pub slot: GearSlot,
@@ -389,7 +531,7 @@ impl GearPiece {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct Equipped {
     pub head: Option<GearPiece>,
     pub body: Option<GearPiece>,
@@ -409,7 +551,7 @@ impl Equipped {
         }
     }
 
-    fn set(&mut self, piece: GearPiece) {
+    pub fn set(&mut self, piece: GearPiece) {
         match piece.slot {
             GearSlot::Head => self.head = Some(piece),
             GearSlot::Body => self.body = Some(piece),
@@ -419,21 +561,36 @@ impl Equipped {
 }
 
 const GEAR_NAMES: [[&str; 4]; 3] = [
-    ["Paper Crown", "Bottle Cap Helm", "Thimble Helm", "Crown of Ink"],
-    ["Tape Wrap", "Foil Vest", "Cardboard Plate", "Mantle of Reams"],
-    ["Lucky Clip", "Warm Battery", "Compass Charm", "The Last Staple"],
+    [
+        "Paper Crown",
+        "Bottle Cap Helm",
+        "Thimble Helm",
+        "Crown of Ink",
+    ],
+    [
+        "Tape Wrap",
+        "Foil Vest",
+        "Cardboard Plate",
+        "Mantle of Reams",
+    ],
+    [
+        "Lucky Clip",
+        "Warm Battery",
+        "Compass Charm",
+        "The Last Staple",
+    ],
 ];
 
 /// Roll a gear piece. `luck` and threat both push the rarity roll upward, which
 /// is the main way the pacing dial pays out in power rather than numbers.
 pub fn roll_gear(rng: &mut Rng, luck: f32, rarity_bonus: f32) -> GearPiece {
+    const MAX_TIER_CHANCE: f32 = 0.85;
     let slot = GearSlot::ALL[rng.below(3)];
     let mut rarity = 0;
     // The cap matters: stacked luck and a maxed threat dial can push the raw
     // sum past 1.0, which would make every single drop Legendary and flatten
     // the whole gear economy. Capping each tier roll keeps the ladder intact
     // while still making luck feel worth taking.
-    const MAX_TIER_CHANCE: f32 = 0.85;
     let mut chance = (0.34 + luck + rarity_bonus).min(MAX_TIER_CHANCE);
     while rarity < 3 && rng.chance(chance) {
         rarity += 1;
@@ -461,11 +618,11 @@ pub fn roll_gear(rng: &mut Rng, luck: f32, rarity_bonus: f32) -> GearPiece {
 
 /// Recompute `PlayerStats` from base + every source. Running this from scratch
 /// each time something changes means no source can silently drift.
-#[derive(Message)]
+#[derive(Debug, Message)]
 pub struct RecomputeStats;
 
 /// Applied bonuses that persist for the run, accumulated from cards.
-#[derive(Resource, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct AppliedBoosts {
     pub entries: Vec<(StatBoost, u32)>,
     pub refinements: u32,
@@ -486,6 +643,7 @@ impl AppliedBoosts {
     }
 }
 
+#[derive(Debug)]
 pub struct ProgressPlugin;
 
 impl Plugin for ProgressPlugin {
@@ -498,7 +656,10 @@ impl Plugin for ProgressPlugin {
             .add_message::<RecomputeStats>()
             .add_systems(Update, check_level_up.in_set(GameSet::Resolve))
             .add_systems(Update, recompute_stats)
-            .add_systems(OnExit(AppState::Menu), reset_progress.in_set(RunSetup::Reset));
+            .add_systems(
+                OnExit(AppState::Menu),
+                reset_progress.in_set(RunSetup::Reset),
+            );
     }
 }
 
@@ -830,16 +991,20 @@ mod tests {
 
     #[test]
     fn armour_never_makes_the_player_immortal() {
-        let mut s = PlayerStats::default();
-        s.armor = 10_000.0;
+        let s = PlayerStats {
+            armor: 10_000.0,
+            ..PlayerStats::default()
+        };
         // The floor keeps a fraction of every hit no matter the armour.
         assert!(s.mitigate(100.0) >= 12.0 - 1e-3);
     }
 
     #[test]
     fn armour_reduces_ordinary_hits() {
-        let mut s = PlayerStats::default();
-        s.armor = 5.0;
+        let s = PlayerStats {
+            armor: 5.0,
+            ..PlayerStats::default()
+        };
         assert!((s.mitigate(50.0) - 45.0).abs() < 1e-5);
     }
 
@@ -861,10 +1026,7 @@ mod tests {
     fn every_branch_ends_in_a_repeatable_node() {
         let r = Research::default();
         for branch in Branch::ALL {
-            let has_endless = r
-                .in_branch(branch)
-                .into_iter()
-                .any(|i| r.nodes[i].endless);
+            let has_endless = r.in_branch(branch).into_iter().any(|i| r.nodes[i].endless);
             assert!(has_endless, "{} cannot be pushed forever", branch.title());
         }
     }
@@ -915,9 +1077,9 @@ mod tests {
 
     #[test]
     fn luck_and_threat_push_rarity_upward() {
+        const N: usize = 4000;
         let mut plain = rng();
         let mut lucky = rng();
-        const N: usize = 4000;
         let plain_total: usize = (0..N).map(|_| roll_gear(&mut plain, 0.0, 0.0).rarity).sum();
         let lucky_total: usize = (0..N).map(|_| roll_gear(&mut lucky, 0.3, 0.3).rarity).sum();
         assert!(
@@ -928,10 +1090,10 @@ mod tests {
 
     #[test]
     fn legendary_stays_rare_even_at_absurd_luck() {
+        const N: usize = 8000;
         // Unbounded luck used to push every tier roll past certainty, which
         // made every drop Legendary. The tier cap is what stops that.
         let mut rng = rng();
-        const N: usize = 8000;
         let legendaries = (0..N)
             .filter(|_| roll_gear(&mut rng, 5.0, 5.0).rarity == 3)
             .count();
@@ -941,8 +1103,8 @@ mod tests {
 
     #[test]
     fn common_gear_remains_the_baseline_without_luck() {
-        let mut rng = rng();
         const N: usize = 8000;
+        let mut rng = rng();
         let commons = (0..N)
             .filter(|_| roll_gear(&mut rng, 0.0, 0.0).rarity == 0)
             .count();
@@ -1018,7 +1180,7 @@ mod tests {
         let mut rng = rng();
         let mut loadout = Loadout::default();
         loadout.reset();
-        for kind in crate::weapons::WeaponKind::ALL {
+        for kind in WeaponKind::ALL {
             loadout.add(kind);
             for _ in 0..MAX_LEVEL {
                 loadout.level_up(kind);
@@ -1092,7 +1254,7 @@ mod tests {
             &Card {
                 title: "w".into(),
                 detail: String::new(),
-                kind: CardKind::NewWeapon(crate::weapons::WeaponKind::Stapler),
+                kind: CardKind::NewWeapon(WeaponKind::Stapler),
                 rarity: 2,
             },
             &mut stats,
@@ -1100,10 +1262,7 @@ mod tests {
             &mut economy,
             &mut boosts,
         );
-        assert_eq!(
-            loadout.level_of(crate::weapons::WeaponKind::Stapler),
-            Some(1)
-        );
+        assert_eq!(loadout.level_of(WeaponKind::Stapler), Some(1));
     }
 
     #[test]

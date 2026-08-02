@@ -9,7 +9,10 @@ use bevy::prelude::*;
 use crate::arena::{ArenaBounds, Gust, Hazard, ObstacleField, Spotlight};
 use crate::art::GameArt;
 use crate::combat::Damageable;
-use crate::common::*;
+use crate::common::{
+    Altitude, Body, DamageEvent, DamageSource, Health, RunEntity, VisualScale, damp, damp_vec2,
+    yaw_towards,
+};
 use crate::enemy::StatusEffects;
 use crate::{AppState, GameSet, RunSetup};
 
@@ -17,7 +20,7 @@ use crate::{AppState, GameSet, RunSetup};
 pub const BASE_SPEED: f32 = 8.4;
 pub const PLAYER_RADIUS: f32 = 0.52;
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Player;
 
 /// Everything that upgrades, gear and research modify. Recomputed from a base
@@ -104,13 +107,13 @@ impl PlayerStats {
 
 /// Per-frame movement intent, written by input and consumed by movement so the
 /// two can be tested and re-sourced (touch, gamepad) independently.
-#[derive(Component, Default)]
+#[derive(Debug, Component, Default)]
 pub struct Intent {
     pub move_dir: Vec2,
     pub dash: bool,
 }
 
-#[derive(Component)]
+#[derive(Debug, Component)]
 pub struct Dash {
     pub cooldown: f32,
     pub active: f32,
@@ -128,12 +131,13 @@ impl Default for Dash {
 }
 
 /// Which way the model is facing, smoothed so it never snaps.
-#[derive(Component, Default)]
+#[derive(Debug, Component, Default)]
 pub struct Facing {
     pub yaw: f32,
     pub target: f32,
 }
 
+#[derive(Debug)]
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
