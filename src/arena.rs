@@ -315,7 +315,7 @@ impl Hazard {
 
 /// A recurring directional sweep across one lane of the arena: the desk's USB
 /// fan, the forest's wind, the rooftop's downdraft, the grid's gravity shear.
-#[derive(Debug, Resource)]
+#[derive(Debug, Resource, Clone)]
 pub struct Gust {
     pub interval: f32,
     pub duration: f32,
@@ -351,35 +351,6 @@ impl Default for Gust {
 impl Gust {
     pub fn affects(&self, pos: Vec2) -> bool {
         self.blowing && (pos.y - self.lane_center_z).abs() <= self.lane_half_width
-    }
-}
-
-/// A pool of light that rewards standing in it. Standing there is a real
-/// choice: more damage, but it is also where the director aims its elites.
-#[derive(Debug, Resource)]
-pub struct Spotlight {
-    pub center: Vec2,
-    pub radius: f32,
-    pub damage_bonus: f32,
-    pub enabled: bool,
-    pub label: &'static str,
-}
-
-impl Default for Spotlight {
-    fn default() -> Self {
-        Self {
-            center: Vec2::new(12.5, -8.5),
-            radius: 6.0,
-            damage_bonus: 0.25,
-            enabled: true,
-            label: "LAMPLIGHT",
-        }
-    }
-}
-
-impl Spotlight {
-    pub fn contains(&self, pos: Vec2) -> bool {
-        self.enabled && pos.distance_squared(self.center) <= self.radius * self.radius
     }
 }
 
@@ -654,23 +625,6 @@ mod tests {
         assert!(g.affects(Vec2::new(0.0, 4.0)));
         assert!(g.affects(Vec2::new(99.0, 6.0)), "lanes are unbounded in X");
         assert!(!g.affects(Vec2::new(0.0, 7.0)));
-    }
-
-    #[test]
-    fn spotlight_respects_its_radius_and_switch() {
-        let mut s = Spotlight {
-            center: Vec2::new(2.0, 2.0),
-            radius: 3.0,
-            enabled: true,
-            ..Spotlight::default()
-        };
-        assert!(s.contains(Vec2::new(2.0, 4.0)));
-        assert!(!s.contains(Vec2::new(2.0, 9.0)));
-        s.enabled = false;
-        assert!(
-            !s.contains(Vec2::new(2.0, 2.0)),
-            "disabled means never inside"
-        );
     }
 
     #[test]

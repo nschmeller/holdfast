@@ -5,7 +5,7 @@
 //! scripted one-shots; this covers the other half - an outside process that
 //! wants to *play*: read the situation, decide, act, read the result.
 //!
-//! Set `DFFA_PILOT=<dir>` and the game will:
+//! Set `HOLDFAST_PILOT=<dir>` and the game will:
 //!
 //! - poll `<dir>/commands` for appended command lines,
 //! - inject the resulting key presses straight into [`ButtonInput<KeyCode>`],
@@ -571,7 +571,7 @@ impl Pilot {
     fn new(dir: PathBuf) -> Self {
         // Name the instance after its directory unless told otherwise, so a
         // report always says which of several windows it came from.
-        let label = env::var("DFFA_LABEL").ok().unwrap_or_else(|| {
+        let label = env::var("HOLDFAST_LABEL").ok().unwrap_or_else(|| {
             dir.file_name()
                 .map_or_else(|| "pilot".to_string(), |n| n.to_string_lossy().into_owned())
         });
@@ -619,12 +619,12 @@ pub struct PilotPlugin;
 
 impl Plugin for PilotPlugin {
     fn build(&self, app: &mut App) {
-        let Ok(dir) = env::var("DFFA_PILOT") else {
+        let Ok(dir) = env::var("HOLDFAST_PILOT") else {
             return;
         };
         let dir = PathBuf::from(dir);
         if let Err(err) = fs::create_dir_all(&dir) {
-            error!("DFFA_PILOT: cannot use {}: {err}", dir.display());
+            error!("HOLDFAST_PILOT: cannot use {}: {err}", dir.display());
             return;
         }
         // Start from a clean channel: a stale command file from a previous run

@@ -11,7 +11,6 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
 use crate::AppState;
-use crate::arena::ArenaBounds;
 use crate::common::{ShakeEvent, damp, damp_vec3, to_world};
 use crate::player::Player;
 
@@ -125,7 +124,6 @@ fn absorb_shake(mut rig: ResMut<CameraRig>, mut shakes: MessageReader<ShakeEvent
 
 fn drive_camera(
     time: Res<Time>,
-    bounds: Res<ArenaBounds>,
     plan: Res<crate::command::PlanMode>,
     mut rig: ResMut<CameraRig>,
     player: Query<&crate::common::Body, With<Player>>,
@@ -146,20 +144,16 @@ fn drive_camera(
         player.iter().next().map_or(Vec2::ZERO, |b| b.pos)
     };
 
-    // Bias the focus towards the arena centre so the camera never stares at
-    // dead space when the player hugs a corner.
-    let centre_pull = 0.22;
-    let focus_2d = anchor * (1.0 - centre_pull);
-    let target_focus = to_world(focus_2d, 0.0);
+    // The world is unbounded, so the camera simply follows: there is no centre
+    // to bias towards and no corner to hug.
+    let target_focus = to_world(anchor, 0.0);
 
     rig.focus = damp_vec3(rig.focus, target_focus, 7.0, dt);
     rig.yaw = crate::player::angle_lerp(rig.yaw, rig.target_yaw, 9.0 * dt);
     rig.distance = damp(rig.distance, rig.target_distance, 5.0, dt);
     rig.shake = damp(rig.shake, 0.0, 6.0, dt);
 
-    // Pull back a little on larger arenas so framing is consistent.
-    let scale = (bounds.diagonal() / 48.0).clamp(0.9, 1.25);
-    let dist = rig.distance * scale;
+    let dist = rig.distance;
 
     let (sin, cos) = rig.yaw.sin_cos();
     let horizontal = Vec3::new(sin, 0.0, cos) * (dist * rig.pitch.cos());

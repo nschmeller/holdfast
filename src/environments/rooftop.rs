@@ -5,8 +5,8 @@
 
 use bevy::prelude::*;
 
-use super::{HazardSpec, PropSpec, SceneData, Surface};
-use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
+use super::{ChunkCtx, EnvLook, HazardSpec, PropSpec, Surface};
+use crate::arena::{ColliderShape, Gust, HazardKind};
 use crate::meshgen::{
     GroundCell, MeshWeld, at, at_rot_x, at_rot_z, cone, cube, cylinder, cylinder_hi, ground_grid,
     noise_soft, noise2, sphere, torus,
@@ -14,8 +14,10 @@ use crate::meshgen::{
 use crate::palette as pal;
 use crate::rng::Rng;
 
-const HALF_X: f32 = 22.0;
-const HALF_Z: f32 = 15.0;
+use crate::world::CHUNK_SIZE;
+
+/// Half a chunk, which is the extent every floor mesh is authored over.
+const HALF: f32 = CHUNK_SIZE * 0.5;
 
 const TAR: Color = Color::srgb(0.14, 0.145, 0.16);
 const TAR_LIGHT: Color = Color::srgb(0.2, 0.205, 0.225);
@@ -27,238 +29,200 @@ const NEON_PINK: Color = Color::srgb(1.0, 0.25, 0.6);
 const NEON_CYAN: Color = Color::srgb(0.3, 0.9, 1.0);
 const PUDDLE: Color = Color::srgb(0.15, 0.2, 0.26);
 
-pub fn build(rng: &mut Rng) -> SceneData {
-    let mut s = SceneData::new(HALF_X, HALF_Z, floor(rng));
+pub(super) fn look() -> EnvLook {
+    EnvLook {
+        sky: Color::srgb(0.03, 0.028, 0.05),
+        ambient: Color::srgb(0.4, 0.42, 0.62),
+        ambient_brightness: 230.0,
+        sun_color: Color::srgb(0.6, 0.68, 1.0),
+        sun_illuminance: 1800.0,
+        sun_dir: Vec3::new(0.3, -1.0, -0.6),
+        // A downdraft that runs the length of the roofs.
+        gust: Gust {
+            interval: 13.0,
+            duration: 3.4,
+            cooldown: 11.0,
+            remaining: 11.0,
+            blowing: false,
+            dir: Vec2::new(0.0, 1.0),
+            lane_center_z: 0.0,
+            lane_half_width: 6.0,
+            strength: 11.0,
+            enabled: true,
+            label: "DOWNDRAFT",
+        },
+    }
+}
 
-    s.sky = Color::srgb(0.03, 0.028, 0.05);
-    s.ambient = Color::srgb(0.4, 0.42, 0.62);
-    s.ambient_brightness = 230.0;
-    s.sun_color = Color::srgb(0.6, 0.68, 1.0);
-    s.sun_illuminance = 1800.0;
-    s.sun_dir = Vec3::new(0.3, -1.0, -0.6);
+pub(super) fn chunk(c: &mut ChunkCtx) {
+    // The gap to the next roof. This world's signature: long sightlines, and
+    // a long way down if something shoves you.
+    if c.feature(0.2) {
+        let p = c.spot(7.0);
+        let r = c.rng.range(2.8, 4.6);
+        c.chasm(p, r);
+    }
 
-    // A downdraft that runs the length of the roof.
-    s.gust = Gust {
-        interval: 13.0,
-        duration: 3.4,
-        cooldown: 11.0,
-        remaining: 11.0,
-        blowing: false,
-        dir: Vec2::new(0.0, 1.0),
-        lane_center_z: 0.0,
-        lane_half_width: 6.0,
-        strength: 11.0,
-        enabled: true,
-        label: "DOWNDRAFT",
-    };
+    // -- water tower: the landmark you navigate by --------------------------
+    if c.feature(0.1) {
+        let p = c.spot(6.0);
+        c.prop(PropSpec::new(water_tower(), p).solid(ColliderShape::Circle(3.0), 8.0));
+    }
 
-    s.spotlight = Spotlight {
-        center: Vec2::new(-15.0, -10.0),
-        radius: 6.2,
-        damage_bonus: 0.25,
-        enabled: true,
-        label: "SIGN GLOW",
-    };
-
-    parapet(&mut s);
-
-    // -- water tower: the landmark ----------------------------------------
-    s.prop(
-        PropSpec::new(water_tower(), Vec2::new(13.0, -9.0)).solid(ColliderShape::Circle(3.0), 8.0),
-    );
-
-    // -- HVAC plant: the cover ---------------------------------------------
-    for (p, w, d, deg) in [
-        (Vec2::new(-6.0, 6.0), 3.2f32, 2.4f32, 0.0f32),
-        (Vec2::new(2.0, 9.5), 2.6, 2.0, 18.0),
-        (Vec2::new(-13.0, 2.0), 2.8, 2.2, -12.0),
-        (Vec2::new(9.0, 5.0), 2.2, 2.2, 42.0),
-    ] {
-        s.prop(
-            PropSpec::new(ac_unit(w, d), p)
+    // -- HVAC plant: the cover ----------------------------------------------
+    for _ in 0..=c.rng.below(3) {
+        let p = c.spot(4.0);
+        let w = c.rng.range(2.2, 3.2);
+        let d = c.rng.range(2.0, 2.4);
+        let deg = c.rng.range(-90.0, 90.0);
+        let mesh = ac_unit(w, d);
+        c.prop(
+            PropSpec::new(mesh, p)
                 .rot(deg)
                 .solid(ColliderShape::rect_rot(w, d, deg), 2.2),
         );
     }
 
-    // -- ducting snaking between them --------------------------------------
-    for (p, len, deg) in [
-        (Vec2::new(-2.0, 7.6), 7.0f32, 22.0f32),
-        (Vec2::new(-9.5, 4.0), 6.0, -55.0),
-        (Vec2::new(16.0, 4.0), 8.0, 78.0),
-    ] {
-        s.prop(
-            PropSpec::new(duct_run(len), p)
+    // -- ducting snaking between them ---------------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(5.0);
+        let len = c.rng.range(6.0, 8.0);
+        let deg = c.rng.range(-90.0, 90.0);
+        let mesh = duct_run(len);
+        c.prop(
+            PropSpec::new(mesh, p)
                 .rot(deg)
                 .solid(ColliderShape::rect_rot(len * 0.5, 0.8, deg), 1.4),
         );
     }
 
-    // -- roof access and chimney -------------------------------------------
-    s.prop(
-        PropSpec::new(roof_door(), Vec2::new(-17.0, 8.0))
-            .rot(-8.0)
-            .solid(ColliderShape::rect_rot(1.9, 1.6, -8.0), 3.4),
-    );
-    s.prop(
-        PropSpec::new(chimney(), Vec2::new(6.0, -12.0)).solid(ColliderShape::rect(1.5, 1.5), 5.0),
-    );
-
-    // -- satellite dishes ---------------------------------------------------
-    for (p, deg) in [
-        (Vec2::new(19.0, 11.0), -140.0f32),
-        (Vec2::new(-20.0, -4.0), 40.0),
-    ] {
-        s.prop(
+    // -- roof access, chimneys, dishes ---------------------------------------
+    if c.feature(0.18) {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
+            PropSpec::new(roof_door(), p)
+                .rot(deg)
+                .solid(ColliderShape::rect_rot(1.2, 0.8, deg), 2.4),
+        );
+    }
+    if c.feature(0.2) {
+        let p = c.spot(3.0);
+        c.prop(PropSpec::new(chimney(), p).solid(ColliderShape::Circle(0.9), 3.2));
+    }
+    if c.feature(0.14) {
+        let p = c.spot(3.5);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
             PropSpec::new(satellite_dish(), p)
                 .rot(deg)
-                .solid(ColliderShape::Circle(1.5), 3.0),
+                .solid(ColliderShape::Circle(1.4), 2.6),
         );
     }
 
-    // -- the neon sign: this roof's light source ---------------------------
-    s.prop(
-        PropSpec::new(neon_sign(), Vec2::new(-16.0, -11.0))
-            .rot(24.0)
-            .solid(ColliderShape::rect_rot(3.6, 0.5, 24.0), 4.5)
-            .surface(Surface::Solid),
-    );
-    s.light(Vec3::new(-15.0, 4.0, -10.0), NEON_PINK, 420_000.0, 26.0);
-    s.light(Vec3::new(12.0, 6.0, 8.0), NEON_CYAN, 200_000.0, 24.0);
-
-    // -- skylights: fragile-looking, actually solid ------------------------
-    for p in [Vec2::new(-3.0, -6.0), Vec2::new(4.0, -2.0)] {
-        s.prop(
-            PropSpec::new(skylight(), p)
-                .solid(ColliderShape::rect(1.8, 1.4), 0.7)
-                .passthrough(),
+    // -- neon: the light, and the bright ground under it ---------------------
+    if c.feature(0.2) {
+        let p = c.spot(4.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
+            PropSpec::new(neon_sign(), p)
+                .rot(deg)
+                .solid(ColliderShape::rect_rot(2.6, 0.4, deg), 3.4),
         );
-        s.light(
-            Vec3::new(p.x, 1.2, p.y),
-            Color::srgb(1.0, 0.85, 0.5),
-            60_000.0,
-            10.0,
-        );
-    }
-
-    // -- clutter ------------------------------------------------------------
-    for _ in 0..12 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 2.5, HALF_X - 2.5),
-            rng.range(-HALF_Z + 2.5, HALF_Z - 2.5),
-        );
-        if p.length() < 5.0 {
-            continue;
-        }
-        if rng.chance(0.5) {
-            s.prop(
-                PropSpec::new(vent_pipe(rng), p)
-                    .solid(ColliderShape::Circle(0.45), 1.3)
-                    .passthrough(),
-            );
+        let tint = if c.rng.chance(0.5) {
+            NEON_PINK
         } else {
-            s.prop(
-                PropSpec::new(crate_stack(rng), p)
-                    .rot(rng.range(0.0, 360.0))
-                    .solid(ColliderShape::rect(0.8, 0.8), 1.2),
-            );
-        }
+            NEON_CYAN
+        };
+        c.light(Vec3::new(p.x, 3.0, p.y), tint, 300_000.0, 22.0);
+        c.pool(p, 6.2, 0.25);
     }
 
-    // -- steam vents: the hazard that defines this roof --------------------
-    for (i, p) in [
-        Vec2::new(-8.0, -3.0),
-        Vec2::new(7.0, 1.0),
-        Vec2::new(0.0, 12.0),
-        Vec2::new(17.0, -2.0),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        s.hazards.push(HazardSpec {
-            pos: p,
-            radius: 2.6,
-            kind: HazardKind::Scald,
-            dps: 22.0,
-            slow: 1.0,
-            // Staggered phases so the roof is never entirely safe or entirely
-            // lethal; there is always a route through.
-            duty: Some((5.0 + i as f32 * 0.7, 0.32)),
-        });
-        s.prop(
-            PropSpec::new(vent_grate(), p)
-                .raised(0.03)
-                .surface(Surface::Metal),
-        );
-    }
-
-    // -- puddles: decorative, but they read as slick -----------------------
-    for _ in 0..7 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 3.0, HALF_X - 3.0),
-            rng.range(-HALF_Z + 3.0, HALF_Z - 3.0),
-        );
-        s.prop(
-            PropSpec::new(puddle(rng.range(1.0, 2.4)), p)
-                .raised(0.02)
+    if c.feature(0.22) {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
+            PropSpec::new(skylight(), p)
+                .rot(deg)
+                .raised(0.05)
                 .surface(Surface::Glass),
         );
     }
 
-    s.zones = vec![
-        Vec2::new(-15.0, -10.0),
-        Vec2::new(12.0, -8.0),
-        Vec2::new(-4.0, 8.0),
-        Vec2::new(18.0, 8.0),
-        Vec2::new(0.0, -2.0),
-    ];
+    // -- vent pipes and crates ------------------------------------------------
+    for _ in 0..=c.rng.below(4) {
+        let p = c.spot(2.0);
+        let mesh = vent_pipe(c.rng);
+        c.prop(
+            PropSpec::new(mesh, p)
+                .solid(ColliderShape::Circle(0.4), 1.3)
+                .passthrough(),
+        );
+    }
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        let mesh = crate_stack(c.rng);
+        c.prop(
+            PropSpec::new(mesh, p)
+                .rot(deg)
+                .solid(ColliderShape::rect_rot(1.1, 1.1, deg), 1.8),
+        );
+    }
 
-    s
+    // -- steam vents: the timed hazard ----------------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(3.0);
+        let period = c.rng.range(4.0, 7.0);
+        c.prop(
+            PropSpec::new(vent_grate(), p)
+                .raised(0.03)
+                .surface(Surface::Metal),
+        );
+        c.hazard(HazardSpec {
+            pos: p,
+            radius: 2.2,
+            kind: HazardKind::Scald,
+            dps: 18.0,
+            slow: 1.0,
+            duty: Some((period, 0.35)),
+        });
+    }
+
+    // -- puddles ---------------------------------------------------------------
+    for _ in 0..=c.rng.below(3) {
+        let p = c.spot(2.5);
+        let r = c.rng.range(1.4, 2.6);
+        let mesh = puddle(r);
+        c.prop(PropSpec::new(mesh, p).raised(0.012).surface(Surface::Glass));
+    }
 }
 
-pub(super) fn floor(rng: &mut Rng) -> Mesh {
-    let seed = (rng.next_u64() & 0xFFFF) as u32;
-    ground_grid(HALF_X, HALF_Z, 1.1, |ix, iz, c| {
+pub(super) fn floor(origin: Vec2, salt: u32) -> Mesh {
+    let seed = 0x70FF ^ salt;
+    ground_grid(HALF, HALF, 1.1, |_, _, local| {
+        let c = origin + local;
         let n = noise_soft(c.x * 0.4, c.y * 0.4, seed);
         // Tar paper laid in overlapping strips.
         let strip = (c.y / 4.0).floor() as i32;
         let seam = (c.y / 4.0).fract().abs() < 0.08;
         let patch = noise2(c.x * 0.09, c.y * 0.09, seed ^ 0x33) > 0.78;
+        // Checker indices come from world space, not the chunk's own cell
+        // numbering, or the pattern would restart at every boundary.
+        let wx = (c.x / 1.1).floor() as i32;
+        let wz = (c.y / 1.1).floor() as i32;
 
         let color = if seam {
             CONCRETE_DARK
         } else if patch {
             RUST
-        // `strip` goes negative on the near half of the roof, so fold it into
-        // {0, 1} before mixing it with the unsigned cell indices.
-        } else if (strip.rem_euclid(2) as usize + ix + iz).is_multiple_of(2) {
+        } else if (strip + wx + wz).rem_euclid(2) == 0 {
             pal::shade(TAR, 0.9 + n * 0.3)
         } else {
             pal::shade(TAR_LIGHT, 0.85 + n * 0.3)
         };
         GroundCell { color, height: 0.0 }
     })
-}
-
-/// The roof edge wall. Solid, so it genuinely shapes the fight.
-pub(super) fn parapet(s: &mut SceneData) {
-    let mut b = MeshWeld::new();
-    let t = 0.6;
-    let h = 1.5;
-    for (cx, cz, sx, sz) in [
-        (0.0f32, -HALF_Z - t * 0.5, HALF_X + t, t),
-        (0.0, HALF_Z + t * 0.5, HALF_X + t, t),
-        (-HALF_X - t * 0.5, 0.0, t, HALF_Z + t),
-        (HALF_X + t * 0.5, 0.0, t, HALF_Z + t),
-    ] {
-        b.add(&cube(sx * 2.0, h, sz * 2.0), at(cx, h * 0.5, cz), CONCRETE);
-        b.add(
-            &cube(sx * 2.0 + 0.2, 0.16, sz * 2.0 + 0.2),
-            at(cx, h, cz),
-            CONCRETE_DARK,
-        );
-    }
-    s.prop(PropSpec::new(b.build(), Vec2::ZERO));
 }
 
 // -- props ------------------------------------------------------------------

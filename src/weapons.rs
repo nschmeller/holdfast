@@ -219,7 +219,7 @@ fn reset_loadout(mut loadout: ResMut<Loadout>) {
 fn fire_weapons(
     time: Res<Time>,
     stats: Res<PlayerStats>,
-    spotlight: Res<crate::arena::Spotlight>,
+    pools: Res<crate::world::LightPools>,
     grid: Res<EnemyGrid>,
     mut loadout: ResMut<Loadout>,
     mut rng: ResMut<Rng>,
@@ -237,12 +237,9 @@ fn fire_weapons(
     };
     let origin = body.pos;
 
-    // Standing in the light is a real, quantified incentive.
-    let light_bonus = if spotlight.contains(origin) {
-        1.0 + spotlight.damage_bonus
-    } else {
-        1.0
-    };
+    // Standing in a pool of light is a real, quantified incentive - and now
+    // the pools are places you find rather than one fixed spot.
+    let light_bonus = pools.bonus_at(origin);
 
     let facing_dir = Vec2::new(facing.yaw.sin(), facing.yaw.cos());
 

@@ -5,8 +5,8 @@
 
 use bevy::prelude::*;
 
-use super::{HazardSpec, PropSpec, SceneData, Surface};
-use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
+use super::{ChunkCtx, EnvLook, HazardSpec, PropSpec, Surface};
+use crate::arena::{ColliderShape, Gust, HazardKind};
 use crate::meshgen::{
     GroundCell, MeshWeld, at, cube, cylinder, cylinder_hi, ground_grid, noise_soft, noise2, sphere,
     torus,
@@ -14,8 +14,10 @@ use crate::meshgen::{
 use crate::palette as pal;
 use crate::rng::Rng;
 
-const HALF_X: f32 = 21.0;
-const HALF_Z: f32 = 14.0;
+use crate::world::CHUNK_SIZE;
+
+/// Half a chunk, which is the extent every floor mesh is authored over.
+const HALF: f32 = CHUNK_SIZE * 0.5;
 
 const PLATE: Color = Color::srgb(0.09, 0.11, 0.14);
 const PLATE_LIT: Color = Color::srgb(0.13, 0.17, 0.22);
@@ -25,175 +27,152 @@ const MAGENTA: Color = Color::srgb(1.0, 0.28, 0.72);
 const STEEL: Color = Color::srgb(0.5, 0.54, 0.6);
 const STEEL_DARK: Color = Color::srgb(0.24, 0.27, 0.32);
 
-pub fn build(rng: &mut Rng) -> SceneData {
-    let mut s = SceneData::new(HALF_X, HALF_Z, floor(rng));
+pub(super) fn look() -> EnvLook {
+    EnvLook {
+        // Deep space: almost no ambient, so the emissives carry the whole read.
+        sky: Color::srgb(0.004, 0.005, 0.012),
+        ambient: Color::srgb(0.28, 0.42, 0.6),
+        ambient_brightness: 150.0,
+        sun_color: Color::srgb(0.7, 0.85, 1.0),
+        sun_illuminance: 1500.0,
+        sun_dir: Vec3::new(-0.35, -1.0, -0.5),
+        // Gravity shear instead of wind.
+        gust: Gust {
+            interval: 10.0,
+            duration: 3.0,
+            cooldown: 9.0,
+            remaining: 9.0,
+            blowing: false,
+            dir: Vec2::new(1.0, 0.0),
+            lane_center_z: 0.0,
+            lane_half_width: 5.0,
+            strength: 14.0,
+            enabled: true,
+            label: "GRAV SHEAR",
+        },
+    }
+}
 
-    // Deep space: almost no ambient, so the emissives carry the whole read.
-    s.sky = Color::srgb(0.004, 0.005, 0.012);
-    s.ambient = Color::srgb(0.28, 0.42, 0.6);
-    s.ambient_brightness = 150.0;
-    s.sun_color = Color::srgb(0.7, 0.85, 1.0);
-    s.sun_illuminance = 1500.0;
-    s.sun_dir = Vec3::new(-0.35, -1.0, -0.5);
-
-    // Gravity shear instead of wind.
-    s.gust = Gust {
-        interval: 10.0,
-        duration: 3.0,
-        cooldown: 9.0,
-        remaining: 9.0,
-        blowing: false,
-        dir: Vec2::new(1.0, 0.0),
-        lane_center_z: 0.0,
-        lane_half_width: 5.0,
-        strength: 14.0,
-        enabled: true,
-        label: "GRAV SHEAR",
-    };
-
-    s.spotlight = Spotlight {
-        center: Vec2::ZERO,
-        radius: 5.5,
-        damage_bonus: 0.3,
-        enabled: true,
-        label: "CORE FIELD",
-    };
-
-    edge_rail(&mut s);
-
-    // -- the core pylon at the centre --------------------------------------
-    s.prop(PropSpec::new(core_pylon(), Vec2::ZERO).solid(ColliderShape::Circle(1.5), 5.0));
-    s.light(Vec3::new(0.0, 4.0, 0.0), CYAN, 500_000.0, 30.0);
-
-    // -- corner pylons ------------------------------------------------------
-    for (i, p) in [
-        Vec2::new(-15.0, -9.0),
-        Vec2::new(15.0, -9.0),
-        Vec2::new(-15.0, 9.0),
-        Vec2::new(15.0, 9.0),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let color = if i % 2 == 0 { CYAN } else { MAGENTA };
-        s.prop(PropSpec::new(energy_pylon(color), p).solid(ColliderShape::Circle(1.0), 4.2));
-        s.light(Vec3::new(p.x, 3.4, p.y), color, 260_000.0, 22.0);
+pub(super) fn chunk(c: &mut ChunkCtx) {
+    // Missing plates. The platform was never finished, and in a world with
+    // almost no cover the holes are most of the terrain you get.
+    if c.feature(0.16) {
+        let p = c.spot(7.0);
+        let r = c.rng.range(3.0, 5.0);
+        c.chasm(p, r);
     }
 
-    // -- server monoliths: the only real cover -----------------------------
-    for (p, deg) in [
-        (Vec2::new(-8.0, 4.0), 18.0f32),
-        (Vec2::new(8.5, -4.5), -22.0),
-        (Vec2::new(-3.0, -10.0), 66.0),
-        (Vec2::new(4.0, 10.5), -70.0),
-    ] {
-        s.prop(
+    // -- core pylon: the landmark and the bright ground ---------------------
+    if c.feature(0.08) {
+        let p = c.spot(6.0);
+        c.prop(PropSpec::new(core_pylon(), p).solid(ColliderShape::Circle(1.5), 5.0));
+        c.light(Vec3::new(p.x, 4.0, p.y), CYAN, 500_000.0, 30.0);
+        c.pool(p, 5.5, 0.3);
+    }
+
+    // -- energy pylons -------------------------------------------------------
+    for i in 0..c.rng.below(3) {
+        let p = c.spot(4.0);
+        let color = if i % 2 == 0 { CYAN } else { MAGENTA };
+        let mesh = energy_pylon(color);
+        c.prop(PropSpec::new(mesh, p).solid(ColliderShape::Circle(1.0), 4.2));
+        c.light(Vec3::new(p.x, 3.4, p.y), color, 260_000.0, 22.0);
+    }
+
+    // -- server monoliths: the only real cover -------------------------------
+    for _ in 0..=c.rng.below(3) {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
             PropSpec::new(monolith(), p)
                 .rot(deg)
                 .solid(ColliderShape::rect_rot(1.4, 0.7, deg), 3.6),
         );
     }
 
-    // -- holographic barriers: block shots, not movement -------------------
+    // -- holographic barriers: block shots, not movement ---------------------
     // A deliberate inversion of the usual rule, and the thing that makes this
-    // arena tactically distinct.
-    for (p, deg) in [
-        (Vec2::new(-12.0, 0.0), 90.0f32),
-        (Vec2::new(12.0, 2.0), 74.0),
-        (Vec2::new(0.0, 7.5), 10.0),
-    ] {
-        s.prop(
+    // world tactically distinct.
+    for _ in 0..=c.rng.below(3) {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
             PropSpec::new(holo_barrier(), p)
                 .rot(deg)
                 .surface(Surface::Glass),
         );
     }
 
-    // -- floating debris cubes, purely atmospheric -------------------------
-    for _ in 0..14 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 1.0, HALF_X - 1.0),
-            rng.range(-HALF_Z + 1.0, HALF_Z - 1.0),
-        );
-        s.prop(
-            PropSpec::new(float_cube(rng), p)
-                .raised(rng.range(3.0, 9.0))
-                .rot(rng.range(0.0, 360.0))
+    // -- floating debris cubes, purely atmospheric ---------------------------
+    for _ in 0..c.rng.below(9) + 5 {
+        let p = c.spot(1.0);
+        let y = c.rng.range(3.0, 9.0);
+        let deg = c.rng.range(0.0, 360.0);
+        let mesh = float_cube(c.rng);
+        c.prop(
+            PropSpec::new(mesh, p)
+                .raised(y)
+                .rot(deg)
                 .surface(Surface::Metal),
         );
     }
 
-    // -- low bollards, light cover ------------------------------------------
-    for _ in 0..8 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 3.0, HALF_X - 3.0),
-            rng.range(-HALF_Z + 3.0, HALF_Z - 3.0),
-        );
-        if p.length() < 4.0 {
-            continue;
-        }
-        s.prop(
+    // -- low bollards, light cover --------------------------------------------
+    for _ in 0..c.rng.below(6) + 2 {
+        let p = c.spot(3.0);
+        c.prop(
             PropSpec::new(bollard(), p)
                 .solid(ColliderShape::Circle(0.45), 1.1)
                 .passthrough(),
         );
     }
 
-    // -- plasma conduits: the signature hazard -----------------------------
-    // Long lines rather than pools, so they cut the arena into lanes that open
+    // -- plasma conduits: the signature hazard --------------------------------
+    // Long lines rather than pools, so they cut the ground into lanes that open
     // and close on a rhythm.
-    for (i, (p, deg, len)) in [
-        (Vec2::new(-6.0, -6.0), 34.0f32, 9.0f32),
-        (Vec2::new(7.0, 6.0), -28.0, 8.0),
-        (Vec2::new(-14.0, 5.0), 100.0, 7.0),
-        (Vec2::new(14.0, -5.0), 80.0, 7.0),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        // Approximate a line hazard with overlapping discs; cheap and the
+    for i in 0..c.rng.below(3) {
+        let p = c.spot(6.0);
+        let deg = c.rng.range(0.0, 360.0);
+        let len = c.rng.range(7.0, 9.0);
+        let period = c.rng.range(4.5, 6.5);
+        // Approximate a line hazard with overlapping discs; cheap, and the
         // damage falloff at the ends actually reads better than a hard edge.
         let dir = Vec2::new(deg.to_radians().cos(), deg.to_radians().sin());
         let steps = (len / 1.6).ceil() as i32;
         for k in 0..=steps {
             let t = k as f32 / steps as f32 - 0.5;
-            s.hazards.push(HazardSpec {
+            c.hazard(HazardSpec {
                 pos: p + dir * (t * len),
                 radius: 1.5,
                 kind: HazardKind::Scald,
                 dps: 26.0,
                 slow: 1.0,
-                duty: Some((4.5 + i as f32 * 0.6, 0.4)),
+                duty: Some((period + i as f32 * 0.6, 0.4)),
             });
         }
-        s.prop(
-            PropSpec::new(conduit(len), p)
+        let mesh = conduit(len);
+        c.prop(
+            PropSpec::new(mesh, p)
                 .rot(deg)
                 .raised(0.02)
                 .surface(Surface::Solid),
         );
     }
-
-    s.zones = vec![
-        Vec2::new(0.0, 0.0),
-        Vec2::new(-15.0, -9.0),
-        Vec2::new(15.0, 9.0),
-        Vec2::new(15.0, -9.0),
-        Vec2::new(-15.0, 9.0),
-    ];
-
-    s
 }
 
-pub(super) fn floor(rng: &mut Rng) -> Mesh {
-    let seed = (rng.next_u64() & 0xFFFF) as u32;
-    ground_grid(HALF_X, HALF_Z, 1.0, |ix, iz, c| {
+pub(super) fn floor(origin: Vec2, salt: u32) -> Mesh {
+    let seed = 0x6D1D ^ salt;
+    ground_grid(HALF, HALF, 1.0, |_, _, local| {
+        let c = origin + local;
         // Hex-ish plating faked with an offset brick pattern, plus glowing
-        // circuit traces on a sparse subset of cells.
-        let row_offset = if iz % 2 == 0 { 0.0 } else { 0.5 };
+        // circuit traces on a sparse subset of cells. Indices are taken from
+        // world space so the plating runs unbroken between chunks.
+        let wx = (c.x).floor() as i32;
+        let wz = (c.y).floor() as i32;
+        let row_offset = if wz.rem_euclid(2) == 0 { 0.0 } else { 0.5 };
         let u = (c.x / 3.0 + row_offset).fract().abs();
         let seam = u < 0.06 || (c.y / 3.0).fract().abs() < 0.06;
-        let trace = noise2(ix as f32 * 0.7, iz as f32 * 0.7, seed) > 0.93;
+        let trace = noise2(wx as f32 * 0.7, wz as f32 * 0.7, seed) > 0.93;
         let lit = noise_soft(c.x * 0.2, c.y * 0.2, seed ^ 0x77) > 0.7;
 
         let color = if trace {
@@ -210,44 +189,6 @@ pub(super) fn floor(rng: &mut Rng) -> Mesh {
             height: if seam { -0.03 } else { 0.0 },
         }
     })
-}
-
-/// A glowing rail marking the drop, so the edge is unmistakable.
-pub(super) fn edge_rail(s: &mut SceneData) {
-    let mut b = MeshWeld::new();
-    let t = 0.25;
-    for (cx, cz, sx, sz) in [
-        (0.0f32, -HALF_Z, HALF_X, t),
-        (0.0, HALF_Z, HALF_X, t),
-        (-HALF_X, 0.0, t, HALF_Z),
-        (HALF_X, 0.0, t, HALF_Z),
-    ] {
-        b.add(
-            &cube(sx * 2.0, 0.12, sz * 2.0),
-            at(cx, 0.06, cz),
-            STEEL_DARK,
-        );
-        b.add(
-            &cube(sx * 2.0, 0.06, sz * 2.0 * 0.5),
-            at(cx, 0.16, cz),
-            CYAN,
-        );
-    }
-    // Under-platform structure, visible past the edge.
-    b.add(
-        &cube(HALF_X * 2.0, 0.8, HALF_Z * 2.0),
-        at(0.0, -0.5, 0.0),
-        STEEL_DARK,
-    );
-    for i in 0..12 {
-        let a = i as f32 / 12.0 * std::f32::consts::TAU;
-        b.add(
-            &cube(1.0, 2.4, 1.0),
-            at(a.cos() * HALF_X * 0.8, -1.6, a.sin() * HALF_Z * 0.8),
-            SEAM,
-        );
-    }
-    s.prop(PropSpec::new(b.build(), Vec2::ZERO));
 }
 
 // -- props ------------------------------------------------------------------

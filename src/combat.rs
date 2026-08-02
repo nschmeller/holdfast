@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use crate::arena::{ArenaBounds, Hazard, HazardKind, ObstacleField};
+use crate::arena::{Hazard, HazardKind, ObstacleField};
 use crate::art::{GameArt, Glow};
 use crate::common::{
     Altitude, Body, BurstEvent, DamageEvent, DamageSource, DeathEvent, Doomed, Ephemeral,
@@ -25,16 +25,17 @@ pub struct Damageable {
 pub struct Actor {
     /// Whether the actor is stopped by obstacles. Flyers are not.
     pub collides: bool,
-    /// Whether the actor is confined to the arena. Enemies are not, so they
-    /// can be knocked off the edge.
-    pub confined: bool,
+    /// Whether the actor keeps itself out of chasms. Enemies do not, so
+    /// knockback can shove them into one; everything on the player's side
+    /// walks around them.
+    pub avoids_chasms: bool,
 }
 
 impl Default for Actor {
     fn default() -> Self {
         Self {
             collides: true,
-            confined: true,
+            avoids_chasms: true,
         }
     }
 }
@@ -75,10 +76,18 @@ impl Default for EnemyGrid {
     }
 }
 
+/// Half-width of the broad-phase window, centred on the player.
+///
+/// The world is unbounded, so the grid cannot cover it. It covers the part
+/// that matters: comfortably past the spawn ring, so everything that could
+/// reach the player this second is in it. Anything further out is simply not
+/// inserted, and nothing queries there.
+pub const GRID_REACH: f32 = 56.0;
+
 impl EnemyGrid {
-    fn rebuild(&mut self, bounds: ArenaBounds) {
-        self.min = Vec2::new(-bounds.half_x - 8.0, -bounds.half_z - 8.0);
-        let span = Vec2::new(bounds.half_x + 8.0, bounds.half_z + 8.0) - self.min;
+    fn rebuild(&mut self, center: Vec2) {
+        self.min = center - Vec2::splat(GRID_REACH);
+        let span = Vec2::splat(GRID_REACH * 2.0);
         self.cols = (span.x / self.cell).ceil() as usize + 1;
         self.rows = (span.y / self.cell).ceil() as usize + 1;
         let needed = self.cols * self.rows;
@@ -351,11 +360,12 @@ impl Plugin for CombatPlugin {
 }
 
 fn rebuild_grid(
-    bounds: Res<ArenaBounds>,
     mut grid: ResMut<EnemyGrid>,
+    player: Query<&Body, With<Player>>,
     q: Query<(Entity, &Body, &Enemy)>,
 ) {
-    grid.rebuild(*bounds);
+    let center = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
+    grid.rebuild(center);
     for (entity, body, enemy) in &q {
         grid.insert(GridEntry {
             entity,
@@ -369,7 +379,7 @@ fn rebuild_grid(
 /// Shared movement for every non-player actor.
 fn integrate_actors(
     time: Res<Time>,
-    bounds: Res<ArenaBounds>,
+    chasms: Res<crate::world::Chasms>,
     obstacles: Res<ObstacleField>,
     mut q: Query<(&mut Body, &Actor), Without<Player>>,
 ) {
@@ -383,9 +393,9 @@ fn integrate_actors(
             let r = body.radius;
             body.pos = obstacles.resolve(body.pos, r);
         }
-        if actor.confined {
+        if actor.avoids_chasms {
             let r = body.radius;
-            body.pos = bounds.clamp(body.pos, r);
+            body.pos = chasms.push_out(body.pos, r);
         }
     }
 }
@@ -551,7 +561,6 @@ fn spawn_hazards(
 #[allow(clippy::too_many_arguments)]
 fn move_projectiles(
     time: Res<Time>,
-    bounds: Res<ArenaBounds>,
     obstacles: Res<ObstacleField>,
     grid: Res<EnemyGrid>,
     mut commands: Commands,
@@ -573,21 +582,15 @@ fn move_projectiles(
         let step = proj.vel * dt;
         body.pos += step;
 
-        // Walls: bounce if the shot has bounces left, otherwise expire.
-        let hit_wall = !bounds.contains(body.pos) || obstacles.blocks_segment(prev, body.pos, 0.55);
+        // Cover: bounce if the shot has bounces left, otherwise expire. There
+        // are no arena walls to reflect off any more, so every bounce is off a
+        // prop, and reversing is a good enough approximation of a normal for
+        // something the size of a rubber band.
+        let hit_wall = obstacles.blocks_segment(prev, body.pos, 0.55);
         if hit_wall {
             if proj.bounces > 0 {
                 proj.bounces -= 1;
-                // Reflect off whichever axis was crossed. Approximate, but for
-                // a bouncing rubber band "approximate" is indistinguishable
-                // from correct and costs nothing.
-                if body.pos.x.abs() > bounds.half_x {
-                    proj.vel.x = -proj.vel.x;
-                } else if body.pos.y.abs() > bounds.half_z {
-                    proj.vel.y = -proj.vel.y;
-                } else {
-                    proj.vel = -proj.vel;
-                }
+                proj.vel = -proj.vel;
                 body.pos = prev;
                 proj.hit.clear();
             } else {
@@ -886,10 +889,7 @@ mod tests {
 
     fn grid_with(points: &[(u32, Vec2)]) -> EnemyGrid {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(ArenaBounds {
-            half_x: 20.0,
-            half_z: 13.0,
-        });
+        grid.rebuild(Vec2::ZERO);
         for (i, pos) in points {
             grid.insert(GridEntry {
                 entity: entity(*i),
@@ -963,10 +963,7 @@ mod tests {
     #[test]
     fn entries_outside_the_grid_are_dropped_not_panicked_on() {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(ArenaBounds {
-            half_x: 5.0,
-            half_z: 5.0,
-        });
+        grid.rebuild(Vec2::ZERO);
         grid.insert(GridEntry {
             entity: entity(1),
             pos: Vec2::new(10_000.0, 10_000.0),
@@ -979,7 +976,7 @@ mod tests {
     #[test]
     fn best_target_prefers_a_boss_over_closer_chaff() {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(ArenaBounds::default());
+        grid.rebuild(Vec2::ZERO);
         grid.insert(GridEntry {
             entity: entity(1),
             pos: Vec2::new(1.0, 0.0),
@@ -1012,7 +1009,7 @@ mod tests {
     fn rebuilding_clears_the_previous_frame() {
         let mut grid = grid_with(&[(1, Vec2::ZERO)]);
         assert!(grid.nearest(Vec2::ZERO, 5.0).is_some());
-        grid.rebuild(ArenaBounds::default());
+        grid.rebuild(Vec2::ZERO);
         assert!(
             grid.nearest(Vec2::ZERO, 5.0).is_none(),
             "stale entries would let weapons shoot dead enemies"
@@ -1022,14 +1019,8 @@ mod tests {
     #[test]
     fn rebuilding_to_a_different_arena_size_is_safe() {
         let mut grid = EnemyGrid::default();
-        grid.rebuild(ArenaBounds {
-            half_x: 5.0,
-            half_z: 5.0,
-        });
-        grid.rebuild(ArenaBounds {
-            half_x: 40.0,
-            half_z: 30.0,
-        });
+        grid.rebuild(Vec2::ZERO);
+        grid.rebuild(Vec2::ZERO);
         grid.insert(GridEntry {
             entity: entity(1),
             pos: Vec2::new(35.0, 25.0),
@@ -1066,10 +1057,10 @@ mod tests {
     }
 
     #[test]
-    fn actors_default_to_colliding_and_confined() {
+    fn actors_default_to_colliding_and_careful() {
         let a = Actor::default();
         assert!(a.collides);
-        assert!(a.confined);
+        assert!(a.avoids_chasms);
     }
     #[test]
     fn bodies_that_do_not_touch_are_left_alone() {

@@ -28,7 +28,7 @@ that the wasm build needs no JS shims and there are no asset files to load.
 - **Windows must open on the external monitor.** In the entity-sorted monitor
   list, index **0** is the 2560x1440 DELL at `[-520, -1440]`; index 1 is the
   laptop's own 3024x1964 panel, which is also the *primary*. So pass
-  `DFFA_MONITOR=0`, and never trust query order without the sort - the
+  `HOLDFAST_MONITOR=0`, and never trust query order without the sort - the
   `PrimaryMonitor` component puts the laptop in a different archetype and
   reverses them.
 
@@ -37,12 +37,12 @@ that the wasm build needs no JS shims and there are no asset files to load.
 Two harnesses, both inert unless their env vars are set.
 
 **`src/devtools.rs`** - scripted one-shots.
-`DFFA_ARENA`, `DFFA_AUTOSTART`, `DFFA_SHOT=out.png@12`, `DFFA_EXIT=20`,
-`DFFA_SPEED=4`, `DFFA_UNLOCK=1`, `DFFA_AUTOPICK=1`, `DFFA_MONITOR=0`,
-`DFFA_MONITOR_NAME=DELL`, `DFFA_TILE=0:2`, `DFFA_RES=960x600`.
+`HOLDFAST_ARENA`, `HOLDFAST_AUTOSTART`, `HOLDFAST_SHOT=out.png@12`, `HOLDFAST_EXIT=20`,
+`HOLDFAST_SPEED=4`, `HOLDFAST_UNLOCK=1`, `HOLDFAST_AUTOPICK=1`, `HOLDFAST_MONITOR=0`,
+`HOLDFAST_MONITOR_NAME=DELL`, `HOLDFAST_TILE=0:2`, `HOLDFAST_RES=960x600`.
 
 **`src/pilot.rs`** - a live command channel, so an agent can actually play.
-Set `DFFA_PILOT=<dir>` and the game polls `<dir>/commands`, injects the keys
+Set `HOLDFAST_PILOT=<dir>` and the game polls `<dir>/commands`, injects the keys
 into `ButtonInput<KeyCode>`, rewrites `<dir>/state.json` five times a second
 and appends events to `<dir>/log.txt`. Drive it with `tools/pilot.py`:
 
@@ -53,8 +53,8 @@ and appends events to `<dir>/log.txt`. Drive it with `tools/pilot.py`:
 
 Launch two side by side on the external monitor:
 
-    DFFA_PILOT=$PT/a DFFA_MONITOR=0 DFFA_TILE=0:2 ./target/debug/holdfast &
-    DFFA_PILOT=$PT/b DFFA_MONITOR=0 DFFA_TILE=1:2 ./target/debug/holdfast &
+    HOLDFAST_PILOT=$PT/a HOLDFAST_MONITOR=0 HOLDFAST_TILE=0:2 ./target/debug/holdfast &
+    HOLDFAST_PILOT=$PT/b HOLDFAST_MONITOR=0 HOLDFAST_TILE=1:2 ./target/debug/holdfast &
 
 Screenshots occasionally come back solid black at exactly 56997 bytes. That is
 a capture race, not a rendering bug - retry and the same scene appears.
@@ -81,7 +81,7 @@ load-bearing, not ceremony.
     export PATH="$HOME/.cargo/bin:$PATH"
     cargo fmt
     cargo clippy --all-targets -- -D warnings   # must print nothing
-    cargo test                                  # 253 tests today
+    cargo test                                  # 283 tests today
 
 Lints are deliberately brutal: `pedantic` + `nursery` + `cargo` + `style`,
 `unsafe_code = "forbid"`. Every `allow` in `Cargo.toml` carries a written
@@ -96,11 +96,9 @@ audio and FX, the third-person overlook camera, both test harnesses.
 
 Not done, roughly in the order to take them:
 
-1. **Infinite chunked worlds + fog of war** - written but *not integrated*, on
-   the `infinite-world` branch (`src/world.rs`, `src/fog.rs`). See below.
-2. **Forts, spawners, enemy strategic AI** - including player-capturable forts,
-   reclaim attempts, and a faction director choosing between massing on a fort
-   and harassing the player.
+1. **Forts, spawners, seeders, cooperative enemy AI** - the biggest remaining
+   feature. Spelled out below; do not lose any of it.
+2. **Monster factions and regional territory** - also spelled out below.
 3. **WASM for itch.io** - fast first paint, progress bar, WebGPU with a WebGL2
    fallback.
 4. **Save and resume.**
@@ -111,6 +109,56 @@ Not done, roughly in the order to take them:
    director so it plays wily and unpredictable. Most machines will not have
    one, so the hand-written heuristics stay the default and this is strictly a
    garnish. Must never block a frame.
+
+## Forts, spawners and the faction war (the spec, in full)
+
+Stated by the user across two conversations. All of it is in scope.
+
+- **Enemy forts are scattered through the world.** A fort is a standing
+  structure with health and a garrison, not a spawn point.
+- A fort periodically **sends out assaults** at the player when they are near
+  enough to be worth attacking.
+- A fort also sends out a **seeder**: a special monster that travels some
+  distance away and then **transforms into a spawner**. This is how enemy
+  territory grows.
+- **Spawners trickle out monsters continuously.** They come from two places:
+  seeded into the world at generation time, and planted by seeders.
+- **Forts can be captured by the player *and by their allies*.** Allies must be
+  able to contribute to a capture and finish one on their own - the user called
+  this out specifically.
+- A **captured fort works identically for its new owner**: friendly assaults,
+  friendly seeders, friendly spawners. The other side then tries to retake it,
+  so ground changes hands repeatedly.
+- The enemy AI is a **faction director**, not per-monster wandering. Monsters
+  choose between focusing the player, retaking a lost fort, defending a
+  threatened one, and splitting to hit several objectives at once - and they
+  **coordinate**. Massing on a fort they can actually take should beat
+  harassing a player they cannot kill, and the reverse when the player is soft.
+
+Design seam: forts and spawners are created from messages carrying a position
+and an owner, so *world generation decides placement*. That keeps the whole
+system independent of whether the world is today's fixed arena or the infinite
+chunked one, and means it does not have to be built twice.
+
+## Monster factions
+
+Not one undifferentiated horde. Several **factions**, each holding **regions**
+of the map, assigned deterministically from the world seed so the same rule
+serves both the fixed arenas and the infinite world.
+
+- Monster factions are **neutral to one another** by default, and hostile only
+  to the player.
+- **Late-stage skill-tree nodes let the player set two factions at war** for a
+  period, after which they revert to neutral. This is the payoff for reading
+  the map: turn the neighbours on each other and walk through the middle.
+- Each faction has its own colour, name and **temperament**, which changes how
+  its forts and its war director behave - how aggressively it expands with
+  seeders, how heavily it garrisons, how readily it masses on a fort versus
+  hunting the player.
+
+Forts, spawners and seeders are therefore owned by a *faction*, not by "the
+enemy". `Faction::Player` is one of them, which is what makes a captured fort
+work identically for its new owner without a second code path.
 
 ## The `infinite-world` branch
 

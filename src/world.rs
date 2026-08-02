@@ -39,7 +39,7 @@ pub struct WorldSeed(pub u64);
 
 impl Default for WorldSeed {
     fn default() -> Self {
-        Self(0x5EED_0F_C0FFEE)
+        Self(0x5EED_0FC0_FFEE)
     }
 }
 
@@ -65,19 +65,23 @@ pub fn chunk_center(coord: IVec2) -> Vec2 {
 
 /// A deterministic RNG for one chunk.
 ///
-/// The coordinates are folded in with large odd multipliers so that adjacent
-/// chunks - which differ by one - land far apart in the seed space and do not
-/// produce visibly correlated layouts.
+/// The inputs are mixed *sequentially* rather than combined with xor. Xor-ing
+/// three multiples together looks like it separates them and does not: the
+/// operation is commutative, so coordinates collide in pairs and neighbouring
+/// chunks come out visibly correlated. Folding each value through an avalanche
+/// step in turn makes the order matter and every input bit reach every output
+/// bit.
 #[must_use]
 pub fn chunk_rng(seed: WorldSeed, coord: IVec2, salt: u64) -> Rng {
-    let x = i64::from(coord.x) as u64;
-    let z = i64::from(coord.y) as u64;
-    Rng::seeded(
-        seed.0
-            ^ x.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            ^ z.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
-            ^ salt.wrapping_mul(0x1656_67B1_9E37_79F9),
-    )
+    let mut hash = seed.0;
+    for value in [i64::from(coord.x) as u64, i64::from(coord.y) as u64, salt] {
+        hash ^= value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        hash = hash.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+        hash ^= hash >> 33;
+        hash = hash.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+        hash ^= hash >> 29;
+    }
+    Rng::seeded(hash)
 }
 
 /// A chunk that currently exists in the world.
@@ -197,6 +201,7 @@ impl Chasms {
     }
 }
 
+#[derive(Debug)]
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -205,10 +210,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkManager>()
             .init_resource::<LightPools>()
             .init_resource::<Chasms>()
-            .add_systems(
-                OnExit(AppState::Menu),
-                reset_world.in_set(RunSetup::Reset),
-            )
+            .add_systems(OnExit(AppState::Menu), reset_world.in_set(RunSetup::Reset))
             // Streaming runs before anything reads the obstacle field.
             .add_systems(Update, stream_chunks.in_set(GameSet::Input));
     }
@@ -262,7 +264,7 @@ fn stream_chunks(
     let center = chunk_of(body.pos);
 
     // Which chunks should exist right now?
-    let mut wanted = HashSet::default();
+    let mut wanted: HashSet<IVec2> = HashSet::default();
     for dz in -STREAM_RADIUS..=STREAM_RADIUS {
         for dx in -STREAM_RADIUS..=STREAM_RADIUS {
             wanted.insert(center + IVec2::new(dx, dz));
@@ -464,5 +466,133 @@ fn build_chunk(
         obstacles,
         light_pools,
         chasms,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positions_map_to_the_chunk_that_contains_them() {
+        assert_eq!(chunk_of(Vec2::ZERO), IVec2::ZERO);
+        assert_eq!(chunk_of(Vec2::new(CHUNK_SIZE * 0.5, 0.0)), IVec2::ZERO);
+        assert_eq!(chunk_of(Vec2::new(CHUNK_SIZE + 0.1, 0.0)), IVec2::new(1, 0));
+        // Negative coordinates floor rather than truncate, or everything just
+        // left of the origin would claim to be in chunk zero.
+        assert_eq!(chunk_of(Vec2::new(-0.1, -0.1)), IVec2::new(-1, -1));
+        assert_eq!(
+            chunk_of(Vec2::new(-CHUNK_SIZE, -CHUNK_SIZE)),
+            IVec2::new(-1, -1)
+        );
+    }
+
+    #[test]
+    fn a_chunks_corner_and_centre_agree_with_its_coordinate() {
+        for coord in [IVec2::ZERO, IVec2::new(3, -4), IVec2::new(-9, 12)] {
+            assert_eq!(chunk_of(chunk_center(coord)), coord);
+            assert_eq!(chunk_of(chunk_min(coord) + 0.01), coord);
+        }
+    }
+
+    #[test]
+    fn chunk_seeds_differ_between_neighbours() {
+        // Adjacent chunks differ by one; a weak mix would correlate them and
+        // the world would look tiled.
+        let world = WorldSeed(1234);
+        let mut drawn = Vec::new();
+        for x in -2..=2 {
+            for z in -2..=2 {
+                drawn.push(chunk_rng(world, IVec2::new(x, z), 1).next_u64());
+            }
+        }
+        let unique = {
+            let mut v = drawn.clone();
+            v.sort_unstable();
+            v.dedup();
+            v.len()
+        };
+        assert_eq!(unique, drawn.len(), "two chunks drew the same seed");
+    }
+
+    #[test]
+    fn the_same_chunk_seed_is_reproducible() {
+        let seed = WorldSeed(99);
+        let a = chunk_rng(seed, IVec2::new(5, -3), 7).next_u64();
+        let b = chunk_rng(seed, IVec2::new(5, -3), 7).next_u64();
+        assert_eq!(a, b, "walking back must find the same world");
+    }
+
+    #[test]
+    fn a_different_salt_gives_a_different_stream() {
+        let seed = WorldSeed(99);
+        let a = chunk_rng(seed, IVec2::new(5, -3), 1).next_u64();
+        let b = chunk_rng(seed, IVec2::new(5, -3), 2).next_u64();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn light_pools_only_pay_out_inside_themselves() {
+        let pools = LightPools {
+            pools: vec![LightPool {
+                center: Vec2::new(2.0, 2.0),
+                radius: 3.0,
+                damage_bonus: 0.25,
+            }],
+        };
+        assert!((pools.bonus_at(Vec2::new(2.0, 4.0)) - 1.25).abs() < 1e-6);
+        assert!((pools.bonus_at(Vec2::new(2.0, 9.0)) - 1.0).abs() < 1e-6);
+        assert!(pools.contains(Vec2::new(2.0, 2.0)));
+        assert!(!pools.contains(Vec2::new(20.0, 2.0)));
+    }
+
+    #[test]
+    fn nothing_is_inside_a_world_with_no_pools() {
+        let pools = LightPools::default();
+        assert!(!pools.contains(Vec2::ZERO));
+        assert!((pools.bonus_at(Vec2::ZERO) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_chasm_swallows_only_what_is_over_it() {
+        let chasms = Chasms {
+            holes: vec![Chasm {
+                center: Vec2::ZERO,
+                radius: 4.0,
+            }],
+        };
+        assert!(chasms.contains(Vec2::new(1.0, 1.0)));
+        assert!(!chasms.contains(Vec2::new(5.0, 0.0)));
+    }
+
+    #[test]
+    fn pushing_out_of_a_chasm_clears_it_completely() {
+        let chasms = Chasms {
+            holes: vec![Chasm {
+                center: Vec2::ZERO,
+                radius: 4.0,
+            }],
+        };
+        let out = chasms.push_out(Vec2::new(0.5, 0.0), 0.6);
+        assert!(
+            out.length() >= 4.6 - 1e-4,
+            "still overhanging the hole at {out:?}"
+        );
+        // Somewhere already clear must not be moved at all.
+        let clear = Vec2::new(30.0, 0.0);
+        assert_eq!(chasms.push_out(clear, 0.6), clear);
+    }
+
+    #[test]
+    fn a_body_exactly_on_a_chasm_centre_still_escapes() {
+        // No direction to flee along; without a fallback it would sit there.
+        let chasms = Chasms {
+            holes: vec![Chasm {
+                center: Vec2::ZERO,
+                radius: 3.0,
+            }],
+        };
+        let out = chasms.push_out(Vec2::ZERO, 0.5);
+        assert!(out.length() >= 3.5 - 1e-4, "{out:?}");
     }
 }

@@ -6,8 +6,8 @@
 
 use bevy::prelude::*;
 
-use super::{HazardSpec, PropSpec, SceneData, Surface};
-use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
+use super::{ChunkCtx, EnvLook, HazardSpec, PropSpec, Surface};
+use crate::arena::{ColliderShape, Gust, HazardKind};
 use crate::meshgen::{
     GroundCell, MeshWeld, at, at_rot_x, at_rot_z, cone, cube, cylinder, cylinder_hi, ground_grid,
     noise_soft, noise2, sphere, torus,
@@ -15,8 +15,10 @@ use crate::meshgen::{
 use crate::palette as pal;
 use crate::rng::Rng;
 
-const HALF_X: f32 = 22.0;
-const HALF_Z: f32 = 15.0;
+use crate::world::CHUNK_SIZE;
+
+/// Half a chunk, which is the extent every floor mesh is authored over.
+const HALF: f32 = CHUNK_SIZE * 0.5;
 
 const STONE: Color = Color::srgb(0.19, 0.17, 0.26);
 const STONE_LIGHT: Color = Color::srgb(0.27, 0.25, 0.36);
@@ -28,96 +30,117 @@ const LEY: Color = Color::srgb(0.42, 1.0, 0.78);
 const FLAME: Color = Color::srgb(0.6, 1.0, 0.7);
 const MOSS_OLD: Color = Color::srgb(0.24, 0.34, 0.26);
 
-pub fn build(rng: &mut Rng) -> SceneData {
-    let mut s = SceneData::new(HALF_X, HALF_Z, floor(rng));
+pub(super) fn look() -> EnvLook {
+    EnvLook {
+        sky: Color::srgb(0.022, 0.016, 0.045),
+        ambient: Color::srgb(0.46, 0.38, 0.72),
+        ambient_brightness: 250.0,
+        sun_color: Color::srgb(0.78, 0.7, 1.0),
+        sun_illuminance: 1900.0,
+        sun_dir: Vec3::new(0.25, -1.0, -0.4),
+        // Not wind - a pulse of raw mana that sweeps the sanctum.
+        gust: Gust {
+            interval: 14.0,
+            duration: 3.2,
+            cooldown: 12.0,
+            remaining: 12.0,
+            blowing: false,
+            dir: Vec2::new(-0.7, 0.7).normalize(),
+            lane_center_z: 0.0,
+            lane_half_width: 8.0,
+            strength: 10.0,
+            enabled: true,
+            label: "MANA SURGE",
+        },
+    }
+}
 
-    s.sky = Color::srgb(0.022, 0.016, 0.045);
-    s.ambient = Color::srgb(0.46, 0.38, 0.72);
-    s.ambient_brightness = 250.0;
-    s.sun_color = Color::srgb(0.78, 0.7, 1.0);
-    s.sun_illuminance = 1900.0;
-    s.sun_dir = Vec3::new(0.25, -1.0, -0.4);
+pub(super) fn chunk(c: &mut ChunkCtx) {
+    // -- the obelisk ---------------------------------------------------------
+    if c.feature(0.09) {
+        let p = c.spot(6.0);
+        c.prop(PropSpec::new(obelisk(), p).solid(ColliderShape::Circle(1.6), 7.0));
+        c.light(Vec3::new(p.x, 5.0, p.y), CRYSTAL_VIOLET, 460_000.0, 30.0);
+        c.pool(p, 6.5, 0.3);
+    }
 
-    // Not wind - a pulse of raw mana that sweeps the sanctum.
-    s.gust = Gust {
-        interval: 14.0,
-        duration: 3.2,
-        cooldown: 12.0,
-        remaining: 12.0,
-        blowing: false,
-        dir: Vec2::new(-0.7, 0.7).normalize(),
-        lane_center_z: 0.0,
-        lane_half_width: 8.0,
-        strength: 10.0,
-        enabled: true,
-        label: "MANA SURGE",
-    };
+    // -- a portal arch -------------------------------------------------------
+    if c.feature(0.1) {
+        let p = c.spot(5.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
+            PropSpec::new(portal_arch(), p)
+                .rot(deg)
+                .solid(ColliderShape::rect_rot(3.2, 0.7, deg), 5.5),
+        );
+        c.light(Vec3::new(p.x, 3.0, p.y), CRYSTAL_CYAN, 320_000.0, 24.0);
+    }
 
-    s.spotlight = Spotlight {
-        center: Vec2::new(0.0, -6.0),
-        radius: 6.5,
-        damage_bonus: 0.3,
-        enabled: true,
-        label: "WARD CIRCLE",
-    };
-
-    broken_edge(&mut s);
-
-    // -- the obelisk -------------------------------------------------------
-    s.prop(PropSpec::new(obelisk(), Vec2::new(0.0, -6.0)).solid(ColliderShape::Circle(1.6), 7.0));
-    s.light(Vec3::new(0.0, 5.0, -6.0), CRYSTAL_VIOLET, 460_000.0, 30.0);
-
-    // -- the portal arch ---------------------------------------------------
-    s.prop(
-        PropSpec::new(portal_arch(), Vec2::new(-16.0, 9.0))
-            .rot(-34.0)
-            .solid(ColliderShape::rect_rot(3.2, 0.7, -34.0), 5.5),
-    );
-    s.light(Vec3::new(-16.0, 3.0, 9.0), CRYSTAL_CYAN, 320_000.0, 24.0);
-
-    // -- colonnade: a ring of pillars, half of them ruined -----------------
-    let pillar_count = 10;
-    for i in 0..pillar_count {
-        let a = i as f32 / pillar_count as f32 * std::f32::consts::TAU;
-        let p = Vec2::new(a.cos() * 15.5, a.sin() * 10.5);
-        let intact = rng.chance(0.55);
-        if intact {
-            s.prop(
-                PropSpec::new(pillar(rng.range(4.0, 6.5)), p)
-                    .rot(rng.range(0.0, 360.0))
-                    .solid(ColliderShape::Circle(0.95), 5.0),
-            );
-        } else {
-            s.prop(
-                PropSpec::new(broken_pillar(rng), p)
-                    .rot(rng.range(0.0, 360.0))
-                    .solid(ColliderShape::Circle(0.95), 1.6),
-            );
-            // The fallen drum lying beside it.
-            let off = rng.unit_circle().truncate() * 2.4;
-            s.prop(
-                PropSpec::new(fallen_drum(), p + Vec2::new(off.x, off.y))
-                    .rot(rng.range(0.0, 360.0))
-                    .solid(ColliderShape::rect(1.6, 0.8), 0.9)
-                    .passthrough(),
-            );
+    // -- a colonnade, half of it ruined --------------------------------------
+    if c.feature(0.14) {
+        let hub = c.center();
+        for i in 0..10 {
+            let a = i as f32 / 10.0 * std::f32::consts::TAU;
+            let p = hub + Vec2::new(a.cos() * 9.0, a.sin() * 9.0);
+            let deg = c.rng.range(0.0, 360.0);
+            if c.rng.chance(0.55) {
+                let h = c.rng.range(4.0, 6.5);
+                let mesh = pillar(h);
+                c.prop(
+                    PropSpec::new(mesh, p)
+                        .rot(deg)
+                        .solid(ColliderShape::Circle(0.95), 5.0),
+                );
+            } else {
+                let mesh = broken_pillar(c.rng);
+                c.prop(
+                    PropSpec::new(mesh, p)
+                        .rot(deg)
+                        .solid(ColliderShape::Circle(0.95), 1.6),
+                );
+                // The fallen drum lying beside it.
+                let off = c.rng.unit_circle().truncate() * 2.4;
+                let drum_deg = c.rng.range(0.0, 360.0);
+                c.prop(
+                    PropSpec::new(fallen_drum(), p + Vec2::new(off.x, off.y))
+                        .rot(drum_deg)
+                        .solid(ColliderShape::rect(1.6, 0.8), 0.9)
+                        .passthrough(),
+                );
+            }
         }
     }
 
-    // -- crystal formations -------------------------------------------------
-    for (p, scale, color) in [
-        (Vec2::new(-9.0, -10.0), 1.5f32, CRYSTAL_VIOLET),
-        (Vec2::new(11.0, 8.0), 1.8, CRYSTAL_CYAN),
-        (Vec2::new(17.0, -9.0), 1.2, CRYSTAL_VIOLET),
-        (Vec2::new(-19.0, -3.0), 1.0, CRYSTAL_CYAN),
-        (Vec2::new(6.0, 12.0), 1.3, CRYSTAL_CYAN),
-    ] {
-        s.prop(
-            PropSpec::new(crystal_cluster(scale, color, rng), p)
-                .rot(rng.range(0.0, 360.0))
+    // -- loose pillars between the set pieces ---------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        let h = c.rng.range(4.0, 6.5);
+        let mesh = pillar(h);
+        c.prop(
+            PropSpec::new(mesh, p)
+                .rot(deg)
+                .solid(ColliderShape::Circle(0.95), 5.0),
+        );
+    }
+
+    // -- crystal formations ----------------------------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(3.0);
+        let scale = c.rng.range(1.0, 1.8);
+        let deg = c.rng.range(0.0, 360.0);
+        let color = if c.rng.chance(0.5) {
+            CRYSTAL_VIOLET
+        } else {
+            CRYSTAL_CYAN
+        };
+        let mesh = crystal_cluster(scale, color, c.rng);
+        c.prop(
+            PropSpec::new(mesh, p)
+                .rot(deg)
                 .solid(ColliderShape::Circle(0.9 * scale), 2.5 * scale),
         );
-        s.light(
+        c.light(
             Vec3::new(p.x, 2.0 * scale, p.y),
             color,
             140_000.0 * scale,
@@ -125,24 +148,18 @@ pub fn build(rng: &mut Rng) -> SceneData {
         );
     }
 
-    // -- braziers: the warm light ------------------------------------------
-    for p in [
-        Vec2::new(-5.0, -1.0),
-        Vec2::new(5.0, -1.0),
-        Vec2::new(-5.0, -11.0),
-        Vec2::new(5.0, -11.0),
-    ] {
-        s.prop(PropSpec::new(brazier(), p).solid(ColliderShape::Circle(0.7), 1.9));
-        s.light(Vec3::new(p.x, 2.2, p.y), FLAME, 130_000.0, 14.0);
+    // -- braziers: the warm light ------------------------------------------------
+    for _ in 0..c.rng.below(4) {
+        let p = c.spot(2.5);
+        c.prop(PropSpec::new(brazier(), p).solid(ColliderShape::Circle(0.7), 1.9));
+        c.light(Vec3::new(p.x, 2.2, p.y), FLAME, 130_000.0, 14.0);
     }
 
-    // -- pedestals ----------------------------------------------------------
-    for (p, deg) in [
-        (Vec2::new(-12.0, 2.0), 20.0f32),
-        (Vec2::new(13.0, 1.0), -30.0),
-        (Vec2::new(2.0, 8.0), 55.0),
-    ] {
-        s.prop(
+    // -- pedestals ----------------------------------------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(2.5);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
             PropSpec::new(pedestal(), p)
                 .rot(deg)
                 .solid(ColliderShape::Circle(0.6), 1.5)
@@ -150,117 +167,119 @@ pub fn build(rng: &mut Rng) -> SceneData {
         );
     }
 
-    // -- floating rubble, purely atmospheric --------------------------------
-    for _ in 0..16 {
-        let p = Vec2::new(rng.range(-HALF_X, HALF_X), rng.range(-HALF_Z, HALF_Z));
-        s.prop(
-            PropSpec::new(rubble(rng), p)
-                .raised(rng.range(2.5, 8.0))
-                .rot(rng.range(0.0, 360.0)),
-        );
+    // -- rubble, floating and grounded ---------------------------------------------
+    for _ in 0..c.rng.below(9) + 5 {
+        let p = c.spot(0.5);
+        let y = c.rng.range(2.5, 8.0);
+        let deg = c.rng.range(0.0, 360.0);
+        let mesh = rubble(c.rng);
+        c.prop(PropSpec::new(mesh, p).raised(y).rot(deg));
     }
-
-    // -- ground rubble ------------------------------------------------------
-    for _ in 0..14 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 2.0, HALF_X - 2.0),
-            rng.range(-HALF_Z + 2.0, HALF_Z - 2.0),
-        );
-        if p.length() < 4.5 {
-            continue;
-        }
-        s.prop(
-            PropSpec::new(rubble(rng), p)
-                .rot(rng.range(0.0, 360.0))
+    for _ in 0..c.rng.below(8) + 4 {
+        let p = c.spot(2.0);
+        let deg = c.rng.range(0.0, 360.0);
+        let mesh = rubble(c.rng);
+        c.prop(
+            PropSpec::new(mesh, p)
+                .rot(deg)
                 .solid(ColliderShape::Circle(0.5), 0.7)
                 .passthrough(),
         );
     }
 
-    // -- ley lines: healing channels, the arena's signature -----------------
-    // Four spokes radiating from the font. Whoever stands on them regenerates,
+    // -- a ley hub: healing channels, this world's signature -------------------
+    // Four spokes radiating from a font. Whoever stands on them regenerates,
     // friend or foe, which makes them the real objective.
-    for i in 0..4 {
-        let a = i as f32 / 4.0 * std::f32::consts::TAU + 0.78;
-        let dir = Vec2::new(a.cos(), a.sin());
-        for k in 1..=6 {
-            let p = dir * (k as f32 * 2.3) + Vec2::new(0.0, 4.0);
-            s.hazards.push(HazardSpec {
-                pos: p,
-                radius: 1.4,
-                kind: HazardKind::Font,
-                // Negative dps: the damage pipeline reads this as healing.
-                dps: -7.0,
-                slow: 1.0,
-                duty: None,
-            });
+    if c.feature(0.16) {
+        let hub = c.spot(9.0);
+        for i in 0..4 {
+            let a = i as f32 / 4.0 * std::f32::consts::TAU + 0.78;
+            let dir = Vec2::new(a.cos(), a.sin());
+            for k in 1..=5 {
+                c.hazard(HazardSpec {
+                    pos: hub + dir * (k as f32 * 2.3),
+                    radius: 1.4,
+                    kind: HazardKind::Font,
+                    // Negative dps: the damage pipeline reads this as healing.
+                    dps: -7.0,
+                    slow: 1.0,
+                    duty: None,
+                });
+            }
+            let mesh = ley_line(12.0);
+            c.prop(
+                PropSpec::new(mesh, hub + dir * 6.0)
+                    .rot(a.to_degrees())
+                    .raised(0.025)
+                    .surface(Surface::Solid),
+            );
         }
-        s.prop(
-            PropSpec::new(ley_line(14.0), Vec2::new(0.0, 4.0) + dir * 7.0)
-                .rot(a.to_degrees())
-                .raised(0.025)
-                .surface(Surface::Solid),
+
+        c.prop(
+            PropSpec::new(mana_font(), hub)
+                .solid(ColliderShape::Circle(1.4), 1.2)
+                .passthrough(),
         );
+        c.hazard(HazardSpec {
+            pos: hub,
+            radius: 2.6,
+            kind: HazardKind::Font,
+            dps: -14.0,
+            slow: 1.0,
+            duty: None,
+        });
+        c.light(Vec3::new(hub.x, 2.0, hub.y), LEY, 220_000.0, 18.0);
     }
 
-    // The font at the hub.
-    s.prop(
-        PropSpec::new(mana_font(), Vec2::new(0.0, 4.0))
-            .solid(ColliderShape::Circle(1.4), 1.2)
-            .passthrough(),
-    );
-    s.hazards.push(HazardSpec {
-        pos: Vec2::new(0.0, 4.0),
-        radius: 2.6,
-        kind: HazardKind::Font,
-        dps: -14.0,
-        slow: 1.0,
-        duty: None,
-    });
-    s.light(Vec3::new(0.0, 2.0, 4.0), LEY, 220_000.0, 18.0);
+    // -- void rifts: the one genuinely hostile tile ------------------------------
+    if c.feature(0.14) {
+        let p = c.spot(4.0);
+        let r = c.rng.range(2.4, 3.2);
+        let period = c.rng.range(5.0, 7.0);
+        c.hazard(HazardSpec {
+            pos: p,
+            radius: r,
+            kind: HazardKind::Scald,
+            dps: 20.0,
+            slow: 0.6,
+            duty: Some((period, 0.45)),
+        });
+        let mesh = void_rift(r);
+        c.prop(PropSpec::new(mesh, p).raised(0.03).surface(Surface::Solid));
+    }
 
-    // -- one genuinely hostile tile: a void rift ---------------------------
-    s.hazards.push(HazardSpec {
-        pos: Vec2::new(-13.0, -12.0),
-        radius: 3.0,
-        kind: HazardKind::Scald,
-        dps: 20.0,
-        slow: 0.6,
-        duty: Some((6.0, 0.45)),
-    });
-    s.prop(
-        PropSpec::new(void_rift(3.0), Vec2::new(-13.0, -12.0))
-            .raised(0.03)
-            .surface(Surface::Solid),
-    );
-
-    s.zones = vec![
-        Vec2::new(0.0, 4.0),
-        Vec2::new(0.0, -6.0),
-        Vec2::new(-16.0, 9.0),
-        Vec2::new(15.0, -8.0),
-        Vec2::new(-15.0, -8.0),
-        Vec2::new(15.0, 9.0),
-    ];
-
-    s
+    // Where the sanctum floor gave way entirely.
+    if c.feature(0.08) {
+        let p = c.spot(6.0);
+        let r = c.rng.range(2.6, 4.2);
+        c.chasm(p, r);
+    }
 }
 
-pub(super) fn floor(rng: &mut Rng) -> Mesh {
-    let seed = (rng.next_u64() & 0xFFFF) as u32;
-    ground_grid(HALF_X, HALF_Z, 1.1, |ix, iz, c| {
+pub(super) fn floor(origin: Vec2, salt: u32) -> Mesh {
+    let seed = 0xA2CA ^ salt;
+    ground_grid(HALF, HALF, 1.1, |_, _, local| {
+        let c = origin + local;
         let n = noise_soft(c.x * 0.3, c.y * 0.3, seed);
         // Large flagstones with mortar seams.
         let seam = (c.x / 3.3).fract().abs() < 0.07 || (c.y / 3.3).fract().abs() < 0.07;
         let cracked = noise2(c.x * 0.13, c.y * 0.13, seed ^ 0x99) > 0.86;
         let mossy = noise2(c.x * 0.2, c.y * 0.2, seed ^ 0x1234) > 0.9;
+        // Checker indices from world space, so the flagstones run continuously
+        // across chunk boundaries.
+        let wx = (c.x / 1.1).floor() as i32;
+        let wz = (c.y / 1.1).floor() as i32;
 
-        // A great inscribed circle around the obelisk.
-        let r = (c - Vec2::new(0.0, -6.0)).length();
+        // Great inscribed circles, repeating on a slow lattice so the endless
+        // sanctum still reads as a built place rather than a texture.
+        let hub = Vec2::new(
+            (c.x / 96.0).round() * 96.0,
+            (c.y / 96.0).round() * 96.0 - 6.0,
+        );
+        let r = (c - hub).length();
         let inscribed_ring = (r - 8.5).abs() < 0.35 || (r - 5.2).abs() < 0.22;
-        // Radial rune ticks around it.
         let spoke = {
-            let a = (c.y + 6.0).atan2(c.x);
+            let a = (c.y - hub.y).atan2(c.x - hub.x);
             let ticks = (a / std::f32::consts::TAU * 24.0).fract().abs() < 0.08;
             ticks && r < 8.8 && r > 5.0
         };
@@ -273,7 +292,7 @@ pub(super) fn floor(rng: &mut Rng) -> Mesh {
             MOSS_OLD
         } else if cracked {
             pal::shade(STONE_DARK, 1.2)
-        } else if (ix / 3 + iz / 3) % 2 == 0 {
+        } else if (wx.div_euclid(3) + wz.div_euclid(3)).rem_euclid(2) == 0 {
             pal::shade(STONE, 0.9 + n * 0.35)
         } else {
             pal::shade(STONE_LIGHT, 0.85 + n * 0.3)
@@ -284,60 +303,6 @@ pub(super) fn floor(rng: &mut Rng) -> Mesh {
             height: if seam { -0.04 } else { (n - 0.5) * 0.04 },
         }
     })
-}
-
-/// A crumbling border instead of a clean rim: the sanctum is falling into the
-/// void a piece at a time.
-pub(super) fn broken_edge(scene: &mut SceneData) {
-    let mut weld = MeshWeld::new();
-    let mut rng = Rng::seeded(0xA2CA4E);
-    for (cx, cz, sx, sz) in [
-        (0.0f32, -HALF_Z, HALF_X, 0.4f32),
-        (0.0, HALF_Z, HALF_X, 0.4),
-        (-HALF_X, 0.0, 0.4, HALF_Z),
-        (HALF_X, 0.0, 0.4, HALF_Z),
-    ] {
-        let along_x = sx > sz;
-        let segments = if along_x { 26 } else { 18 };
-        for index in 0..segments {
-            let along = index as f32 / (segments - 1) as f32 - 0.5;
-            // Random gaps where the wall has fallen away.
-            if rng.chance(0.22) {
-                continue;
-            }
-            let height = rng.range(0.5, 1.5);
-            let (px, pz) = if along_x {
-                (cx + along * sx * 2.0, cz)
-            } else {
-                (cx, cz + along * sz * 2.0)
-            };
-            weld.add(
-                &cube(
-                    if along_x { 1.5 } else { 0.8 },
-                    height,
-                    if along_x { 0.8 } else { 1.5 },
-                ),
-                at(px, height * 0.5, pz).with_rotation(Quat::from_rotation_y(rng.range(-0.1, 0.1))),
-                if rng.chance(0.5) { STONE } else { STONE_LIGHT },
-            );
-        }
-    }
-    // Understructure so the platform reads as floating.
-    weld.add(
-        &cube(HALF_X * 2.0, 1.2, HALF_Z * 2.0),
-        at(0.0, -0.7, 0.0),
-        STONE_DARK,
-    );
-    for index in 0..10 {
-        let a = index as f32 / 10.0 * std::f32::consts::TAU;
-        weld.add(
-            &cone(1.4, 3.5),
-            at(a.cos() * HALF_X * 0.7, -2.6, a.sin() * HALF_Z * 0.7)
-                .with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
-            STONE_DARK,
-        );
-    }
-    scene.prop(PropSpec::new(weld.build(), Vec2::ZERO));
 }
 
 // -- props ------------------------------------------------------------------

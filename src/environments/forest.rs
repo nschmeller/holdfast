@@ -5,8 +5,8 @@
 
 use bevy::prelude::*;
 
-use super::{HazardSpec, PropSpec, SceneData, Surface};
-use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
+use super::{ChunkCtx, EnvLook, HazardSpec, PropSpec, Surface};
+use crate::arena::{ColliderShape, Gust, HazardKind};
 use crate::meshgen::{
     GroundCell, MeshWeld, at, at_rot_z, cone, cube, cylinder, cylinder_hi, ground_grid, noise_soft,
     noise2, sphere, sphere_hi,
@@ -14,8 +14,10 @@ use crate::meshgen::{
 use crate::palette as pal;
 use crate::rng::Rng;
 
-const HALF_X: f32 = 24.0;
-const HALF_Z: f32 = 16.0;
+use crate::world::CHUNK_SIZE;
+
+/// Half a chunk, which is the extent every floor mesh is authored over.
+const HALF: f32 = CHUNK_SIZE * 0.5;
 
 const SOIL: Color = Color::srgb(0.21, 0.16, 0.11);
 const SOIL_DARK: Color = Color::srgb(0.14, 0.11, 0.08);
@@ -29,184 +31,169 @@ const STEM: Color = Color::srgb(0.9, 0.87, 0.78);
 const WATER: Color = Color::srgb(0.16, 0.34, 0.42);
 const PETAL: Color = Color::srgb(0.86, 0.72, 0.92);
 
-pub fn build(rng: &mut Rng) -> SceneData {
-    let mut s = SceneData::new(HALF_X, HALF_Z, floor(rng));
+pub(super) fn look() -> EnvLook {
+    EnvLook {
+        sky: Color::srgb(0.02, 0.035, 0.032),
+        ambient: Color::srgb(0.34, 0.52, 0.46),
+        ambient_brightness: 240.0,
+        sun_color: Color::srgb(0.66, 0.82, 1.0),
+        sun_illuminance: 2400.0,
+        sun_dir: Vec3::new(0.4, -1.0, 0.5),
+        // Wind through the canopy, wider and gentler than the desk fan.
+        gust: Gust {
+            interval: 15.0,
+            duration: 4.2,
+            cooldown: 12.0,
+            remaining: 12.0,
+            blowing: false,
+            dir: Vec2::new(0.75, -0.66).normalize(),
+            lane_center_z: -2.0,
+            lane_half_width: 7.5,
+            strength: 8.5,
+            enabled: true,
+            label: "CANOPY WIND",
+        },
+    }
+}
 
-    s.sky = Color::srgb(0.02, 0.035, 0.032);
-    s.ambient = Color::srgb(0.34, 0.52, 0.46);
-    s.ambient_brightness = 240.0;
-    s.sun_color = Color::srgb(0.66, 0.82, 1.0);
-    s.sun_illuminance = 2400.0;
-    s.sun_dir = Vec3::new(0.4, -1.0, 0.5);
+pub(super) fn chunk(c: &mut ChunkCtx) {
+    // -- fallen logs: the undergrowth's only real walls ---------------------
+    if c.feature(0.28) {
+        let p = c.spot(7.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
+            PropSpec::new(fallen_log(), p)
+                .rot(deg)
+                .solid(ColliderShape::rect_rot(9.0, 1.6, deg), 3.0),
+        );
+    }
 
-    // Wind through the canopy, wider and gentler than the desk fan.
-    s.gust = Gust {
-        interval: 15.0,
-        duration: 4.2,
-        cooldown: 12.0,
-        remaining: 12.0,
-        blowing: false,
-        dir: Vec2::new(0.75, -0.66).normalize(),
-        lane_center_z: -2.0,
-        lane_half_width: 7.5,
-        strength: 8.5,
-        enabled: true,
-        label: "CANOPY WIND",
-    };
-
-    // A shaft of moonlight through the leaves.
-    s.spotlight = Spotlight {
-        center: Vec2::new(-8.0, 3.0),
-        radius: 6.5,
-        damage_bonus: 0.25,
-        enabled: true,
-        label: "MOONSHAFT",
-    };
-
-    // -- the fallen log: the arena's one real wall -------------------------
-    s.prop(
-        PropSpec::new(fallen_log(), Vec2::new(4.0, -8.0))
-            .rot(-14.0)
-            .solid(ColliderShape::rect_rot(9.0, 1.6, -14.0), 3.0),
-    );
-
-    // -- stumps ------------------------------------------------------------
-    for (p, r, deg) in [
-        (Vec2::new(-15.0, -9.0), 2.4f32, 0.0f32),
-        (Vec2::new(16.0, 7.5), 2.0, 30.0),
-        (Vec2::new(-4.0, 11.0), 1.7, -20.0),
-    ] {
-        s.prop(
-            PropSpec::new(stump(r), p)
+    // -- stumps -------------------------------------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(4.0);
+        let r = c.rng.range(1.6, 2.5);
+        let deg = c.rng.range(0.0, 360.0);
+        let mesh = stump(r);
+        c.prop(
+            PropSpec::new(mesh, p)
                 .rot(deg)
                 .solid(ColliderShape::Circle(r), 2.2),
         );
     }
 
-    // -- glowing mushrooms: the light sources ------------------------------
-    let shrooms = [
-        (Vec2::new(-10.0, -3.0), 2.6f32),
-        (Vec2::new(9.0, 9.0), 2.0),
-        (Vec2::new(-18.0, 6.0), 2.2),
-        (Vec2::new(18.0, -6.0), 1.8),
-        (Vec2::new(0.5, 2.0), 1.5),
-    ];
-    for (p, scale) in shrooms {
-        s.prop(
-            PropSpec::new(glow_mushroom(scale), p)
-                .solid(ColliderShape::Circle(0.55 * scale), 1.4 * scale),
-        );
-        s.light(
+    // -- glowing mushrooms: the light sources -------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(3.0);
+        let scale = c.rng.range(1.4, 2.6);
+        let mesh = glow_mushroom(scale);
+        c.prop(PropSpec::new(mesh, p).solid(ColliderShape::Circle(0.55 * scale), 1.4 * scale));
+        c.light(
             Vec3::new(p.x, 2.0 * scale, p.y),
             MUSHROOM_GLOW,
             120_000.0 * scale,
             16.0,
         );
+        // A big one lights the ground around it well enough to fight in.
+        if scale > 2.2 {
+            c.pool(p, 6.0, 0.25);
+        }
     }
 
-    // -- roots arching out of the soil -------------------------------------
-    for (p, deg, len) in [
-        (Vec2::new(-13.0, 12.0), 24.0f32, 5.0f32),
-        (Vec2::new(12.0, -13.0), -50.0, 6.0),
-        (Vec2::new(20.0, 2.0), 80.0, 4.5),
-        (Vec2::new(-20.0, -2.0), -70.0, 4.0),
-    ] {
-        s.prop(
-            PropSpec::new(root_arch(len), p)
+    // -- roots arching out of the soil --------------------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(4.0);
+        let deg = c.rng.range(0.0, 360.0);
+        let len = c.rng.range(4.0, 6.0);
+        let mesh = root_arch(len);
+        c.prop(
+            PropSpec::new(mesh, p)
                 .rot(deg)
                 .solid(ColliderShape::rect_rot(len * 0.5, 0.7, deg), 1.6),
         );
     }
 
-    // -- pebbles and acorns ------------------------------------------------
-    for _ in 0..18 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 2.0, HALF_X - 2.0),
-            rng.range(-HALF_Z + 2.0, HALF_Z - 2.0),
-        );
-        if p.length() < 5.5 {
-            continue;
-        }
-        if rng.chance(0.55) {
-            let r = rng.range(0.5, 1.1);
-            s.prop(
-                PropSpec::new(pebble(r, rng), p)
-                    .rot(rng.range(0.0, 360.0))
+    // A hollow under the roots, deep enough to fall into.
+    if c.feature(0.07) {
+        let p = c.spot(6.0);
+        let r = c.rng.range(2.4, 3.8);
+        c.chasm(p, r);
+    }
+
+    // -- pebbles and acorns --------------------------------------------------
+    for _ in 0..c.rng.below(9) + 5 {
+        let p = c.spot(2.0);
+        let deg = c.rng.range(0.0, 360.0);
+        if c.rng.chance(0.55) {
+            let r = c.rng.range(0.5, 1.1);
+            let mesh = pebble(r, c.rng);
+            c.prop(
+                PropSpec::new(mesh, p)
+                    .rot(deg)
                     .solid(ColliderShape::Circle(r * 0.9), r * 1.2),
             );
         } else {
-            s.prop(
+            c.prop(
                 PropSpec::new(acorn(), p)
-                    .rot(rng.range(0.0, 360.0))
+                    .rot(deg)
                     .solid(ColliderShape::Circle(0.4), 0.7)
                     .passthrough(),
             );
         }
     }
 
-    // -- ferns and flowers, purely decorative ------------------------------
-    for _ in 0..26 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 1.5, HALF_X - 1.5),
-            rng.range(-HALF_Z + 1.5, HALF_Z - 1.5),
-        );
-        if rng.chance(0.6) {
-            s.prop(PropSpec::new(fern(rng), p).rot(rng.range(0.0, 360.0)));
+    // -- ferns and flowers, purely decorative --------------------------------
+    for _ in 0..c.rng.below(11) + 8 {
+        let p = c.spot(1.0);
+        let deg = c.rng.range(0.0, 360.0);
+        if c.rng.chance(0.6) {
+            let mesh = fern(c.rng);
+            c.prop(PropSpec::new(mesh, p).rot(deg));
         } else {
-            s.prop(PropSpec::new(flower(rng), p).rot(rng.range(0.0, 360.0)));
+            let mesh = flower(c.rng);
+            c.prop(PropSpec::new(mesh, p).rot(deg));
         }
     }
 
-    // -- hazards: mud patches ----------------------------------------------
-    for (p, r) in [
-        (Vec2::new(-6.0, -12.0), 3.4f32),
-        (Vec2::new(13.0, 12.0), 3.0),
-        (Vec2::new(-19.0, -1.0), 2.6),
-    ] {
-        s.hazards.push(HazardSpec {
+    // -- mud patches: this world's signature drag ----------------------------
+    for _ in 0..c.rng.below(3) {
+        let p = c.spot(4.0);
+        let r = c.rng.range(2.4, 3.6);
+        let slow = c.rng.range(0.38, 0.52);
+        c.hazard(HazardSpec {
             pos: p,
             radius: r,
             kind: HazardKind::Sticky,
             dps: 0.0,
-            slow: 0.45,
+            slow,
             duty: None,
         });
-        s.prop(
-            PropSpec::new(mud_patch(r), p)
-                .raised(0.02)
-                .surface(Surface::Matte),
-        );
+        let mesh = mud_patch(r);
+        c.prop(PropSpec::new(mesh, p).raised(0.02).surface(Surface::Matte));
     }
 
     // A stagnant pool that actually stings.
-    s.hazards.push(HazardSpec {
-        pos: Vec2::new(17.0, -13.0),
-        radius: 3.2,
-        kind: HazardKind::Scald,
-        dps: 5.0,
-        slow: 0.7,
-        duty: None,
-    });
-    s.prop(
-        PropSpec::new(pool(3.2), Vec2::new(17.0, -13.0))
-            .raised(0.015)
-            .surface(Surface::Glass),
-    );
-
-    s.zones = vec![
-        Vec2::new(-8.0, 3.0),
-        Vec2::new(10.0, -3.0),
-        Vec2::new(-16.0, -13.0),
-        Vec2::new(18.0, 12.0),
-        Vec2::new(0.0, 13.0),
-    ];
-
-    s
+    if c.feature(0.16) {
+        let p = c.spot(4.5);
+        let r = c.rng.range(2.6, 3.4);
+        c.hazard(HazardSpec {
+            pos: p,
+            radius: r,
+            kind: HazardKind::Scald,
+            dps: 5.0,
+            slow: 0.7,
+            duty: None,
+        });
+        let mesh = pool(r);
+        c.prop(PropSpec::new(mesh, p).raised(0.015).surface(Surface::Glass));
+    }
 }
 
-pub(super) fn floor(rng: &mut Rng) -> Mesh {
-    let seed = (rng.next_u64() & 0xFFFF) as u32;
-    ground_grid(HALF_X, HALF_Z, 1.0, |_, _, c| {
+pub(super) fn floor(origin: Vec2, salt: u32) -> Mesh {
+    let seed = 0x51D5 ^ salt;
+    ground_grid(HALF, HALF, 1.0, |_, _, local| {
+        // World-space sampling, so the soil and moss run continuously across
+        // chunk seams instead of restarting at every boundary.
+        let c = origin + local;
         let n = noise_soft(c.x * 0.28, c.y * 0.28, seed);
         let patch = noise2(c.x * 0.11, c.y * 0.11, seed ^ 0x5A5A);
         let color = if patch > 0.62 {

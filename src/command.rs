@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use crate::allies::{
     AllyKind, BuildRequest, Economy, RecruitRequest, Squad, Stance, TurretKind, Zone, ZoneOwner,
 };
-use crate::arena::{ArenaBounds, ObstacleField};
+use crate::arena::ObstacleField;
 use crate::art::{GameArt, Glow};
 use crate::common::{Body, RunEntity, SfxEvent, to_world};
 use crate::onboarding::{HintQueue, HintTone, Unlocks};
@@ -21,6 +21,13 @@ use crate::{AppState, GameSet, RunSetup};
 /// and stops the transition feeling like a freeze-frame bug.
 const PLAN_TIME_SCALE: f32 = 0.12;
 const CURSOR_SPEED: f32 = 17.0;
+
+/// Furthest the build cursor can stray from the player.
+///
+/// The world is unbounded, so something has to stop the cursor wandering off
+/// into unexplored ground. A leash is also the better rule: you place defences
+/// around where you are standing, not anywhere on the map.
+const CURSOR_LEASH: f32 = 26.0;
 
 #[derive(Debug, Resource)]
 pub struct PlanMode {
@@ -135,14 +142,15 @@ fn drive_time_scale(plan: Res<PlanMode>, base: Res<SimSpeed>, mut time: ResMut<T
 fn plan_cursor(
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
-    bounds: Res<ArenaBounds>,
     obstacles: Res<ObstacleField>,
     mut plan: ResMut<PlanMode>,
+    player: Query<&Body, With<Player>>,
 ) {
     if !plan.active {
         return;
     }
     let dt = time.delta_secs();
+    let anchor = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
 
     let mut dir = Vec2::ZERO;
     if keys.pressed(KeyCode::ArrowUp) {
@@ -159,7 +167,14 @@ fn plan_cursor(
     }
 
     let moved = plan.cursor + dir.normalize_or_zero() * CURSOR_SPEED * dt;
-    plan.cursor = bounds.clamp(moved, 1.0);
+    // The cursor is leashed to the player rather than to an arena: you plan
+    // where you are standing, not anywhere on an unbounded map.
+    let leash = moved - anchor;
+    plan.cursor = if leash.length() > CURSOR_LEASH {
+        anchor + leash.normalize() * CURSOR_LEASH
+    } else {
+        moved
+    };
 
     let kind = plan.selected_kind();
     let radius = if kind == TurretKind::Barricade {

@@ -37,9 +37,19 @@ Commands for `do`, each a separate quoted argument, executed in order:
     wait 2           let two seconds pass
     note some text   write a line into the log
 
-Example:
+    roam 25          wander unaided for 25 seconds
+    chase 10         close on the nearest enemy
+    flee 8           back away from the nearest enemy
+    goto -14 6       walk to a point, stopping on arrival
 
-    python3 tools/pilot.py do $PT "hold W 1.2" "tap SPACE" "wait 1" "tap 1"
+Those last four matter more than all the others. You think in whole turns of
+several seconds; without them the hero stands motionless between your
+decisions, which is neither a fair test of the game nor much for anyone
+watching. Chain them so every turn is a long stretch of continuous play:
+
+    python3 tools/pilot.py do $PT "roam 20" "chase 8" "flee 5" "roam 20"
+
+Decide in a sentence and act. Do not deliberate between turns.
 
 ## Controls
 
@@ -101,13 +111,13 @@ If the digest stops changing for several minutes, or `state.json` disappears,
 the game has died. Relaunch with your own slot:
 
     cd /Users/nschmeller/desk-free-for-all && \
-      DFFA_PILOT=$PT DFFA_MONITOR=0 DFFA_TILE=<your slot> \
+      HOLDFAST_PILOT=$PT HOLDFAST_MONITOR=0 HOLDFAST_TILE=<your slot> \
       ./target/debug/holdfast > $PT/stdout.log 2>&1 &
 
 Then read `$PT/stdout.log`, find the panic, and **quote it verbatim** in your
 findings along with exactly what you were doing. Keep playing afterwards.
 
-`DFFA_MONITOR=0` is not optional - the user watches these windows on their
+`HOLDFAST_MONITOR=0` is not optional - the user watches these windows on their
 external monitor.
 
 ## Your final message

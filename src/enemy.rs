@@ -8,7 +8,7 @@
 
 use bevy::prelude::*;
 
-use crate::arena::{ArenaBounds, Gust, ObstacleField};
+use crate::arena::{Gust, ObstacleField};
 use crate::art::{GameArt, Glow};
 use crate::common::{
     Altitude, Body, DamageEvent, DamageSource, DeathEvent, Doomed, Health, RunEntity, VisualScale,
@@ -19,6 +19,7 @@ use crate::palette as pal;
 use crate::player::Player;
 use crate::rng::Rng;
 use crate::threat::{RunClock, Threat, enemy_power};
+use crate::world::Chasms;
 use crate::{AppState, GameSet, RunSetup};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -396,7 +397,6 @@ fn direct_spawns(
     mut director: ResMut<Director>,
     threat: Res<Threat>,
     clock: Res<RunClock>,
-    bounds: Res<ArenaBounds>,
     obstacles: Res<ObstacleField>,
     env: Res<EnvKind>,
     art: Res<GameArt>,
@@ -418,7 +418,8 @@ fn direct_spawns(
         // Each full rotation makes bosses meaningfully harder, which is what
         // keeps an endless run from flattening out.
         let cycle_scale = 1.0 + director.boss_cycle as f32 * 0.85;
-        let pos = spawn_point(*bounds, &obstacles, &mut rng, 2.2);
+        let anchor = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
+        let pos = spawn_point(anchor, &obstacles, &mut rng, 2.2);
         spawn_enemy(
             &mut commands,
             &art,
@@ -452,7 +453,7 @@ fn direct_spawns(
             // Elites prefer to arrive near the player rather than trickling in
             // from the rim, so they read as an event.
             let anchor = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
-            let pos = near_point(*bounds, &obstacles, &mut rng, anchor, 9.0, 15.0, 1.0);
+            let pos = near_point(&obstacles, &mut rng, anchor, 9.0, 15.0, 1.0);
             spawn_enemy(
                 &mut commands,
                 &art,
@@ -480,7 +481,8 @@ fn direct_spawns(
             let Some(kind) = pick_kind(&mut rng, minutes) else {
                 continue;
             };
-            let pos = spawn_point(*bounds, &obstacles, &mut rng, kind.stats().radius);
+            let anchor = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
+            let pos = spawn_point(anchor, &obstacles, &mut rng, kind.stats().radius);
             spawn_enemy(
                 &mut commands,
                 &art,
@@ -531,21 +533,28 @@ fn pick_kind(rng: &mut Rng, minutes: f32) -> Option<EnemyKind> {
 }
 
 /// A clear point on the arena rim.
-fn spawn_point(bounds: ArenaBounds, obstacles: &ObstacleField, rng: &mut Rng, radius: f32) -> Vec2 {
+/// Distance from the player that new arrivals appear at.
+///
+/// Just beyond what the overlook camera frames, so monsters walk into view
+/// rather than blinking into existence in front of the player. The world has
+/// no perimeter to spawn on any more, so the player *is* the perimeter.
+const SPAWN_RING: f32 = 34.0;
+
+fn spawn_point(anchor: Vec2, obstacles: &ObstacleField, rng: &mut Rng, radius: f32) -> Vec2 {
     for _ in 0..12 {
-        let p = bounds.perimeter_point(rng.f32());
-        // Pull slightly inward so spawns are not clipped by the edge test.
-        let p = p * 0.94;
+        let a = rng.range(0.0, std::f32::consts::TAU);
+        let r = rng.range(SPAWN_RING, SPAWN_RING * 1.25);
+        let p = anchor + Vec2::new(a.cos() * r, a.sin() * r);
         if !obstacles.overlaps(p, radius) {
             return p;
         }
     }
-    bounds.perimeter_point(rng.f32()) * 0.9
+    let a = rng.range(0.0, std::f32::consts::TAU);
+    anchor + Vec2::new(a.cos(), a.sin()) * SPAWN_RING
 }
 
 /// A clear point in an annulus around `anchor`.
 fn near_point(
-    bounds: ArenaBounds,
     obstacles: &ObstacleField,
     rng: &mut Rng,
     anchor: Vec2,
@@ -556,12 +565,12 @@ fn near_point(
     for _ in 0..16 {
         let a = rng.range(0.0, std::f32::consts::TAU);
         let r = rng.range(min_r, max_r);
-        let p = bounds.clamp(anchor + Vec2::new(a.cos() * r, a.sin() * r), radius + 0.5);
+        let p = anchor + Vec2::new(a.cos() * r, a.sin() * r);
         if !obstacles.overlaps(p, radius) {
             return p;
         }
     }
-    spawn_point(bounds, obstacles, rng, radius)
+    spawn_point(anchor, obstacles, rng, radius)
 }
 
 pub fn spawn_enemy(
@@ -603,9 +612,9 @@ pub fn spawn_enemy(
         // writes a velocity nothing ever integrates.
         crate::combat::Actor {
             collides: !kind.flies(),
-            // Deliberately unconfined: knockback should be able to shove them
-            // clean off the edge, which `enemy_fall_off` then finishes.
-            confined: false,
+            // Deliberately careless: knockback should be able to shove them
+            // into a chasm, which `enemy_fall_off` then finishes.
+            avoids_chasms: false,
         },
         Health::new(hp),
         Body::new(pos, radius),
@@ -682,7 +691,6 @@ pub struct EnvTint(pub Color);
 #[allow(clippy::too_many_arguments)]
 fn enemy_think(
     time: Res<Time>,
-    bounds: Res<ArenaBounds>,
     gust: Res<Gust>,
     mut rng: ResMut<Rng>,
     player: Query<(&Body, Entity), (With<Player>, Without<Enemy>)>,
@@ -785,9 +793,9 @@ fn enemy_think(
             Behavior::Blinker => {
                 if enemy.timer > 3.0 && dist > 3.0 {
                     enemy.timer = 0.0;
-                    // Short teleport toward the player, landing inside bounds.
+                    // Short teleport toward the player.
                     let hop = dir * dist.min(7.0);
-                    body.pos = bounds.clamp(body.pos + hop, body.radius);
+                    body.pos += hop;
                 }
             }
             Behavior::BossCharger => {
@@ -934,9 +942,10 @@ fn enemy_contact(
 
 /// Enemies launched past the arena edge tumble away and die, which makes
 /// knockback builds genuinely powerful near the rim.
+/// Knockback stays lethal in a world with no edge: chasms are the edge now.
 fn enemy_fall_off(
     time: Res<Time>,
-    bounds: Res<ArenaBounds>,
+    chasms: Res<Chasms>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut Enemy, &Body, &mut Altitude, &Health)>,
     mut deaths: MessageWriter<DeathEvent>,
@@ -960,8 +969,9 @@ fn enemy_fall_off(
         if health.is_dead() {
             continue;
         }
-        // A margin past the true edge so ordinary jostling never triggers it.
-        if !bounds.contains(body.pos) && bounds.edge_distance(body.pos) < -1.2 {
+        // Only once well inside a hole, so brushing the lip is survivable and
+        // shoving something over it is unambiguous.
+        if chasms.contains(body.pos) {
             enemy.falling = true;
             alt.vy = 2.0;
         }

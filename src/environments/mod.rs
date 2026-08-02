@@ -1,10 +1,21 @@
-//! Environments: five arenas that share one rulebook.
+//! Environments: five worlds that share one rulebook.
 //!
-//! An environment is pure data. Each module below is a function from a seed to
-//! a `SceneData` - a floor mesh, a pile of props with colliders, some lights
-//! and some hazards. Nothing in here touches the ECS, which means an arena can
-//! be unit-reasoned about, swapped at runtime, and extended without going near
-//! the simulation.
+//! An environment is pure data. There is no arena - the world is unbounded, and
+//! each module below is a function from `(chunk coordinate, seed)` to a
+//! [`ChunkContent`]: some props with colliders, some lights, some hazards, and
+//! the occasional landmark. `world` streams those chunks in and out around the
+//! player.
+//!
+//! Nothing in here touches the ECS, which means a world can be unit-reasoned
+//! about, swapped at runtime, and extended without going near the simulation.
+//!
+//! Two things are deliberately shared rather than left to each world:
+//!
+//! - the **look** (sky, sun, ambient, the prevailing wind), which applies once
+//!   per run rather than per chunk, and
+//! - the **strategic furniture** - territory, forts and spawner nests - which
+//!   is placed by [`strategic_features`] so the war plays the same way in every
+//!   world even though it looks completely different.
 
 mod arcane;
 mod desk;
@@ -14,13 +25,23 @@ mod rooftop;
 
 use bevy::prelude::*;
 
-use crate::arena::{
-    ArenaBounds, ColliderShape, Gust, Hazard, HazardKind, ObstacleField, Spotlight,
-};
+use crate::arena::{ColliderShape, Gust, Hazard, HazardKind, ObstacleField};
 use crate::art::{GameArt, Glow};
 use crate::common::{Body, to_world};
 use crate::rng::Rng;
+use crate::world::{CHUNK_SIZE, Chasm, LightPool, WorldSeed, chunk_min};
 use crate::{AppState, GameSet, RunSetup};
+
+/// Radius around the world origin kept free of props and hostile furniture.
+///
+/// The player always starts at the origin. Without this a run can open inside a
+/// coffee mug, or twenty feet from a fort.
+pub const SPAWN_CLEARANCE: f32 = 7.0;
+
+/// Radius around the origin in which no fort or nest is ever generated. Larger
+/// than the prop clearance: the opening minute should be quiet, not merely
+/// unobstructed.
+pub const HOME_PEACE: f32 = 46.0;
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum EnvKind {
@@ -87,45 +108,81 @@ impl EnvKind {
 
     pub fn tagline(self) -> &'static str {
         match self {
-            Self::Desk => "2AM. The stationery has opinions.",
-            Self::Forest => "You are four inches tall and the moss is hostile.",
-            Self::Rooftop => "Neon, rust, and something in the vents.",
-            Self::Grid => "A test platform in hard vacuum. Something is testing back.",
-            Self::Arcane => "A broken sanctum where the wards still hold. Barely.",
+            Self::Desk => "2AM, and the desk goes on forever.",
+            Self::Forest => "You are four inches tall and the moss has no edge.",
+            Self::Rooftop => "Neon and rust, roof after roof after roof.",
+            Self::Grid => "An endless test platform. Something is still testing.",
+            Self::Arcane => "A sanctum that broke outward instead of falling down.",
         }
     }
 
     /// One line on what plays differently here, shown on the select screen.
     pub fn quirk(self) -> &'static str {
         match self {
-            Self::Desk => "Tight and cluttered. The USB fan sweeps a lane every few seconds.",
-            Self::Forest => "Wide and open, but mud slows everything that crosses it.",
-            Self::Rooftop => "Long sightlines. Steam vents erupt on a timer.",
+            Self::Desk => "Tight and cluttered. The fan sweeps a lane every few seconds.",
+            Self::Forest => "Open going, but mud slows everything that crosses it.",
+            Self::Rooftop => "Long sightlines, and gaps between the roofs to fall down.",
             Self::Grid => "Almost no cover. Plasma conduits burn anything standing on them.",
             Self::Arcane => "Ley lines heal whoever holds them. So the enemy wants them too.",
         }
     }
 
-    pub fn build(self, rng: &mut Rng) -> SceneData {
-        let mut scene = match self {
-            Self::Desk => desk::build(rng),
-            Self::Forest => forest::build(rng),
-            Self::Rooftop => rooftop::build(rng),
-            Self::Grid => grid::build(rng),
-            Self::Arcane => arcane::build(rng),
-        };
-
-        // Pull territory markers far enough inside that their whole capture
-        // radius is reachable. Authoring zones by eye against a corner is easy
-        // to get slightly wrong, and the failure mode - a zone the player can
-        // never fully stand in - is invisible until someone tries to hold it.
-        let bounds = scene.bounds;
-        for zone in &mut scene.zones {
-            *zone = bounds.clamp(*zone, crate::allies::ZONE_RADIUS);
+    /// Lighting and weather, applied once per run rather than per chunk.
+    pub fn look(self) -> EnvLook {
+        match self {
+            Self::Desk => desk::look(),
+            Self::Forest => forest::look(),
+            Self::Rooftop => rooftop::look(),
+            Self::Grid => grid::look(),
+            Self::Arcane => arcane::look(),
         }
-
-        scene
     }
+
+    /// Everything in one chunk of this world.
+    pub fn generate_chunk(self, coord: IVec2, rng: &mut Rng) -> ChunkContent {
+        let mut ctx = ChunkCtx::new(coord, rng);
+        match self {
+            Self::Desk => desk::chunk(&mut ctx),
+            Self::Forest => forest::chunk(&mut ctx),
+            Self::Rooftop => rooftop::chunk(&mut ctx),
+            Self::Grid => grid::chunk(&mut ctx),
+            Self::Arcane => arcane::chunk(&mut ctx),
+        }
+        strategic_features(&mut ctx);
+        ctx.finish()
+    }
+
+    /// The floor mesh for one chunk, authored around its own centre.
+    ///
+    /// Takes the world seed rather than an `Rng` because floors must be
+    /// *seamless*: neighbouring chunks have to agree about the ground they
+    /// share, which means sampling world-space noise rather than rolling dice.
+    pub fn chunk_floor(self, coord: IVec2, seed: WorldSeed) -> Mesh {
+        let origin = chunk_min(coord) + Vec2::splat(CHUNK_SIZE * 0.5);
+        // Truncated deliberately: the floor only needs a stable per-world
+        // number to decorrelate its noise fields from any other world's.
+        let salt = (seed.0 >> 32) as u32;
+        match self {
+            Self::Desk => desk::floor(origin, salt),
+            Self::Forest => forest::floor(origin, salt),
+            Self::Rooftop => rooftop::floor(origin, salt),
+            Self::Grid => grid::floor(origin, salt),
+            Self::Arcane => arcane::floor(origin, salt),
+        }
+    }
+}
+
+/// How a world is lit and what the weather does. One per run.
+#[derive(Debug, Clone)]
+pub struct EnvLook {
+    pub sky: Color,
+    pub ambient: Color,
+    pub ambient_brightness: f32,
+    pub sun_color: Color,
+    pub sun_illuminance: f32,
+    /// Direction the sun points, from the light towards the scene.
+    pub sun_dir: Vec3,
+    pub gust: Gust,
 }
 
 /// Which shared material a prop renders with.
@@ -220,55 +277,84 @@ pub struct HazardSpec {
     pub duty: Option<(f32, f32)>,
 }
 
-/// Everything an environment contributes.
-#[derive(Debug)]
-pub struct SceneData {
-    pub bounds: ArenaBounds,
-    pub ground: Mesh,
+/// Everything one chunk contributes to the world.
+///
+/// Positions are absolute world coordinates, not chunk-local: a generator that
+/// wants to place something is already thinking in world space, and the
+/// alternative is an offset applied in a dozen places and forgotten in one.
+#[derive(Debug, Default)]
+pub struct ChunkContent {
     pub props: Vec<PropSpec>,
     pub lights: Vec<LightSpec>,
     pub hazards: Vec<HazardSpec>,
-    pub sky: Color,
-    pub ambient: Color,
-    pub ambient_brightness: f32,
-    pub sun_color: Color,
-    pub sun_illuminance: f32,
-    /// Direction the sun points, from the light towards the scene.
-    pub sun_dir: Vec3,
-    pub gust: Gust,
-    pub spotlight: Spotlight,
-    /// Where territory markers go. Environment-authored so they sit in
-    /// interesting places rather than being scattered blindly.
+    /// Territory markers to contest.
     pub zones: Vec<Vec2>,
+    /// Standing in one of these trades attention for damage.
+    pub light_pools: Vec<LightPool>,
+    /// Holes to fall down.
+    pub chasms: Vec<Chasm>,
+    /// Hostile strongholds.
+    pub forts: Vec<Vec2>,
+    /// Hostile nests that trickle out monsters.
+    pub spawners: Vec<Vec2>,
 }
 
-impl SceneData {
-    pub fn new(half_x: f32, half_z: f32, ground: Mesh) -> Self {
+/// Scratch space handed to a world's chunk generator.
+///
+/// Exists so that each world's generator reads as a list of what is *in* that
+/// world, with the arithmetic of chunk bounds, spawn clearance and determinism
+/// handled once here instead of five times over.
+#[derive(Debug)]
+pub struct ChunkCtx<'a> {
+    pub coord: IVec2,
+    /// South-west corner of this chunk in world space.
+    pub min: Vec2,
+    pub rng: &'a mut Rng,
+    out: ChunkContent,
+}
+
+impl<'a> ChunkCtx<'a> {
+    fn new(coord: IVec2, rng: &'a mut Rng) -> Self {
         Self {
-            bounds: ArenaBounds { half_x, half_z },
-            ground,
-            props: Vec::new(),
-            lights: Vec::new(),
-            hazards: Vec::new(),
-            sky: Color::srgb(0.016, 0.018, 0.028),
-            ambient: Color::srgb(0.42, 0.5, 0.78),
-            ambient_brightness: 260.0,
-            sun_color: Color::srgb(1.0, 0.94, 0.86),
-            sun_illuminance: 3200.0,
-            sun_dir: Vec3::new(-0.5, -1.0, -0.35),
-            gust: Gust::default(),
-            spotlight: Spotlight::default(),
-            zones: Vec::new(),
+            coord,
+            min: chunk_min(coord),
+            rng,
+            out: ChunkContent::default(),
         }
     }
 
-    pub fn prop(&mut self, p: PropSpec) -> &mut Self {
-        self.props.push(p);
+    /// Centre of this chunk in world space.
+    #[must_use]
+    pub fn center(&self) -> Vec2 {
+        self.min + Vec2::splat(CHUNK_SIZE * 0.5)
+    }
+
+    /// Distance from the world origin to this chunk's centre.
+    #[must_use]
+    pub fn from_home(&self) -> f32 {
+        self.center().length()
+    }
+
+    /// A uniformly random point inside the chunk, kept `inset` from its edges.
+    pub fn spot(&mut self, inset: f32) -> Vec2 {
+        let lo = inset;
+        let hi = CHUNK_SIZE - inset;
+        self.min + Vec2::new(self.rng.range(lo, hi), self.rng.range(lo, hi))
+    }
+
+    /// A per-chunk coin flip. Use for landmarks, so that "one chunk in six has
+    /// a water tower" is a single readable line.
+    pub fn feature(&mut self, chance: f32) -> bool {
+        self.rng.chance(chance)
+    }
+
+    pub fn prop(&mut self, prop: PropSpec) -> &mut Self {
+        self.out.props.push(prop);
         self
     }
 
     pub fn light(&mut self, pos: Vec3, color: Color, intensity: f32, range: f32) -> &mut Self {
-        self.lights.push(LightSpec {
+        self.out.lights.push(LightSpec {
             pos,
             color,
             intensity,
@@ -277,14 +363,94 @@ impl SceneData {
         });
         self
     }
+
+    pub fn hazard(&mut self, hazard: HazardSpec) -> &mut Self {
+        self.out.hazards.push(hazard);
+        self
+    }
+
+    /// A patch of bright ground: more damage dealt, and more attention drawn.
+    pub fn pool(&mut self, center: Vec2, radius: f32, damage_bonus: f32) -> &mut Self {
+        self.out.light_pools.push(LightPool {
+            center,
+            radius,
+            damage_bonus,
+        });
+        self
+    }
+
+    pub fn chasm(&mut self, center: Vec2, radius: f32) -> &mut Self {
+        self.out.chasms.push(Chasm { center, radius });
+        self
+    }
+
+    /// Drop anything that would bury the player's starting position, then hand
+    /// the content over.
+    fn finish(self) -> ChunkContent {
+        let mut out = self.out;
+        // Only the home chunk and its neighbours can possibly reach the origin,
+        // so this is a cheap check that almost always passes trivially.
+        if self.min.length() < CHUNK_SIZE * 2.0 {
+            out.props
+                .retain(|p| p.collider.is_none() || p.pos.length() > SPAWN_CLEARANCE);
+            out.hazards
+                .retain(|h| h.pos.length() > SPAWN_CLEARANCE + h.radius);
+            out.chasms
+                .retain(|c| c.center.length() > SPAWN_CLEARANCE + c.radius);
+        }
+        out
+    }
 }
 
-/// Marker for everything spawned by the current environment, so switching
-/// arenas is a single despawn query.
+/// Territory, forts and nests: the same in every world, so the war reads the
+/// same wherever it is fought.
+///
+/// Placement is by chunk rather than by density over an area, which is what
+/// keeps it deterministic and streaming-safe - a chunk decides its own contents
+/// with no knowledge of its neighbours, and therefore generates identically
+/// however the player wanders into it.
+fn strategic_features(ctx: &mut ChunkCtx) {
+    let from_home = ctx.from_home();
+
+    // Territory is everywhere, including near home: it is the tutorial for the
+    // whole holding-ground idea and should be found early.
+    if ctx.feature(0.34) {
+        let pos = ctx.spot(crate::allies::ZONE_RADIUS + 1.5);
+        ctx.out.zones.push(pos);
+    }
+
+    if from_home < HOME_PEACE {
+        return;
+    }
+
+    // Forts thin out near home and are common further out, so walking away from
+    // the origin is legibly walking into danger.
+    let fort_chance = (0.06 + from_home * 0.0009).min(0.16);
+    if ctx.feature(fort_chance) {
+        let pos = ctx.spot(6.0);
+        ctx.out.forts.push(pos);
+        // A fort is born with an escort of nests; it does not start from
+        // nothing and slowly bootstrap while the player watches.
+        let escort = if ctx.rng.chance(0.5) { 2 } else { 1 };
+        for _ in 0..escort {
+            let offset = ctx.rng.in_disc(9.0).truncate();
+            ctx.out.spawners.push(pos + offset);
+        }
+    } else if ctx.feature(0.18) {
+        // Loose nests between the forts, so the ground between strongholds is
+        // not empty.
+        let pos = ctx.spot(3.0);
+        ctx.out.spawners.push(pos);
+    }
+}
+
+/// Marker for everything spawned by the current environment's look, so a
+/// rebuild is a single despawn query.
 #[derive(Debug, Component)]
 pub struct EnvEntity;
 
-/// Set when a rebuild is required (new run, or the player changed arena).
+/// Set when the world's look needs applying (new run, or the player changed
+/// world).
 #[derive(Debug, Resource, Default)]
 pub struct EnvDirty(pub bool);
 
@@ -303,13 +469,11 @@ pub struct ArenaPlugin;
 impl Plugin for ArenaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EnvKind>()
-            .init_resource::<ArenaBounds>()
             .init_resource::<ObstacleField>()
             .init_resource::<EnvDirty>()
             .init_resource::<Gust>()
-            .init_resource::<Spotlight>()
             .add_systems(OnExit(AppState::Menu), mark_dirty.in_set(RunSetup::Reset))
-            .add_systems(Update, rebuild_environment.run_if(|d: Res<EnvDirty>| d.0))
+            .add_systems(Update, apply_look.run_if(|d: Res<EnvDirty>| d.0))
             .add_systems(
                 Update,
                 (tick_gust, tick_pulsing_hazards).in_set(GameSet::Think),
@@ -321,136 +485,83 @@ fn mark_dirty(mut dirty: ResMut<EnvDirty>) {
     dirty.0 = true;
 }
 
-#[allow(clippy::too_many_arguments)]
-fn rebuild_environment(
+/// Install the sky, the sun and the prevailing wind for the chosen world.
+fn apply_look(
     mut commands: Commands,
     mut dirty: ResMut<EnvDirty>,
     env: Res<EnvKind>,
-    art: Res<GameArt>,
-    mut rng: ResMut<Rng>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut bounds: ResMut<ArenaBounds>,
-    mut obstacles: ResMut<ObstacleField>,
     mut gust: ResMut<Gust>,
-    mut spotlight: ResMut<Spotlight>,
     mut clear: ResMut<ClearColor>,
     mut ambient: ResMut<GlobalAmbientLight>,
     existing: Query<Entity, With<EnvEntity>>,
-    mut zone_spawns: MessageWriter<crate::allies::SpawnZone>,
 ) {
     dirty.0 = false;
 
     for e in &existing {
         commands.entity(e).despawn();
     }
-    obstacles.clear();
 
-    let scene = env.build(&mut rng);
+    let look = env.look();
+    *gust = look.gust;
+    clear.0 = look.sky;
+    ambient.color = look.ambient;
+    ambient.brightness = look.ambient_brightness;
 
-    *bounds = scene.bounds;
-    *gust = scene.gust;
-    *spotlight = scene.spotlight;
-    clear.0 = scene.sky;
-    ambient.color = scene.ambient;
-    ambient.brightness = scene.ambient_brightness;
-
-    // Floor.
-    commands.spawn((
-        Mesh3d(meshes.add(scene.ground)),
-        MeshMaterial3d(art.ground.clone()),
-        Transform::IDENTITY,
-        EnvEntity,
-    ));
-
-    // Sun.
     commands.spawn((
         DirectionalLight {
-            color: scene.sun_color,
-            illuminance: scene.sun_illuminance,
+            color: look.sun_color,
+            illuminance: look.sun_illuminance,
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_translation(-scene.sun_dir.normalize() * 40.0)
-            .looking_to(scene.sun_dir, Vec3::Y),
+        Transform::from_translation(-look.sun_dir.normalize() * 40.0)
+            .looking_to(look.sun_dir, Vec3::Y),
         EnvEntity,
     ));
+}
 
-    // Props.
-    for prop in scene.props {
-        let material = match prop.surface {
-            Surface::Solid => art.solid.clone(),
-            Surface::Matte => art.matte.clone(),
-            Surface::Metal => art.metal.clone(),
-            Surface::Glass => art.glass.clone(),
-            Surface::Glow(g) => art.glow(g),
-        };
-        if let Some(shape) = prop.collider {
-            obstacles.push(prop.pos, shape, prop.blocks_shots, prop.height);
-        }
-        commands.spawn((
-            Mesh3d(meshes.add(prop.mesh)),
-            MeshMaterial3d(material),
-            Transform::from_translation(to_world(prop.pos, prop.y))
-                .with_rotation(Quat::from_rotation_y(prop.rot_y)),
-            EnvEntity,
-        ));
+/// Spawn one hazard entity. Shared with `world`, which streams them in per
+/// chunk, so the two cannot drift apart in how a hazard is assembled.
+pub fn spawn_hazard_entity(
+    commands: &mut Commands,
+    art: &GameArt,
+    spec: &HazardSpec,
+    phase: f32,
+) -> Entity {
+    let tint = match spec.kind {
+        HazardKind::Scald => Glow::Warning,
+        HazardKind::Sticky => Glow::Scrap,
+        HazardKind::Shock => Glow::Plasma,
+        HazardKind::Font => Glow::ZoneHeld,
+    };
+    let mut entity = commands.spawn((
+        Hazard {
+            kind: spec.kind,
+            radius: spec.radius,
+            dps: spec.dps,
+            slow: spec.slow,
+            life: None,
+            hurts_player: true,
+            hurts_enemies: true,
+        },
+        Body::new(spec.pos, spec.radius),
+        Mesh3d(art.disc.clone()),
+        MeshMaterial3d(art.glow(tint)),
+        Transform::from_translation(to_world(spec.pos, 0.03)).with_scale(Vec3::new(
+            spec.radius,
+            1.0,
+            spec.radius,
+        )),
+    ));
+    if let Some((period, on_fraction)) = spec.duty {
+        entity.insert(PulsingHazard {
+            period,
+            on_fraction,
+            phase,
+            base_dps: spec.dps,
+        });
     }
-
-    // Point lights.
-    for l in scene.lights {
-        commands.spawn((
-            PointLight {
-                color: l.color,
-                intensity: l.intensity,
-                range: l.range,
-                shadow_maps_enabled: l.shadows,
-                ..default()
-            },
-            Transform::from_translation(l.pos),
-            EnvEntity,
-        ));
-    }
-
-    // Environmental hazards. Each kind gets its own emissive so the floor
-    // reads at a glance: red burns, brown slows, green heals.
-    for h in scene.hazards {
-        let tint = match h.kind {
-            HazardKind::Scald => Glow::Warning,
-            HazardKind::Sticky => Glow::Scrap,
-            HazardKind::Shock => Glow::Plasma,
-            HazardKind::Font => Glow::ZoneHeld,
-        };
-        let mut e = commands.spawn((
-            Hazard {
-                kind: h.kind,
-                radius: h.radius,
-                dps: h.dps,
-                slow: h.slow,
-                life: None,
-                hurts_player: true,
-                hurts_enemies: true,
-            },
-            Body::new(h.pos, h.radius),
-            Mesh3d(art.disc.clone()),
-            MeshMaterial3d(art.glow(tint)),
-            Transform::from_translation(to_world(h.pos, 0.03))
-                .with_scale(Vec3::new(h.radius, 1.0, h.radius)),
-            EnvEntity,
-        ));
-        if let Some((period, on_fraction)) = h.duty {
-            e.insert(PulsingHazard {
-                period,
-                on_fraction,
-                phase: 0.0,
-                base_dps: h.dps,
-            });
-        }
-    }
-
-    // Territory markers.
-    for pos in scene.zones {
-        zone_spawns.write(crate::allies::SpawnZone { pos });
-    }
+    entity.id()
 }
 
 fn tick_gust(time: Res<Time>, mut gust: ResMut<Gust>) {
@@ -492,17 +603,29 @@ fn tick_pulsing_hazards(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::chunk_rng;
 
-    fn build_all() -> Vec<(EnvKind, SceneData)> {
-        EnvKind::ALL
-            .iter()
-            .map(|k| (*k, k.build(&mut Rng::seeded(0xA11CE))))
-            .collect()
+    const SEED: WorldSeed = WorldSeed(0xA11CE);
+
+    /// Generate a square block of chunks around the origin for one world.
+    fn survey(kind: EnvKind, radius: i32) -> Vec<(IVec2, ChunkContent)> {
+        let mut out = Vec::new();
+        for z in -radius..=radius {
+            for x in -radius..=radius {
+                let coord = IVec2::new(x, z);
+                let mut rng = chunk_rng(SEED, coord, 1);
+                out.push((coord, kind.generate_chunk(coord, &mut rng)));
+            }
+        }
+        out
     }
 
     #[test]
-    fn every_world_builds_without_panicking() {
-        assert_eq!(build_all().len(), EnvKind::COUNT);
+    fn every_world_generates_chunks_without_panicking() {
+        for kind in EnvKind::ALL {
+            let chunks = survey(kind, 2);
+            assert_eq!(chunks.len(), 25, "{kind:?}");
+        }
     }
 
     #[test]
@@ -521,8 +644,8 @@ mod tests {
             assert_eq!(kind.next().prev(), kind);
             assert_eq!(kind.prev().next(), kind);
         }
-        let mut seen = vec![EnvKind::Desk];
         let mut cursor = EnvKind::Desk;
+        let mut seen = vec![cursor];
         for _ in 1..EnvKind::COUNT {
             cursor = cursor.next();
             seen.push(cursor);
@@ -554,7 +677,6 @@ mod tests {
         titles.dedup();
         assert_eq!(titles.len(), EnvKind::COUNT);
 
-        // Accents identify a world at a glance, so no two may collide.
         for a in EnvKind::ALL {
             for b in EnvKind::ALL {
                 if a as usize >= b as usize {
@@ -569,65 +691,66 @@ mod tests {
     }
 
     #[test]
-    fn every_arena_is_a_sensible_size() {
-        for (kind, scene) in build_all() {
-            let b = scene.bounds;
-            assert!(
-                b.half_x >= 15.0 && b.half_x <= 40.0,
-                "{kind:?} x {}",
-                b.half_x
-            );
-            assert!(
-                b.half_z >= 10.0 && b.half_z <= 30.0,
-                "{kind:?} z {}",
-                b.half_z
-            );
-            // Wider than tall keeps the third-person overlook framing sane.
-            assert!(b.half_x > b.half_z, "{kind:?} is taller than it is wide");
-        }
-    }
-
-    #[test]
-    fn every_arena_is_furnished() {
-        for (kind, scene) in build_all() {
-            assert!(scene.props.len() > 10, "{kind:?} is bare");
-            assert!(!scene.lights.is_empty(), "{kind:?} has no point lights");
-            assert!(scene.sun_illuminance > 0.0, "{kind:?} has no sun");
-        }
-    }
-
-    #[test]
-    fn every_arena_has_contestable_territory() {
-        for (kind, scene) in build_all() {
-            assert!(
-                scene.zones.len() >= 4,
-                "{kind:?} has only {} zones",
-                scene.zones.len()
-            );
-        }
-    }
-
-    #[test]
-    fn zones_sit_inside_their_arena_with_room_to_stand() {
-        for (kind, scene) in build_all() {
-            for zone in &scene.zones {
-                let clamped = scene.bounds.clamp(*zone, crate::allies::ZONE_RADIUS);
+    fn worlds_are_lit_distinctly() {
+        // Two worlds that share a sky and a sun read as the same place.
+        for a in EnvKind::ALL {
+            for b in EnvKind::ALL {
+                if a as usize >= b as usize {
+                    continue;
+                }
+                let (la, lb) = (a.look(), b.look());
+                let delta = |x: Color, y: Color| {
+                    let (x, y) = (x.to_linear(), y.to_linear());
+                    (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs()
+                };
                 assert!(
-                    (clamped - *zone).length() < 1e-3,
-                    "{kind:?} zone {zone:?} hangs off the edge"
+                    delta(la.sky, lb.sky) > 1e-4 || delta(la.ambient, lb.ambient) > 0.01,
+                    "{a:?} and {b:?} are lit identically"
                 );
             }
         }
     }
 
     #[test]
-    fn zones_are_spread_out_rather_than_stacked() {
-        for (kind, scene) in build_all() {
-            for (i, a) in scene.zones.iter().enumerate() {
-                for b in scene.zones.iter().skip(i + 1) {
+    fn every_world_has_a_coherent_prevailing_wind() {
+        for kind in EnvKind::ALL {
+            let g = kind.look().gust;
+            assert!(!g.label.is_empty(), "{kind:?} gust has no label");
+            assert!(g.duration > 0.0 && g.cooldown > 0.0, "{kind:?} gust timing");
+            assert!(g.strength > 0.0, "{kind:?} gust does nothing");
+            assert!(
+                (g.dir.length() - 1.0).abs() < 1e-3,
+                "{kind:?} gust direction is not normalised"
+            );
+            assert!(g.lane_half_width > 0.0);
+        }
+    }
+
+    #[test]
+    fn every_world_furnishes_the_ground_it_generates() {
+        for kind in EnvKind::ALL {
+            let props: usize = survey(kind, 2).iter().map(|(_, c)| c.props.len()).sum();
+            assert!(
+                props > 100,
+                "{kind:?} generated only {props} props over 25 chunks"
+            );
+        }
+    }
+
+    #[test]
+    fn chunks_stay_inside_their_own_square() {
+        // A chunk that scatters outside itself would leave seams and double up
+        // where two chunks overlap, and would be unloaded while still visible.
+        const SLACK: f32 = 12.0;
+        for kind in EnvKind::ALL {
+            for (coord, content) in survey(kind, 2) {
+                let min = chunk_min(coord) - SLACK;
+                let max = chunk_min(coord) + CHUNK_SIZE + SLACK;
+                for prop in &content.props {
                     assert!(
-                        a.distance(*b) > crate::allies::ZONE_RADIUS,
-                        "{kind:?} has overlapping zones at {a:?} and {b:?}"
+                        prop.pos.cmpge(min).all() && prop.pos.cmple(max).all(),
+                        "{kind:?} chunk {coord} put a prop at {} ",
+                        prop.pos
                     );
                 }
             }
@@ -635,63 +758,58 @@ mod tests {
     }
 
     #[test]
-    fn hazards_are_placed_inside_the_arena() {
-        for (kind, scene) in build_all() {
-            for h in &scene.hazards {
-                assert!(
-                    scene.bounds.contains(h.pos),
-                    "{kind:?} hazard at {:?} is off the board",
-                    h.pos
-                );
-                assert!(h.radius > 0.0, "{kind:?} has a zero-radius hazard");
-                assert!(h.slow > 0.0 && h.slow <= 1.0, "{kind:?} slow {}", h.slow);
+    fn the_same_seed_regenerates_a_chunk_identically() {
+        // The whole streaming design rests on this: walk away, walk back, and
+        // the world has to be where you left it.
+        for kind in EnvKind::ALL {
+            for coord in [IVec2::new(0, 0), IVec2::new(3, -2), IVec2::new(-7, 11)] {
+                let a = kind.generate_chunk(coord, &mut chunk_rng(SEED, coord, 1));
+                let b = kind.generate_chunk(coord, &mut chunk_rng(SEED, coord, 1));
+                assert_eq!(a.props.len(), b.props.len(), "{kind:?} {coord}");
+                assert_eq!(a.forts, b.forts, "{kind:?} {coord}");
+                assert_eq!(a.zones, b.zones, "{kind:?} {coord}");
+                for (x, y) in a.props.iter().zip(b.props.iter()) {
+                    assert!((x.pos - y.pos).length() < 1e-6, "{kind:?} {coord}");
+                }
             }
         }
     }
 
     #[test]
-    fn healing_hazards_only_appear_where_they_are_meant_to() {
-        for (kind, scene) in build_all() {
-            let healing = scene
-                .hazards
-                .iter()
-                .any(|h| h.kind == HazardKind::Font && h.dps < 0.0);
-            assert_eq!(
-                healing,
-                kind == EnvKind::Arcane,
-                "{kind:?} healing terrain is a Sanctum signature"
-            );
+    fn neighbouring_chunks_do_not_generate_the_same_layout() {
+        // Adjacent coordinates differ by one; a weak hash would make the world
+        // visibly tiled.
+        for kind in EnvKind::ALL {
+            let a =
+                kind.generate_chunk(IVec2::new(4, 4), &mut chunk_rng(SEED, IVec2::new(4, 4), 1));
+            let b =
+                kind.generate_chunk(IVec2::new(5, 4), &mut chunk_rng(SEED, IVec2::new(5, 4), 1));
+            let same = a.props.len() == b.props.len()
+                && a.props.iter().zip(b.props.iter()).all(|(x, y)| {
+                    (x.pos - chunk_min(IVec2::new(4, 4)))
+                        .distance(y.pos - chunk_min(IVec2::new(5, 4)))
+                        < 1e-6
+                });
+            assert!(!same, "{kind:?} tiles the same chunk over and over");
         }
     }
 
     #[test]
-    fn pulsing_hazards_have_a_legible_duty_cycle() {
-        for (kind, scene) in build_all() {
-            for h in &scene.hazards {
-                let Some((period, on)) = h.duty else { continue };
-                assert!(period > 1.0, "{kind:?} pulses too fast to read");
-                assert!(
-                    (0.1..0.75).contains(&on),
-                    "{kind:?} duty {on} leaves no safe window"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_spawn_point_at_the_origin_is_never_walled_in() {
-        // The player always starts at the centre; if a world buries the origin
-        // in props, the run begins stuck inside a mug.
-        for (kind, scene) in build_all() {
+    fn the_starting_position_is_never_walled_in() {
+        // The player always starts at the origin; if a world buries it in
+        // props, the run begins stuck inside a mug.
+        for kind in EnvKind::ALL {
             let mut field = ObstacleField::default();
-            for prop in &scene.props {
-                if let Some(shape) = prop.collider {
-                    field.push(prop.pos, shape, prop.blocks_shots, prop.height);
+            for (_, content) in survey(kind, 1) {
+                for prop in &content.props {
+                    if let Some(shape) = prop.collider {
+                        field.push(prop.pos, shape, prop.blocks_shots, prop.height);
+                    }
                 }
             }
             let resolved = field.resolve(Vec2::ZERO, crate::player::PLAYER_RADIUS);
             assert!(
-                resolved.length() < 4.0,
+                resolved.length() < 1e-3,
                 "{kind:?} shoves the player {} units at spawn",
                 resolved.length()
             );
@@ -699,25 +817,23 @@ mod tests {
     }
 
     #[test]
-    fn arenas_leave_room_to_move() {
+    fn worlds_leave_room_to_move() {
         // Sample a lattice and require that most of it is walkable, or the
-        // arena is a maze rather than a battlefield.
-        for (kind, scene) in build_all() {
+        // world is a maze rather than a battlefield.
+        for kind in EnvKind::ALL {
             let mut field = ObstacleField::default();
-            for prop in &scene.props {
-                if let Some(shape) = prop.collider {
-                    field.push(prop.pos, shape, prop.blocks_shots, prop.height);
+            for (_, content) in survey(kind, 2) {
+                for prop in &content.props {
+                    if let Some(shape) = prop.collider {
+                        field.push(prop.pos, shape, prop.blocks_shots, prop.height);
+                    }
                 }
             }
             let (mut open, mut total) = (0, 0);
-            let cols = (scene.bounds.half_x * 2.0) as i32;
-            let rows = (scene.bounds.half_z * 2.0) as i32;
-            for ix in 0..=cols {
-                for iz in 0..=rows {
-                    let p = Vec2::new(
-                        f32::from(i16::try_from(ix).unwrap()) - scene.bounds.half_x,
-                        f32::from(i16::try_from(iz).unwrap()) - scene.bounds.half_z,
-                    );
+            let reach = (CHUNK_SIZE * 2.0) as i32;
+            for ix in -reach..=reach {
+                for iz in -reach..=reach {
+                    let p = Vec2::new(ix as f32, iz as f32);
                     total += 1;
                     if !field.overlaps(p, crate::player::PLAYER_RADIUS) {
                         open += 1;
@@ -730,93 +846,104 @@ mod tests {
     }
 
     #[test]
-    fn gusts_and_spotlights_are_configured_coherently() {
-        for (kind, scene) in build_all() {
-            let g = &scene.gust;
-            assert!(!g.label.is_empty(), "{kind:?} gust has no label");
-            assert!(g.duration > 0.0 && g.cooldown > 0.0, "{kind:?} gust timing");
-            assert!(g.strength > 0.0, "{kind:?} gust does nothing");
-            assert!(
-                (g.dir.length() - 1.0).abs() < 1e-3,
-                "{kind:?} gust direction is not normalised"
-            );
-            assert!(g.lane_half_width > 0.0);
-
-            let s = &scene.spotlight;
-            assert!(!s.label.is_empty(), "{kind:?} spotlight has no label");
-            assert!(s.radius > 0.0);
-            assert!(s.damage_bonus > 0.0);
-            assert!(
-                scene.bounds.contains(s.center),
-                "{kind:?} spotlight is off the board"
-            );
-        }
-    }
-
-    #[test]
-    fn worlds_are_visually_distinct() {
-        // Two arenas that share a sky and a sun read as the same place.
-        let scenes = build_all();
-        for (i, (a_kind, a)) in scenes.iter().enumerate() {
-            for (b_kind, b) in scenes.iter().skip(i + 1) {
-                let sky_delta = {
-                    let (x, y) = (a.sky.to_linear(), b.sky.to_linear());
-                    (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs()
-                };
-                let ambient_delta = {
-                    let (x, y) = (a.ambient.to_linear(), b.ambient.to_linear());
-                    (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs()
-                };
-                assert!(
-                    sky_delta > 1e-4 || ambient_delta > 0.01,
-                    "{a_kind:?} and {b_kind:?} are lit identically"
-                );
+    fn hazards_are_sane_wherever_they_land() {
+        for kind in EnvKind::ALL {
+            for (_, content) in survey(kind, 2) {
+                for h in &content.hazards {
+                    assert!(h.radius > 0.0, "{kind:?} has a zero-radius hazard");
+                    assert!(h.slow > 0.0 && h.slow <= 1.0, "{kind:?} slow {}", h.slow);
+                    if let Some((period, on)) = h.duty {
+                        assert!(period > 1.0, "{kind:?} pulses too fast to read");
+                        assert!(
+                            (0.1..0.75).contains(&on),
+                            "{kind:?} duty {on} leaves no safe window"
+                        );
+                    }
+                }
             }
         }
     }
 
     #[test]
-    fn building_a_world_twice_with_one_seed_is_deterministic() {
+    fn healing_terrain_stays_a_sanctum_signature() {
         for kind in EnvKind::ALL {
-            let a = kind.build(&mut Rng::seeded(7));
-            let b = kind.build(&mut Rng::seeded(7));
-            assert_eq!(a.props.len(), b.props.len(), "{kind:?} prop count drifted");
-            assert_eq!(a.zones, b.zones, "{kind:?} zones drifted");
-            for (pa, pb) in a.props.iter().zip(b.props.iter()) {
-                assert!((pa.pos - pb.pos).length() < 1e-6);
-            }
-        }
-    }
-
-    #[test]
-    fn different_seeds_vary_the_scatter() {
-        // Only worlds with random scatter need to differ; all five have some.
-        for kind in EnvKind::ALL {
-            let a = kind.build(&mut Rng::seeded(1));
-            let b = kind.build(&mut Rng::seeded(2));
-            let same = a.props.len() == b.props.len()
-                && a.props
+            let healing = survey(kind, 2).iter().any(|(_, c)| {
+                c.hazards
                     .iter()
-                    .zip(b.props.iter())
-                    .all(|(x, y)| (x.pos - y.pos).length() < 1e-6);
-            assert!(!same, "{kind:?} ignores its seed entirely");
+                    .any(|h| h.kind == HazardKind::Font && h.dps < 0.0)
+            });
+            assert_eq!(healing, kind == EnvKind::Arcane, "{kind:?} healing terrain");
         }
     }
 
     #[test]
     fn tall_props_block_shots_and_flat_ones_do_not() {
-        for (kind, scene) in build_all() {
-            for prop in &scene.props {
-                if prop.collider.is_none() {
-                    continue;
+        for kind in EnvKind::ALL {
+            for (_, content) in survey(kind, 2) {
+                for prop in &content.props {
+                    if prop.collider.is_some() && prop.blocks_shots {
+                        assert!(
+                            prop.height >= 0.75,
+                            "{kind:?} has a {}-high prop stopping shots",
+                            prop.height
+                        );
+                    }
                 }
-                if prop.blocks_shots {
-                    assert!(
-                        prop.height >= 0.75,
-                        "{kind:?} has a {}-high prop stopping shots",
-                        prop.height
-                    );
+            }
+        }
+    }
+
+    #[test]
+    fn territory_appears_regularly_but_not_everywhere() {
+        for kind in EnvKind::ALL {
+            let chunks = survey(kind, 3);
+            let with_zones = chunks.iter().filter(|(_, c)| !c.zones.is_empty()).count();
+            assert!(
+                with_zones >= 8,
+                "{kind:?}: only {with_zones} of {} chunks have territory",
+                chunks.len()
+            );
+            assert!(
+                with_zones < chunks.len(),
+                "{kind:?}: territory in every single chunk is not a choice"
+            );
+        }
+    }
+
+    #[test]
+    fn home_is_peaceful_and_the_far_country_is_not() {
+        for kind in EnvKind::ALL {
+            let mut near_hostiles = 0;
+            let mut far_hostiles = 0;
+            for (coord, content) in survey(kind, 6) {
+                let hostile = content.forts.len() + content.spawners.len();
+                if (chunk_min(coord) + CHUNK_SIZE * 0.5).length() < HOME_PEACE {
+                    near_hostiles += hostile;
+                } else {
+                    far_hostiles += hostile;
                 }
+            }
+            assert_eq!(near_hostiles, 0, "{kind:?} put a nest on the doorstep");
+            assert!(
+                far_hostiles > 4,
+                "{kind:?} generated only {far_hostiles} hostile sites in the far country"
+            );
+        }
+    }
+
+    #[test]
+    fn forts_arrive_with_an_escort_of_nests() {
+        // A fort that starts alone spends the first minute bootstrapping while
+        // the player watches, which is not a fight.
+        for kind in EnvKind::ALL {
+            let chunks = survey(kind, 6);
+            let with_forts: Vec<_> = chunks.iter().filter(|(_, c)| !c.forts.is_empty()).collect();
+            assert!(!with_forts.is_empty(), "{kind:?} generated no forts at all");
+            for (coord, content) in with_forts {
+                assert!(
+                    content.spawners.len() >= content.forts.len(),
+                    "{kind:?} chunk {coord} has a fort with no nests"
+                );
             }
         }
     }
@@ -835,7 +962,6 @@ mod tests {
             .solid(ColliderShape::Circle(1.0), 0.2);
         assert!(!low.blocks_shots, "flat props should not");
 
-        let forced = solid.passthrough();
-        assert!(!forced.blocks_shots);
+        assert!(!solid.passthrough().blocks_shots);
     }
 }

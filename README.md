@@ -92,12 +92,12 @@ The game is driven entirely by keypresses, which makes it awkward to verify
 without a human. These environment variables make it scriptable:
 
 ```sh
-DFFA_ARENA=arcane      # start in a named world
-DFFA_AUTOSTART=1       # skip the menu
-DFFA_UNLOCK=1          # every subsystem online immediately
-DFFA_SPEED=4           # run the simulation at 4x
-DFFA_SHOT=out.png@12   # screenshot after 12 seconds
-DFFA_EXIT=15           # quit after 15 seconds
+HOLDFAST_ARENA=arcane      # start in a named world
+HOLDFAST_AUTOSTART=1       # skip the menu
+HOLDFAST_UNLOCK=1          # every subsystem online immediately
+HOLDFAST_SPEED=4           # run the simulation at 4x
+HOLDFAST_SHOT=out.png@12   # screenshot after 12 seconds
+HOLDFAST_EXIT=15           # quit after 15 seconds
 ```
 
 ```sh

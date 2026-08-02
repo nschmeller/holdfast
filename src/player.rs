@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 
-use crate::arena::{ArenaBounds, Gust, Hazard, ObstacleField, Spotlight};
+use crate::arena::{Gust, Hazard, ObstacleField};
 use crate::art::GameArt;
 use crate::combat::Damageable;
 use crate::common::{
@@ -237,11 +237,34 @@ fn read_move_input(
     }
 }
 
+/// Slowest a crowd can make the player, as a fraction of full speed.
+///
+/// The floor is the whole point. Bodies that block movement outright turn a
+/// swarm into a cage: the player walks in, the ring closes, and they die
+/// without ever having made a mistake they could have avoided. Shoving through
+/// a mass of monsters has to be *expensive* - slow enough that walking into one
+/// is a real decision - but it must always be possible.
+const CROWD_FLOOR: f32 = 0.42;
+
+/// How much each overlapping body drags on the player.
+const CROWD_DRAG: f32 = 0.16;
+
+/// How far past the player's own radius to look for bodies pressing on them.
+/// Comfortably wider than the largest monster, so none is missed.
+const CROWD_REACH: f32 = 2.5;
+
+/// Speed multiplier for a player with `bodies` monsters pressed against them.
+#[must_use]
+pub fn crowd_speed(bodies: u32) -> f32 {
+    (1.0 / (1.0 + CROWD_DRAG * bodies as f32)).max(CROWD_FLOOR)
+}
+
 fn move_player(
     time: Res<Time>,
     stats: Res<PlayerStats>,
-    bounds: Res<ArenaBounds>,
     obstacles: Res<ObstacleField>,
+    chasms: Res<crate::world::Chasms>,
+    grid: Res<crate::combat::EnemyGrid>,
     gust: Res<Gust>,
     camera_yaw: Res<crate::camera::CameraRig>,
     mut q: Query<
@@ -268,7 +291,16 @@ fn move_player(
             intent.move_dir.x * sin + intent.move_dir.y * cos,
         );
 
-        let speed = stats.move_speed * status.speed_mult();
+        // Wading through a crowd. Counted rather than resolved as collision:
+        // the player is never displaced by a monster, only slowed by one.
+        let mut pressing = 0u32;
+        grid.for_each_near(body.pos, body.radius + CROWD_REACH, |other| {
+            if other.pos.distance(body.pos) <= body.radius + other.radius {
+                pressing += 1;
+            }
+        });
+
+        let speed = stats.move_speed * status.speed_mult() * crowd_speed(pressing);
 
         if dash.active > 0.0 {
             dash.active -= dt;
@@ -289,9 +321,8 @@ fn move_player(
             body.vel += gust.dir * gust.strength * 0.4;
         }
 
-        // Integrate, then depenetrate, then clamp. Order matters: clamping last
-        // guarantees the player can never be pushed off the arena by a prop
-        // sitting flush against the rim.
+        // Integrate, then depenetrate against the scenery. Monsters are
+        // deliberately absent from that second step - see `crowd_speed`.
         // Read through the `Mut` before writing: a compound assignment to
         // `body.pos` would hold a mutable borrow across the reads of `vel`.
         let radius = body.radius;
@@ -299,7 +330,7 @@ fn move_player(
         body.pos += step;
         body.impulse = damp_vec2(body.impulse, Vec2::ZERO, 9.0, dt);
         body.pos = obstacles.resolve(body.pos, radius);
-        body.pos = bounds.clamp(body.pos, radius);
+        body.pos = chasms.push_out(body.pos, radius);
 
         // Face the direction of travel; a little lean sells the momentum.
         if world_dir.length_squared() > 0.01 {
@@ -362,16 +393,16 @@ fn apply_hazards_to_player(
 fn player_regen(
     time: Res<Time>,
     stats: Res<PlayerStats>,
-    spotlight: Res<Spotlight>,
+    pools: Res<crate::world::LightPools>,
     mut q: Query<(&mut Health, &Body), With<Player>>,
 ) {
     let dt = time.delta_secs();
     for (mut health, body) in &mut q {
         health.invuln = (health.invuln - dt).max(0.0);
         let mut rate = stats.regen;
-        // Standing in the light heals faster: a reason to contest the spot the
-        // director is already aiming elites at.
-        if spotlight.contains(body.pos) {
+        // Standing in a pool of light heals faster: a reason to contest the
+        // bright ground the director is already aiming elites at.
+        if pools.contains(body.pos) {
             rate += 1.4;
         }
         if health.current > 0.0 {

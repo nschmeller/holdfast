@@ -5,199 +5,196 @@
 
 use bevy::prelude::*;
 
-use super::{HazardSpec, PropSpec, SceneData, Surface};
-use crate::arena::{ColliderShape, Gust, HazardKind, Spotlight};
+use super::{ChunkCtx, EnvLook, HazardSpec, PropSpec, Surface};
+use crate::arena::{ColliderShape, Gust, HazardKind};
 use crate::meshgen::{
     GroundCell, MeshWeld, at, at_rot_x, at_rot_y, at_rot_z, cone, cube, cylinder, cylinder_hi,
     ground_grid, noise_soft, sphere, torus,
 };
 use crate::palette as pal;
 use crate::rng::Rng;
+use crate::world::CHUNK_SIZE;
 
-const HALF_X: f32 = 20.0;
-const HALF_Z: f32 = 13.0;
+/// Half a chunk, which is the extent every floor mesh is authored over.
+const HALF: f32 = CHUNK_SIZE * 0.5;
 
-pub fn build(rng: &mut Rng) -> SceneData {
-    let mut s = SceneData::new(HALF_X, HALF_Z, floor());
+pub(super) fn look() -> EnvLook {
+    EnvLook {
+        sky: Color::srgb(0.012, 0.012, 0.02),
+        ambient: Color::srgb(0.36, 0.42, 0.7),
+        ambient_brightness: 210.0,
+        sun_color: Color::srgb(1.0, 0.86, 0.66),
+        sun_illuminance: 2100.0,
+        sun_dir: Vec3::new(-0.55, -1.0, 0.3),
+        // The USB fan sweeps a lane, shoving everything towards -X.
+        gust: Gust {
+            interval: 12.0,
+            duration: 2.8,
+            cooldown: 10.0,
+            remaining: 10.0,
+            blowing: false,
+            dir: Vec2::new(-1.0, 0.0),
+            lane_center_z: 6.5,
+            lane_half_width: 4.0,
+            strength: 12.0,
+            enabled: true,
+            label: "USB FAN",
+        },
+    }
+}
 
-    s.sky = Color::srgb(0.012, 0.012, 0.02);
-    s.ambient = Color::srgb(0.36, 0.42, 0.7);
-    s.ambient_brightness = 210.0;
-    s.sun_color = Color::srgb(1.0, 0.86, 0.66);
-    s.sun_illuminance = 2100.0;
-    s.sun_dir = Vec3::new(-0.55, -1.0, 0.3);
-
-    // The USB fan sweeps the near lane, shoving everything towards -X.
-    s.gust = Gust {
-        interval: 12.0,
-        duration: 2.8,
-        cooldown: 10.0,
-        remaining: 10.0,
-        blowing: false,
-        dir: Vec2::new(-1.0, 0.0),
-        lane_center_z: 6.5,
-        lane_half_width: 4.0,
-        strength: 12.0,
-        enabled: true,
-        label: "USB FAN",
-    };
-
-    s.spotlight = Spotlight {
-        center: Vec2::new(12.5, -8.0),
-        radius: 6.0,
-        damage_bonus: 0.25,
-        enabled: true,
-        label: "LAMPLIGHT",
-    };
-
-    rim(&mut s);
-
-    // -- the big furniture -------------------------------------------------
-    s.prop(
-        PropSpec::new(monitor(), Vec2::new(-5.0, -11.0)).solid(ColliderShape::rect(3.6, 1.0), 3.0),
-    );
-    s.light(
-        Vec3::new(-5.0, 3.2, -9.0),
-        pal::SCREEN_GLOW,
-        260_000.0,
-        26.0,
-    );
-
-    s.prop(
-        PropSpec::new(desk_lamp(), Vec2::new(14.0, -10.0)).solid(ColliderShape::Circle(1.3), 2.4),
-    );
-    s.light(Vec3::new(13.2, 5.0, -9.2), pal::LAMP_GLOW, 700_000.0, 34.0);
-
-    s.prop(
-        PropSpec::new(keyboard(), Vec2::new(-1.0, 8.4)).solid(ColliderShape::rect(6.6, 2.3), 0.55),
-    );
-
-    // Mousepad: pure decoration, nothing collides with it.
-    s.prop(
-        PropSpec::new(mousepad(), Vec2::new(12.0, 6.0))
-            .raised(0.012)
-            .surface(Surface::Matte),
-    );
-
-    // -- mid clutter -------------------------------------------------------
-    s.prop(
-        PropSpec::new(coffee_mug(), Vec2::new(-13.5, 2.0)).solid(ColliderShape::Circle(1.15), 1.7),
-    );
-    s.prop(
-        PropSpec::new(pen_holder(), Vec2::new(7.0, -6.5)).solid(ColliderShape::Circle(0.95), 2.2),
-    );
-    s.prop(
-        PropSpec::new(book_stack(), Vec2::new(-16.0, -6.0))
-            .rot(12.0)
-            .solid(ColliderShape::rect_rot(2.4, 1.7, 12.0), 1.1),
-    );
-    s.prop(
-        PropSpec::new(headphones(), Vec2::new(-11.5, -10.0))
-            .rot(-24.0)
-            .solid(ColliderShape::Circle(1.9), 1.0),
-    );
-    s.prop(
-        PropSpec::new(plant_pot(), Vec2::new(17.5, -2.0)).solid(ColliderShape::Circle(1.25), 2.6),
-    );
-    s.prop(
-        PropSpec::new(tape_dispenser(), Vec2::new(-17.0, 9.0))
-            .rot(-18.0)
-            .solid(ColliderShape::rect_rot(1.5, 0.9, -18.0), 1.2),
-    );
-    s.prop(
-        PropSpec::new(stapler_prop(), Vec2::new(-7.5, 4.0))
-            .rot(64.0)
-            .solid(ColliderShape::rect_rot(1.7, 0.6, 64.0), 0.8),
-    );
-    s.prop(
-        PropSpec::new(cable_coil(), Vec2::new(17.0, 8.5))
-            .solid(ColliderShape::Circle(1.7), 0.35)
-            .passthrough(),
-    );
-    s.prop(
-        PropSpec::new(rubiks_cube(), Vec2::new(2.5, -6.0))
-            .rot(22.0)
-            .solid(ColliderShape::rect_rot(0.72, 0.72, 22.0), 1.4),
-    );
-    s.prop(
-        PropSpec::new(calculator(), Vec2::new(-19.0, -0.5))
-            .rot(84.0)
-            .solid(ColliderShape::rect_rot(1.5, 0.9, 84.0), 0.3)
-            .passthrough(),
-    );
-
-    // -- small scatter -----------------------------------------------------
-    s.prop(PropSpec::new(sticky_pad(pal::STICKY_YELLOW), Vec2::new(4.0, -2.5)).rot(-9.0));
-    s.prop(PropSpec::new(sticky_pad(pal::STICKY_PINK), Vec2::new(-3.0, -8.0)).rot(31.0));
-    s.prop(PropSpec::new(sticky_pad(pal::STICKY_CYAN), Vec2::new(9.5, 11.0)).rot(-40.0));
-    s.prop(
-        PropSpec::new(eraser(), Vec2::new(-2.5, 4.5))
-            .rot(41.0)
-            .solid(ColliderShape::rect_rot(0.55, 0.32, 41.0), 0.3)
-            .passthrough(),
-    );
-    s.prop(
-        PropSpec::new(usb_stick(), Vec2::new(10.5, 1.5))
-            .rot(-63.0)
-            .solid(ColliderShape::rect_rot(0.55, 0.24, -63.0), 0.25)
-            .passthrough(),
-    );
-
-    for _ in 0..14 {
-        let p = Vec2::new(
-            rng.range(-HALF_X + 2.0, HALF_X - 2.0),
-            rng.range(-HALF_Z + 2.0, HALF_Z - 2.0),
-        );
-        // Keep the middle clear so the opening minute is never a maze.
-        if p.length() < 5.0 {
-            continue;
-        }
-        s.prop(
-            PropSpec::new(loose_paperclip(), p)
-                .rot(rng.range(0.0, 360.0))
-                .surface(Surface::Metal),
+pub(super) fn chunk(c: &mut ChunkCtx) {
+    // -- landmarks: rare, large, and worth walking towards -----------------
+    if c.feature(0.10) {
+        let p = c.spot(6.0);
+        c.prop(PropSpec::new(monitor(), p).solid(ColliderShape::rect(3.6, 1.0), 3.0));
+        c.light(
+            Vec3::new(p.x, 3.2, p.y + 2.0),
+            pal::SCREEN_GLOW,
+            260_000.0,
+            26.0,
         );
     }
 
-    // -- hazards -----------------------------------------------------------
-    // A cold coffee ring by the mug: slows, does not burn.
-    s.hazards.push(HazardSpec {
-        pos: Vec2::new(-11.0, 4.6),
-        radius: 2.6,
-        kind: HazardKind::Sticky,
-        dps: 0.0,
-        slow: 0.5,
-        duty: None,
-    });
-    // Eraser shavings.
-    s.hazards.push(HazardSpec {
-        pos: Vec2::new(-1.0, 5.6),
-        radius: 1.9,
-        kind: HazardKind::Sticky,
-        dps: 0.0,
-        slow: 0.65,
-        duty: None,
-    });
+    if c.feature(0.12) {
+        let p = c.spot(5.0);
+        c.prop(PropSpec::new(desk_lamp(), p).solid(ColliderShape::Circle(1.3), 2.4));
+        c.light(
+            Vec3::new(p.x - 0.8, 5.0, p.y + 0.8),
+            pal::LAMP_GLOW,
+            700_000.0,
+            34.0,
+        );
+        // Lamplight is the world's damage-bonus ground: bright, useful, and
+        // exactly where everything else can see you.
+        c.pool(p + Vec2::new(-0.5, 1.0), 6.0, 0.25);
+    }
 
-    // -- territory ---------------------------------------------------------
-    // Placed at the genuinely contested spots: under the lamp, behind the
-    // monitor, in the keyboard's shadow, and out on the exposed flank.
-    s.zones = vec![
-        Vec2::new(12.0, -7.0),
-        Vec2::new(-6.0, -7.5),
-        Vec2::new(-1.0, 4.0),
-        Vec2::new(-15.5, 8.0),
-    ];
+    if c.feature(0.11) {
+        let p = c.spot(7.0);
+        c.prop(PropSpec::new(keyboard(), p).solid(ColliderShape::rect(6.6, 2.3), 0.55));
+        // A mousepad usually sits alongside. Pure decoration.
+        let pad = p + Vec2::new(c.rng.range(8.0, 11.0), c.rng.range(-2.0, 2.0));
+        c.prop(
+            PropSpec::new(mousepad(), pad)
+                .raised(0.012)
+                .surface(Surface::Matte),
+        );
+    }
 
-    s
+    // The gap between two desks. Everything that falls in is gone, which is
+    // what keeps knockback lethal now that the world has no edge.
+    if c.feature(0.09) {
+        let p = c.spot(7.0);
+        let r = c.rng.range(2.6, 4.4);
+        c.chasm(p, r);
+    }
+
+    // -- mid clutter: the working furniture --------------------------------
+    for _ in 0..c.rng.below(4) + 2 {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        match c.rng.below(9) {
+            0 => c.prop(PropSpec::new(coffee_mug(), p).solid(ColliderShape::Circle(1.15), 1.7)),
+            1 => c.prop(PropSpec::new(pen_holder(), p).solid(ColliderShape::Circle(0.95), 2.2)),
+            2 => c.prop(
+                PropSpec::new(book_stack(), p)
+                    .rot(deg)
+                    .solid(ColliderShape::rect_rot(2.4, 1.7, deg), 1.1),
+            ),
+            3 => c.prop(
+                PropSpec::new(headphones(), p)
+                    .rot(deg)
+                    .solid(ColliderShape::Circle(1.9), 1.0),
+            ),
+            4 => c.prop(PropSpec::new(plant_pot(), p).solid(ColliderShape::Circle(1.25), 2.6)),
+            5 => c.prop(
+                PropSpec::new(tape_dispenser(), p)
+                    .rot(deg)
+                    .solid(ColliderShape::rect_rot(1.5, 0.9, deg), 1.2),
+            ),
+            6 => c.prop(
+                PropSpec::new(stapler_prop(), p)
+                    .rot(deg)
+                    .solid(ColliderShape::rect_rot(1.7, 0.6, deg), 0.8),
+            ),
+            7 => c.prop(
+                PropSpec::new(cable_coil(), p)
+                    .solid(ColliderShape::Circle(1.7), 0.35)
+                    .passthrough(),
+            ),
+            _ => c.prop(
+                PropSpec::new(rubiks_cube(), p)
+                    .rot(deg)
+                    .solid(ColliderShape::rect_rot(0.72, 0.72, deg), 1.4),
+            ),
+        };
+    }
+
+    if c.feature(0.3) {
+        let p = c.spot(3.0);
+        let deg = c.rng.range(0.0, 360.0);
+        c.prop(
+            PropSpec::new(calculator(), p)
+                .rot(deg)
+                .solid(ColliderShape::rect_rot(1.5, 0.9, deg), 0.3)
+                .passthrough(),
+        );
+    }
+
+    // -- small scatter, all of it walkable ---------------------------------
+    for _ in 0..c.rng.below(7) + 5 {
+        let p = c.spot(1.0);
+        let deg = c.rng.range(0.0, 360.0);
+        match c.rng.below(6) {
+            0 => c.prop(PropSpec::new(sticky_pad(pal::STICKY_YELLOW), p).rot(deg)),
+            1 => c.prop(PropSpec::new(sticky_pad(pal::STICKY_PINK), p).rot(deg)),
+            2 => c.prop(PropSpec::new(sticky_pad(pal::STICKY_CYAN), p).rot(deg)),
+            3 => c.prop(
+                PropSpec::new(eraser(), p)
+                    .rot(deg)
+                    .solid(ColliderShape::rect_rot(0.55, 0.32, deg), 0.3)
+                    .passthrough(),
+            ),
+            4 => c.prop(
+                PropSpec::new(usb_stick(), p)
+                    .rot(deg)
+                    .solid(ColliderShape::rect_rot(0.55, 0.24, deg), 0.25)
+                    .passthrough(),
+            ),
+            _ => c.prop(
+                PropSpec::new(loose_paperclip(), p)
+                    .rot(deg)
+                    .surface(Surface::Metal),
+            ),
+        };
+    }
+
+    // -- hazards: spills and shavings, sticky rather than lethal -----------
+    if c.feature(0.26) {
+        let p = c.spot(4.0);
+        let radius = c.rng.range(1.8, 2.8);
+        let slow = c.rng.range(0.45, 0.65);
+        c.hazard(HazardSpec {
+            pos: p,
+            radius,
+            kind: HazardKind::Sticky,
+            dps: 0.0,
+            slow,
+            duty: None,
+        });
+    }
 }
 
 /// Wood: planks running along X, with grain streaks and a warm falloff towards
 /// the edges so the middle of the desk reads as the lit area.
-pub(super) fn floor() -> Mesh {
-    ground_grid(HALF_X, HALF_Z, 0.9, |_, _, c| {
+pub(super) fn floor(origin: Vec2, salt: u32) -> Mesh {
+    ground_grid(HALF, HALF, 0.9, |_, _, local| {
+        // Sample in world space, not chunk space: two chunks meeting at a seam
+        // have to agree about the plank they share.
+        let c = origin + local;
         let plank = (c.y / 3.2).floor();
-        let grain = noise_soft(c.x * 0.7, plank * 9.3, 11);
+        let grain = noise_soft(c.x * 0.7, plank * 9.3, 0x0B ^ salt);
         let seam = ((c.y / 3.2).fract().abs() - 0.5).abs() < 0.06;
 
         let base = if seam {
@@ -208,35 +205,13 @@ pub(super) fn floor() -> Mesh {
             pal::DESK_WOOD
         };
 
-        // Subtle radial warmth towards the lamp corner.
-        let warmth = 1.0 - (c - Vec2::new(12.0, -8.0)).length() / 46.0;
+        // Slow warmth variation, so the endless desk is not endlessly uniform.
+        let warmth = noise_soft(c.x * 0.02, c.y * 0.02, 0x4D ^ salt);
         GroundCell {
             color: pal::shade(base, 0.82 + grain * 0.2 + warmth * 0.18),
             height: 0.0,
         }
     })
-}
-
-/// The raised lip around the desk. Visual only: the player is already held
-/// inside by the arena bounds, and giving it a collider would just create a
-/// sticky one-unit gutter around the whole playfield.
-pub(super) fn rim(s: &mut SceneData) {
-    let mut b = MeshWeld::new();
-    let t = 0.7;
-    let h = 0.5;
-    for (cx, cz, sx, sz) in [
-        (0.0, -HALF_Z - t * 0.5, HALF_X + t, t),
-        (0.0, HALF_Z + t * 0.5, HALF_X + t, t),
-        (-HALF_X - t * 0.5, 0.0, t, HALF_Z + t),
-        (HALF_X + t * 0.5, 0.0, t, HALF_Z + t),
-    ] {
-        b.add(
-            &cube(sx * 2.0, h, sz * 2.0),
-            at(cx, h * 0.5 - 0.05, cz),
-            pal::DESK_EDGE,
-        );
-    }
-    s.prop(PropSpec::new(b.build(), Vec2::ZERO));
 }
 
 // -- props ------------------------------------------------------------------

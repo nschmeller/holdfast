@@ -14,6 +14,7 @@ pub mod common;
 pub mod devtools;
 pub mod enemy;
 pub mod environments;
+pub mod fog;
 pub mod fx;
 pub mod hud;
 pub mod meshgen;
@@ -28,6 +29,7 @@ pub mod rng;
 pub mod screens;
 pub mod threat;
 pub mod weapons;
+pub mod world;
 
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
@@ -165,12 +167,14 @@ pub fn run() {
         audio::AudioFxPlugin,
         camera::CameraPlugin,
         environments::ArenaPlugin,
+        world::WorldPlugin,
+        fog::FogPlugin,
         player::PlayerPlugin,
         enemy::EnemyPlugin,
-        weapons::WeaponPlugin,
-        combat::CombatPlugin,
     ));
     app.add_plugins((
+        weapons::WeaponPlugin,
+        combat::CombatPlugin,
         allies::AlliesPlugin,
         pickups::PickupPlugin,
         progress::ProgressPlugin,

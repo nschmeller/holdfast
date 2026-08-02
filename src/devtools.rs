@@ -1,23 +1,23 @@
 //! Environment-variable driven development harness.
 //!
-//! Entirely inert unless one of the `DFFA_*` variables is set, so it costs a
+//! Entirely inert unless one of the `HOLDFAST_*` variables is set, so it costs a
 //! branch at startup and nothing else. It exists because a game whose whole
 //! surface is "press keys and look at it" is otherwise impossible to verify
 //! without a human at the keyboard.
 //!
 //! | Variable | Effect |
 //! | --- | --- |
-//! | `DFFA_ARENA=forest` | Start in a named arena |
-//! | `DFFA_AUTOSTART=1` | Skip the menu |
-//! | `DFFA_SHOT=out.png@12` | Screenshot after 12 seconds |
-//! | `DFFA_EXIT=20` | Quit after 20 seconds |
-//! | `DFFA_SPEED=4` | Run the simulation at 4x |
-//! | `DFFA_UNLOCK=1` | Turn on every subsystem immediately |
-//! | `DFFA_AUTOPICK=1` | Auto-choose upgrade cards so a run never stalls |
-//! | `DFFA_MONITOR=1` | Open the window centred on monitor 1 |
-//! | `DFFA_MONITOR_NAME=DELL` | Pick the monitor by name instead of by index |
-//! | `DFFA_TILE=0:2` | Take slot 0 of 2 side-by-side slots on that monitor |
-//! | `DFFA_RES=960x600` | Override the window size |
+//! | `HOLDFAST_ARENA=forest` | Start in a named arena |
+//! | `HOLDFAST_AUTOSTART=1` | Skip the menu |
+//! | `HOLDFAST_SHOT=out.png@12` | Screenshot after 12 seconds |
+//! | `HOLDFAST_EXIT=20` | Quit after 20 seconds |
+//! | `HOLDFAST_SPEED=4` | Run the simulation at 4x |
+//! | `HOLDFAST_UNLOCK=1` | Turn on every subsystem immediately |
+//! | `HOLDFAST_AUTOPICK=1` | Auto-choose upgrade cards so a run never stalls |
+//! | `HOLDFAST_MONITOR=1` | Open the window centred on monitor 1 |
+//! | `HOLDFAST_MONITOR_NAME=DELL` | Pick the monitor by name instead of by index |
+//! | `HOLDFAST_TILE=0:2` | Take slot 0 of 2 side-by-side slots on that monitor |
+//! | `HOLDFAST_RES=960x600` | Override the window size |
 //!
 //! See `pilot` for the other half of the harness: a live command channel that
 //! lets an outside process play the game rather than merely observe it.
@@ -26,7 +26,7 @@ use std::env;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use bevy::window::{Monitor, MonitorSelection, PrimaryMonitor, WindowPosition, WindowResolution};
+use bevy::window::{Monitor, PrimaryMonitor, WindowPosition, WindowResolution};
 
 use crate::AppState;
 use crate::environments::EnvKind;
@@ -55,7 +55,7 @@ pub struct DevConfig {
 impl DevConfig {
     fn from_env() -> Self {
         let arena =
-            env::var("DFFA_ARENA")
+            env::var("HOLDFAST_ARENA")
                 .ok()
                 .and_then(|v| match v.to_ascii_lowercase().as_str() {
                     "desk" => Some(EnvKind::Desk),
@@ -64,13 +64,13 @@ impl DevConfig {
                     "grid" | "future" => Some(EnvKind::Grid),
                     "arcane" | "magic" => Some(EnvKind::Arcane),
                     other => {
-                        warn!("DFFA_ARENA: unknown arena {other:?}");
+                        warn!("HOLDFAST_ARENA: unknown arena {other:?}");
                         None
                     }
                 });
 
         // `name.png@seconds`, with the delay optional.
-        let shot = env::var("DFFA_SHOT").ok().map(|v| {
+        let shot = env::var("HOLDFAST_SHOT").ok().map(|v| {
             v.split_once('@').map_or_else(
                 || (v.clone(), 6.0),
                 |(path, secs)| (path.to_string(), secs.parse().unwrap_or(6.0)),
@@ -79,16 +79,20 @@ impl DevConfig {
 
         Self {
             arena,
-            autostart: truthy("DFFA_AUTOSTART"),
+            autostart: truthy("HOLDFAST_AUTOSTART"),
             shot,
-            exit_after: env::var("DFFA_EXIT").ok().and_then(|v| v.parse().ok()),
-            speed: env::var("DFFA_SPEED").ok().and_then(|v| v.parse().ok()),
-            unlock_all: truthy("DFFA_UNLOCK"),
-            autopick: truthy("DFFA_AUTOPICK"),
-            monitor: env::var("DFFA_MONITOR").ok().and_then(|v| v.parse().ok()),
-            tile: env::var("DFFA_TILE").ok().and_then(|v| pair(&v, ':')),
-            resolution: env::var("DFFA_RES").ok().and_then(|v| pair(&v, 'x')),
-            monitor_name: env::var("DFFA_MONITOR_NAME").ok().filter(|v| !v.is_empty()),
+            exit_after: env::var("HOLDFAST_EXIT").ok().and_then(|v| v.parse().ok()),
+            speed: env::var("HOLDFAST_SPEED").ok().and_then(|v| v.parse().ok()),
+            unlock_all: truthy("HOLDFAST_UNLOCK"),
+            autopick: truthy("HOLDFAST_AUTOPICK"),
+            monitor: env::var("HOLDFAST_MONITOR")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            tile: env::var("HOLDFAST_TILE").ok().and_then(|v| pair(&v, ':')),
+            resolution: env::var("HOLDFAST_RES").ok().and_then(|v| pair(&v, 'x')),
+            monitor_name: env::var("HOLDFAST_MONITOR_NAME")
+                .ok()
+                .filter(|v| !v.is_empty()),
         }
     }
 
@@ -193,15 +197,11 @@ fn place_window(
     config: Res<DevConfig>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
+    let Some((width, height)) = config.resolution else {
+        return;
+    };
     for mut window in &mut windows {
-        if let Some((width, height)) = config.resolution {
-            window.resolution = WindowResolution::new(width.max(320), height.max(240));
-        }
-        if let Some(index) = config.monitor
-            && config.tile.is_none()
-        {
-            window.position = WindowPosition::Centered(MonitorSelection::Index(index));
-        }
+        window.resolution = WindowResolution::new(width.max(320), height.max(240));
     }
 }
 
@@ -220,7 +220,7 @@ fn tile_window(
     monitors: Query<(Entity, &Monitor, Option<&PrimaryMonitor>)>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    const SIDE: i32 = 32;
+    const SIDE: i32 = 16;
     /// Share of the monitor's height a tiled window may use.
     ///
     /// The remainder becomes slack above and below, because the window is
@@ -230,10 +230,16 @@ fn tile_window(
     /// exactly puts the bottom of the game off the bottom of the display; the
     /// window is centred vertically instead, so a placement that lands a
     /// hundred pixels out is still entirely on screen.
-    const HEIGHT_SHARE: f32 = 0.62;
+    const HEIGHT_SHARE: f32 = 0.82;
 
-    let Some((slot, of)) = config.tile else {
-        return;
+    // A monitor without a tile is simply the only tile: one code path decides
+    // where a window goes. The alternative - letting `MonitorSelection::Index`
+    // handle the untiled case - silently used a *different* monitor ordering
+    // and opened the game on the laptop instead of the external display.
+    let (slot, of) = match (config.tile, config.monitor, &config.monitor_name) {
+        (Some(tile), ..) => tile,
+        (None, None, None) => return,
+        _ => (0, 1),
     };
     if placed.0 || monitors.is_empty() {
         return;
@@ -285,11 +291,22 @@ fn tile_window(
     let screen_h = i32::try_from(monitor.physical_height).unwrap_or(1080);
 
     let column = (screen_w - SIDE * 2) / of;
-    let width = (column - SIDE).max(320);
+    let width = config
+        .resolution
+        .and_then(|(w, _)| i32::try_from(w).ok())
+        .unwrap_or(column - SIDE)
+        .min(column - SIDE)
+        .max(320);
+    // A single tile is centred rather than pinned to the left edge.
+    let gutter = if of == 1 {
+        (screen_w - width) / 2
+    } else {
+        SIDE
+    };
     // Cap at 9:16 of the width too, so a wide slot does not become a letterbox
     // the fixed overlook camera looks silly in.
     let budget = (screen_h as f32 * HEIGHT_SHARE) as i32;
-    let height = budget.min(width * 9 / 16).max(240);
+    let height = budget.min(width * 3 / 4).max(240);
     let top = monitor.physical_position.y + (screen_h - height) / 2;
 
     for mut window in &mut windows {
@@ -298,14 +315,14 @@ fn tile_window(
             u32::try_from(height).unwrap_or(480),
         );
         window.position = WindowPosition::At(IVec2::new(
-            monitor.physical_position.x + SIDE + column * slot,
+            monitor.physical_position.x + gutter + column * slot,
             top,
         ));
     }
     placed.0 = true;
     info!(
         "devtools: tiled into slot {slot} of {of}: {width}x{height} at ({}, {top}) on a {screen_w}x{screen_h} monitor",
-        monitor.physical_position.x + SIDE + column * slot
+        monitor.physical_position.x + gutter + column * slot
     );
 }
 

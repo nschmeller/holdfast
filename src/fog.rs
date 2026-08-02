@@ -19,7 +19,7 @@ use bevy::prelude::*;
 
 use crate::common::Body;
 use crate::player::Player;
-use crate::world::{CHUNK_SIZE, STREAM_RADIUS, chunk_of};
+use crate::world::{CHUNK_SIZE, STREAM_RADIUS};
 use crate::{AppState, GameSet, RunSetup};
 
 /// Side length of one fog cell. Small enough that the revealed area reads as a
@@ -109,6 +109,7 @@ impl FogOccluded {
 #[derive(Component, Debug)]
 struct FogOverlay;
 
+#[derive(Debug)]
 pub struct FogPlugin;
 
 impl Plugin for FogPlugin {
@@ -193,7 +194,7 @@ fn rebuild_overlay(
     art: Res<crate::art::GameArt>,
     mut meshes: ResMut<Assets<Mesh>>,
     player: Query<&Body, With<Player>>,
-    existing: Query<&Mesh3d, With<FogOverlay>>,
+    existing: Query<(Entity, &Mesh3d), With<FogOverlay>>,
 ) {
     if !fog.dirty {
         return;
@@ -258,11 +259,11 @@ fn rebuild_overlay(
 
     let handle = meshes.add(mesh);
 
-    if let Ok(current) = existing.single() {
+    if let Ok((entity, current)) = existing.single() {
         // Drop the previous mesh explicitly; the overlay is rebuilt several
         // times a second and orphaned meshes would accumulate fast.
         meshes.remove(&current.0);
-        commands.entity(existing.single_inner()).insert(Mesh3d(handle));
+        commands.entity(entity).insert(Mesh3d(handle));
     } else {
         commands.spawn((
             FogOverlay,
@@ -276,10 +277,7 @@ fn rebuild_overlay(
 }
 
 /// Hide whatever the fog covers.
-fn apply_fog_visibility(
-    fog: Res<FogMap>,
-    mut q: Query<(&Body, &FogOccluded, &mut Visibility)>,
-) {
+fn apply_fog_visibility(fog: Res<FogMap>, mut q: Query<(&Body, &FogOccluded, &mut Visibility)>) {
     for (body, occlusion, mut visibility) in &mut q {
         let shown = if occlusion.require_sight {
             fog.is_visible(body.pos)
