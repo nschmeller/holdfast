@@ -1,0 +1,38 @@
+[package]
+name = "desk-free-for-all"
+version = "0.1.0"
+edition = "2024"
+description = "A survive-the-desk 3D arena roguelite. Keyboard-only."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Zero non-Bevy dependencies on purpose: every mesh, material, sound and font
+# glyph is generated at runtime, so the wasm bundle carries no asset payload
+# and the iOS build needs no resource bundle.
+bevy = { version = "0.19", default-features = false, features = [
+    "3d",
+    "ui",
+    "bevy_audio",
+    "wav",
+    "tonemapping_luts",
+] }
+
+[profile.dev]
+opt-level = 1
+
+# Bevy is unusably slow in a debug build; always optimise dependencies.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Size-tuned profile used for the itch.io web build.
+[profile.web-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"

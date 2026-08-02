@@ -1,0 +1,17 @@
+/target
+/dist
+/web/pkg
+**/*.rs.bk
+*.pdb
+
+# macOS
+.DS_Store
+
+# Xcode / iOS
+ios/build/
+ios/DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# itch.io upload bundle
+*.zip
