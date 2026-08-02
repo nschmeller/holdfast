@@ -17,6 +17,57 @@ bevy = { version = "0.19", default-features = false, features = [
     "tonemapping_luts",
 ] }
 
+# Every lint group Clippy ships except `restriction` (which is a menu, not a
+# standard - enabling it wholesale contradicts itself). Anything switched off
+# below is switched off because it actively fights Bevy's idioms, and each one
+# says why.
+[lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_import_braces = "warn"
+variant_size_differences = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Bevy systems take `Res`, `Query` and `Commands` by value; that is the whole
+# calling convention, not an oversight.
+needless_pass_by_value = "allow"
+# Query and system-param types are genuinely, unavoidably long.
+type_complexity = "allow"
+# Bevy's own dependency tree ships duplicate semver-major versions.
+multiple_crate_versions = "allow"
+# A game loop is wall-to-wall `as f32` on loop counters and indices; the casts
+# are all in ranges where precision loss is impossible or irrelevant.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+# Tuning constants read better inline next to what they tune.
+unreadable_literal = "allow"
+# Systems are naturally wide; splitting them to satisfy an arg count would make
+# the scheduling worse, not better.
+too_many_arguments = "allow"
+too_many_lines = "allow"
+# `#[must_use]` on every getter in a binary crate is pure noise.
+must_use_candidate = "allow"
+# We are a binary; there is no public API to document panics for.
+missing_panics_doc = "allow"
+missing_errors_doc = "allow"
+# Bevy plugin modules legitimately repeat the module name in item names.
+module_name_repetitions = "allow"
+# `nursery` wants `const fn` on things that cannot be const in a Bevy context.
+missing_const_for_fn = "allow"
+# Float comparison is fine for the sentinel values we actually compare.
+float_cmp = "allow"
+# Deliberate: the option/result chains this fires on are less readable rewritten.
+option_if_let_else = "allow"
+
 [profile.dev]
 opt-level = 1
 

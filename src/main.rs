@@ -1,113 +1,155 @@
-//! API smoke test - temporary. Exercises every Bevy 0.19 surface the game needs
-//! so the compiler can tell us the real signatures before we write the game.
+//! DESK FREE-FOR-ALL
+//!
+//! A keyboard-only 3D survival command game. You hold ground against an endless
+//! escalation, and you set the pace yourself. See `DESIGN.md` for the pillars.
+
+// No console window on a Windows release build, and none exists on the web.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod allies;
+mod arena;
+mod art;
+mod audio;
+mod camera;
+mod combat;
+mod command;
+mod common;
+mod enemy;
+mod environments;
+mod fx;
+mod hud;
+mod meshgen;
+mod models;
+mod onboarding;
+mod palette;
+mod pickups;
+mod player;
+mod progress;
+mod rng;
+mod screens;
+mod threat;
+mod weapons;
 
 use bevy::prelude::*;
+use bevy::window::{PresentMode, WindowResolution};
 
+/// Top-level screen. Gameplay systems only run in `Playing`, so every overlay
+/// pauses the world simply by being a different state - there is no separate
+/// paused flag to keep in sync.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-enum GameState {
+pub enum AppState {
     #[default]
     Menu,
     Playing,
+    LevelUp,
+    SkillTree,
+    Paused,
+    GameOver,
 }
 
-#[derive(Resource)]
-struct Score(u32);
+impl AppState {
+    /// True for states where a run exists and should stay rendered.
+    pub fn run_alive(self) -> bool {
+        !matches!(self, Self::Menu)
+    }
+}
 
-#[derive(Component)]
-struct Spinner;
-
-#[derive(Message)]
-struct DamageMessage {
-    amount: f32,
+/// Ordered phases within a gameplay frame.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GameSet {
+    /// Read the keyboard, refresh the broad phase.
+    Input,
+    /// Decide where things want to go.
+    Think,
+    /// Integrate motion and resolve collisions.
+    Move,
+    /// Fire weapons, apply damage.
+    Combat,
+    /// Deaths, drops, economy.
+    Resolve,
+    /// Cameras, particles, HUD.
+    Present,
 }
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .init_state::<GameState>()
-        .insert_resource(Score(0))
-        .add_message::<DamageMessage>()
-        .add_systems(Startup, setup)
-        .add_systems(Update, (spin, read_input, read_damage))
-        .run();
-}
+    let mut app = App::new();
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 6.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Desk Free-For-All".into(),
+                    resolution: WindowResolution::new(1280, 720),
+                    present_mode: PresentMode::AutoVsync,
+                    // Stop the browser from stealing the arrow keys and space
+                    // bar, both of which are core controls.
+                    prevent_default_event_handling: true,
+                    fit_canvas_to_parent: true,
+                    canvas: Some("#game-canvas".into()),
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(ImagePlugin::default_nearest()),
+    );
+
+    app.init_state::<AppState>()
+        .init_resource::<rng::Rng>()
+        .init_resource::<threat::Threat>()
+        .init_resource::<threat::RunClock>()
+        .init_resource::<threat::WaveCycle>()
+        .insert_resource(ClearColor(Color::srgb(0.016, 0.018, 0.028)))
+        .insert_resource(GlobalAmbientLight {
+            color: Color::srgb(0.42, 0.5, 0.78),
+            brightness: 260.0,
+            ..default()
+        })
+        // Bigger shadow map: the arenas are small and prop shadows are most of
+        // what sells the third-person overlook as a real space.
+        .insert_resource(bevy::light::DirectionalLightShadowMap { size: 2048 });
+
+    app.configure_sets(
+        Update,
+        (
+            GameSet::Input,
+            GameSet::Think,
+            GameSet::Move,
+            GameSet::Combat,
+            GameSet::Resolve,
+            GameSet::Present,
+        )
+            .chain()
+            .run_if(in_state(AppState::Playing)),
+    );
+
+    app.add_systems(
+        Update,
+        (threat::tick_threat, threat::tick_waves)
+            .chain()
+            .in_set(GameSet::Input),
+    );
+
+    // Split in two: `Plugins` is only implemented for tuples up to 15 wide.
+    app.add_plugins((
+        art::ArtPlugin,
+        audio::AudioFxPlugin,
+        camera::CameraPlugin,
+        environments::ArenaPlugin,
+        player::PlayerPlugin,
+        enemy::EnemyPlugin,
+        weapons::WeaponPlugin,
+        combat::CombatPlugin,
+    ));
+    app.add_plugins((
+        allies::AlliesPlugin,
+        pickups::PickupPlugin,
+        progress::ProgressPlugin,
+        command::CommandPlugin,
+        onboarding::OnboardingPlugin,
+        fx::FxPlugin,
+        hud::HudPlugin,
+        screens::ScreensPlugin,
     ));
 
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 8000.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(4.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-
-    commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.6, 0.7, 1.0),
-        brightness: 200.0,
-        ..default()
-    });
-
-    let mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 0.4, 0.2),
-        perceptual_roughness: 0.6,
-        ..default()
-    });
-
-    commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::default(), Spinner));
-
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(12.0),
-            left: Val::Px(12.0),
-            padding: UiRect::all(Val::Px(8.0)),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
-        Text::new("DESK FREE-FOR-ALL"),
-        TextFont {
-            font_size: 28.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-    ));
-}
-
-fn spin(time: Res<Time>, mut q: Query<&mut Transform, With<Spinner>>) {
-    for mut t in &mut q {
-        t.rotate_y(time.delta_secs());
-    }
-}
-
-fn read_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut writer: MessageWriter<DamageMessage>,
-    mut score: ResMut<Score>,
-    state: Res<State<GameState>>,
-    mut next: ResMut<NextState<GameState>>,
-) {
-    if keys.just_pressed(KeyCode::Space) {
-        writer.write(DamageMessage { amount: 5.0 });
-        score.0 += 1;
-    }
-    if keys.just_pressed(KeyCode::Enter) && *state.get() == GameState::Menu {
-        next.set(GameState::Playing);
-    }
-}
-
-fn read_damage(mut reader: MessageReader<DamageMessage>) {
-    for msg in reader.read() {
-        info!("damage {}", msg.amount);
-    }
+    app.run();
 }
