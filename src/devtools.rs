@@ -15,12 +15,18 @@
 //! | `DFFA_UNLOCK=1` | Turn on every subsystem immediately |
 //! | `DFFA_AUTOPICK=1` | Auto-choose upgrade cards so a run never stalls |
 //! | `DFFA_MONITOR=1` | Open the window centred on monitor 1 |
+//! | `DFFA_MONITOR_NAME=DELL` | Pick the monitor by name instead of by index |
+//! | `DFFA_TILE=0:2` | Take slot 0 of 2 side-by-side slots on that monitor |
+//! | `DFFA_RES=960x600` | Override the window size |
+//!
+//! See `pilot` for the other half of the harness: a live command channel that
+//! lets an outside process play the game rather than merely observe it.
 
 use std::env;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use bevy::window::{MonitorSelection, WindowPosition};
+use bevy::window::{Monitor, MonitorSelection, PrimaryMonitor, WindowPosition, WindowResolution};
 
 use crate::AppState;
 use crate::environments::EnvKind;
@@ -37,6 +43,13 @@ pub struct DevConfig {
     /// Monitor index to centre the window on. Useful when the game needs to be
     /// watched on one screen while a terminal stays visible on another.
     pub monitor: Option<usize>,
+    /// `(slot, of)` - which horizontal slice of the monitor to occupy, so
+    /// several instances can be watched at once.
+    pub tile: Option<(u32, u32)>,
+    pub resolution: Option<(u32, u32)>,
+    /// Case-insensitive fragment of the monitor's name, which survives
+    /// replugging in a way the index does not.
+    pub monitor_name: Option<String>,
 }
 
 impl DevConfig {
@@ -73,6 +86,9 @@ impl DevConfig {
             unlock_all: truthy("DFFA_UNLOCK"),
             autopick: truthy("DFFA_AUTOPICK"),
             monitor: env::var("DFFA_MONITOR").ok().and_then(|v| v.parse().ok()),
+            tile: env::var("DFFA_TILE").ok().and_then(|v| pair(&v, ':')),
+            resolution: env::var("DFFA_RES").ok().and_then(|v| pair(&v, 'x')),
+            monitor_name: env::var("DFFA_MONITOR_NAME").ok().filter(|v| !v.is_empty()),
         }
     }
 
@@ -85,11 +101,21 @@ impl DevConfig {
             || self.unlock_all
             || self.autopick
             || self.monitor.is_some()
+            || self.tile.is_some()
+            || self.resolution.is_some()
+            || self.monitor_name.is_some()
     }
 }
 
 fn truthy(key: &str) -> bool {
     env::var(key).is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// Parse `a<sep>b` into a pair of positive integers.
+fn pair(value: &str, sep: char) -> Option<(u32, u32)> {
+    let (a, b) = value.split_once(sep)?;
+    let (a, b) = (a.trim().parse().ok()?, b.trim().parse().ok()?);
+    (b > 0).then_some((a, b))
 }
 
 #[derive(Resource)]
@@ -117,9 +143,10 @@ impl Plugin for DevToolsPlugin {
             // PreStartup, because the initial `OnEnter(Menu)` transition -
             // which builds the world selector - runs before `Startup`.
             .add_systems(PreStartup, apply_startup_config)
+            .insert_resource(WindowPlaced(false))
             // Startup, not PreStartup: the primary window has to exist first.
             .add_systems(Startup, place_window)
-            .add_systems(Update, (force_unlocks, tick_dev))
+            .add_systems(Update, (tile_window, force_unlocks, tick_dev))
             .add_systems(Update, autopick_card.run_if(in_state(AppState::LevelUp)));
     }
 }
@@ -166,10 +193,105 @@ fn place_window(
     config: Res<DevConfig>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    let Some(index) = config.monitor else { return };
     for mut window in &mut windows {
-        window.position = WindowPosition::Centered(MonitorSelection::Index(index));
+        if let Some((width, height)) = config.resolution {
+            window.resolution = WindowResolution::new(width.max(320), height.max(240));
+        }
+        if let Some(index) = config.monitor
+            && config.tile.is_none()
+        {
+            window.position = WindowPosition::Centered(MonitorSelection::Index(index));
+        }
     }
+}
+
+/// Set once the window has been tiled, so the placement is not fought over
+/// every frame - the user should be able to drag the window afterwards.
+#[derive(Resource)]
+struct WindowPlaced(bool);
+
+/// Lay the window into a horizontal slice of the chosen monitor.
+///
+/// This cannot run at `Startup`: monitor entities are created by the windowing
+/// backend during the first frames, so the system retries until one shows up.
+fn tile_window(
+    config: Res<DevConfig>,
+    mut placed: ResMut<WindowPlaced>,
+    monitors: Query<(Entity, &Monitor, Option<&PrimaryMonitor>)>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    // Leave a margin so window chrome and the dock stay reachable.
+    const MARGIN: i32 = 24;
+
+    let Some((slot, of)) = config.tile else {
+        return;
+    };
+    if placed.0 || monitors.is_empty() {
+        return;
+    }
+
+    // Sort by entity id to recover the order the backend enumerated them in.
+    // Raw query order will not do: `PrimaryMonitor` puts one of them in a
+    // different archetype, which floats it to the front or the back and makes
+    // "monitor 1" mean the wrong screen.
+    let mut all: Vec<(Entity, &Monitor, bool)> = monitors
+        .iter()
+        .map(|(entity, monitor, primary)| (entity, monitor, primary.is_some()))
+        .collect();
+    all.sort_unstable_by_key(|&(entity, ..)| entity);
+    for (index, (_, monitor, primary)) in all.iter().enumerate() {
+        info!(
+            "devtools: monitor {index}{} {:?} {}x{} at {}",
+            if *primary { " (primary)" } else { "" },
+            monitor.name,
+            monitor.physical_width,
+            monitor.physical_height,
+            monitor.physical_position
+        );
+    }
+
+    // A name fragment beats an index: indices shuffle when a display is
+    // plugged in, names do not.
+    let by_name = config.monitor_name.as_ref().and_then(|wanted| {
+        let wanted = wanted.to_ascii_lowercase();
+        all.iter().find(|(_, monitor, _)| {
+            monitor
+                .name
+                .as_ref()
+                .is_some_and(|n| n.to_ascii_lowercase().contains(&wanted))
+        })
+    });
+    let chosen = by_name
+        .or_else(|| all.get(config.monitor.unwrap_or(0)))
+        .or_else(|| all.first());
+    let Some((_, monitor, _)) = chosen else { return };
+    let monitor = *monitor;
+
+    let slot = i32::try_from(slot.min(of - 1)).unwrap_or(0);
+    let of = i32::try_from(of).unwrap_or(1).max(1);
+    let screen_w = i32::try_from(monitor.physical_width).unwrap_or(1920);
+    let screen_h = i32::try_from(monitor.physical_height).unwrap_or(1080);
+
+    let column = (screen_w - MARGIN * 2) / of;
+    // Cap the height at 4:3 of the column so a narrow slot does not produce a
+    // letterbox the game's fixed overlook camera looks silly in.
+    let height = (screen_h - MARGIN * 3).min(column * 3 / 4);
+
+    for mut window in &mut windows {
+        window.resolution = WindowResolution::new(
+            u32::try_from(column - MARGIN).unwrap_or(640).max(320),
+            u32::try_from(height).unwrap_or(480).max(240),
+        );
+        window.position = WindowPosition::At(IVec2::new(
+            monitor.physical_position.x + MARGIN + column * slot,
+            monitor.physical_position.y + MARGIN * 2,
+        ));
+    }
+    placed.0 = true;
+    info!(
+        "devtools: tiled into slot {slot} of {of} on the monitor at {}",
+        monitor.physical_position
+    );
 }
 
 /// Skip the onboarding schedule so late-game systems can be exercised without

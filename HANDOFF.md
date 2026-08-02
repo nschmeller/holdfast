@@ -1,0 +1,134 @@
+# HANDOFF
+
+Living state for whoever picks this up next, including a future version of me
+after a context reset. Update it when the situation changes, not at the end.
+
+**Read this first, then `git log --oneline -12`, then the task list.**
+
+---
+
+## What this is
+
+HOLDFAST: a keyboard-only 3D survival command game in Rust on **Bevy 0.19**,
+targeting itch.io (WASM) plus iOS and Android. Zero non-Bevy dependencies -
+the PRNG, the meshes and the audio are all generated in-crate on purpose, so
+that the wasm build needs no JS shims and there are no asset files to load.
+
+`DESIGN.md` has the pillars. `README.md` is the public face.
+
+## Environment gotchas
+
+- **`cargo` is not on `PATH` in fresh shells.** Prefix every command with
+  `export PATH="$HOME/.cargo/bin:$PATH"`.
+- **The shell is zsh.** `${PIPESTATUS[0]}` is empty; use `$pipestatus[1]` or
+  `setopt pipefail`. `cmd | tail` hides a non-zero exit - check it explicitly.
+  This has caused a build failure to be reported as a success once already.
+- **Iterate in debug.** The user watches the window while work happens and has
+  said stutters are fine. Release builds are for shipping only.
+- **Windows must open on the external monitor.** In the entity-sorted monitor
+  list, index **0** is the 2560x1440 DELL at `[-520, -1440]`; index 1 is the
+  laptop's own 3024x1964 panel, which is also the *primary*. So pass
+  `DFFA_MONITOR=0`, and never trust query order without the sort - the
+  `PrimaryMonitor` component puts the laptop in a different archetype and
+  reverses them.
+
+## Verifying without a human at the keyboard
+
+Two harnesses, both inert unless their env vars are set.
+
+**`src/devtools.rs`** - scripted one-shots.
+`DFFA_ARENA`, `DFFA_AUTOSTART`, `DFFA_SHOT=out.png@12`, `DFFA_EXIT=20`,
+`DFFA_SPEED=4`, `DFFA_UNLOCK=1`, `DFFA_AUTOPICK=1`, `DFFA_MONITOR=0`,
+`DFFA_MONITOR_NAME=DELL`, `DFFA_TILE=0:2`, `DFFA_RES=960x600`.
+
+**`src/pilot.rs`** - a live command channel, so an agent can actually play.
+Set `DFFA_PILOT=<dir>` and the game polls `<dir>/commands`, injects the keys
+into `ButtonInput<KeyCode>`, rewrites `<dir>/state.json` five times a second
+and appends events to `<dir>/log.txt`. Drive it with `tools/pilot.py`:
+
+    python3 tools/pilot.py see  <dir>
+    python3 tools/pilot.py do   <dir> "hold W 1.2" "tap SPACE"
+    python3 tools/pilot.py shot <dir> out.png
+    python3 tools/pilot.py keys
+
+Launch two side by side on the external monitor:
+
+    DFFA_PILOT=$PT/a DFFA_MONITOR=0 DFFA_TILE=0:2 ./target/debug/holdfast &
+    DFFA_PILOT=$PT/b DFFA_MONITOR=0 DFFA_TILE=1:2 ./target/debug/holdfast &
+
+Screenshots occasionally come back solid black at exactly 56997 bytes. That is
+a capture race, not a rendering bug - retry and the same scene appears.
+
+## Definition of done for any change
+
+    export PATH="$HOME/.cargo/bin:$PATH"
+    cargo fmt
+    cargo clippy --all-targets -- -D warnings   # must print nothing
+    cargo test                                  # 253 tests today
+
+Lints are deliberately brutal: `pedantic` + `nursery` + `cargo` + `style`,
+`unsafe_code = "forbid"`. Every `allow` in `Cargo.toml` carries a written
+reason. Do not add one without a reason, and do not silence a lint that is
+pointing at a real problem.
+
+## Where things stand
+
+Done: the core loop, five worlds, ten weapons, gear, the research tree, allies,
+territory, turrets, the threat dial and wave cycle, onboarding, procedural
+audio and FX, the third-person overlook camera, both test harnesses.
+
+Not done, roughly in the order to take them:
+
+1. **Infinite chunked worlds + fog of war** - written but *not integrated*, on
+   the `infinite-world` branch (`src/world.rs`, `src/fog.rs`). See below.
+2. **Forts, spawners, enemy strategic AI** - including player-capturable forts,
+   reclaim attempts, and a faction director choosing between massing on a fort
+   and harassing the player.
+3. **WASM for itch.io** - fast first paint, progress bar, WebGPU with a WebGL2
+   fallback.
+4. **Save and resume.**
+5. **iOS**, then **Android**.
+6. **Achievements and lifetime stats** - the user asked for this to be last.
+7. **LLM-tuned enemy AI** - after achievements. Use a foundation-model API *if
+   one happens to be reachable on the machine*, to keep retuning the enemy
+   director so it plays wily and unpredictable. Most machines will not have
+   one, so the hand-written heuristics stay the default and this is strictly a
+   garnish. Must never block a frame.
+
+## The `infinite-world` branch
+
+`git checkout infinite-world` - one WIP commit, does not compile into the app
+because nothing is wired into `lib.rs` yet.
+
+- `src/world.rs`: `CHUNK_SIZE=24`, `STREAM_RADIUS=3`, `UNLOAD_RADIUS=5`,
+  `WorldSeed`, `ChunkManager`, `LightPools`, `Chasms`, `chunk_rng` keyed on
+  `(seed, IVec2)` so a chunk regenerates identically forever.
+- `src/fog.rs`: `FOG_CELL=3.0`, `SIGHT_RADIUS=21.0`, `FogMap` with explored and
+  visible sets, `FogOccluded { require_sight }`, one regenerated overlay mesh.
+
+What remains, and why it was parked: `environments/mod.rs` still exposes the
+fixed-arena `SceneData`. It needs to become `ChunkContent { props, lights,
+hazards, zones, light_pools, chasms, forts, spawners }` plus
+`EnvKind::generate_chunk(coord, rng)` and `EnvKind::chunk_floor(coord, seed)`,
+and each of the five world modules needs a chunk generator built from its
+existing prop constructors (already made `pub(super)` for this). Then
+`enemy.rs` spawns relative to the player rather than the arena, `player.rs`
+loses the bounds clamp and gains chasm handling, `combat.rs`'s `EnemyGrid`
+centres on the player, `weapons.rs` and `allies.rs` swap `Spotlight` for
+`LightPools`, and the environment tests get rewritten.
+
+## Things learned the hard way
+
+- `spawn_enemy` once forgot to insert `Actor`, so enemies rendered and never
+  moved. The user spotted it before the tests did. Movement lives in
+  `integrate_actors`; anything that should move needs that component.
+- `GameSet::Reap` runs strictly last and is the *only* place entities despawn.
+  Everything else marks `Doomed` with `try_insert`. Despawning mid-frame
+  panics the moment two systems condemn the same entity.
+- Bevy panics B0001/B0002 mean two conflicting queries or a `Res` and `ResMut`
+  of the same type in one system. Fix with `ParamSet` or a single `ResMut`.
+- Tests that drive time must **not** add `TimePlugin` - it overwrites manual
+  clock advances from the wall clock. Use `init_resource::<Time>()` and
+  `advance_by`.
+- `MeshBuilder` collides with a Bevy prelude trait; ours is `MeshWeld`.
+- BSD `sed` has no `\b`. Use `perl -pi -e`.

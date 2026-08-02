@@ -21,6 +21,7 @@ pub mod models;
 pub mod onboarding;
 pub mod palette;
 pub mod pickups;
+pub mod pilot;
 pub mod player;
 pub mod progress;
 pub mod rng;
@@ -179,6 +180,7 @@ pub fn run() {
         hud::HudPlugin,
         screens::ScreensPlugin,
         devtools::DevToolsPlugin,
+        pilot::PilotPlugin,
     ));
 
     app.run();
