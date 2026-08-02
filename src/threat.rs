@@ -334,3 +334,264 @@ pub fn tick_threat(time: Res<Time>, mut threat: ResMut<Threat>, mut clock: ResMu
     threat.level += delta.clamp(-rate * dt * 4.0, rate * dt * 4.0);
     threat.level = threat.level.clamp(MIN_INTENT, MAX_INTENT + SURGE_BONUS);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fresh_dial_starts_calm() {
+        let t = Threat::default();
+        assert_eq!(t.level, 1.0);
+        assert_eq!(t.band(), "LULL");
+        assert!(!t.surging());
+        assert!(t.can_surge());
+    }
+
+    #[test]
+    fn raising_and_lowering_respects_the_hard_limits() {
+        let mut t = Threat::default();
+        for _ in 0..200 {
+            t.raise();
+        }
+        assert_eq!(t.intent, MAX_INTENT);
+        for _ in 0..200 {
+            t.lower();
+        }
+        assert_eq!(t.intent, MIN_INTENT);
+    }
+
+    #[test]
+    fn the_dial_cannot_be_set_below_the_floor() {
+        let mut t = Threat::default();
+        t.floor = 3.0;
+        t.intent = 3.0;
+        t.lower();
+        assert_eq!(t.intent, 3.0, "the floor is what stops turtling");
+    }
+
+    #[test]
+    fn rewards_grow_with_threat() {
+        let mut low = Threat::default();
+        low.level = 1.0;
+        let mut high = Threat::default();
+        high.level = 6.0;
+        assert!(high.reward_mult() > low.reward_mult() * 4.0);
+    }
+
+    #[test]
+    fn rewards_are_monotonic_across_the_whole_range() {
+        let mut previous = 0.0;
+        let mut t = Threat::default();
+        let mut level = MIN_INTENT;
+        while level <= MAX_INTENT {
+            t.level = level;
+            let r = t.reward_mult();
+            assert!(r > previous, "reward went down at level {level}");
+            previous = r;
+            level += 0.25;
+        }
+    }
+
+    #[test]
+    fn surging_pays_a_premium() {
+        let mut t = Threat::default();
+        t.level = 3.0;
+        let calm = t.reward_mult();
+        t.surge = 5.0;
+        assert!(t.reward_mult() > calm * 1.5);
+    }
+
+    #[test]
+    fn spawn_and_power_scale_with_the_dial() {
+        let mut t = Threat::default();
+        t.level = 1.0;
+        let (s1, p1) = (t.spawn_mult(), t.power_mult());
+        t.level = 5.0;
+        assert!(t.spawn_mult() > s1);
+        assert!(t.power_mult() > p1);
+    }
+
+    #[test]
+    fn rarity_bonus_is_clamped() {
+        let mut t = Threat::default();
+        t.level = MIN_INTENT;
+        assert_eq!(t.rarity_bonus(), 0.0, "never negative");
+        t.level = MAX_INTENT;
+        t.territory = 10.0;
+        assert!(t.rarity_bonus() <= 0.55);
+    }
+
+    #[test]
+    fn a_surge_cannot_be_restarted_while_running() {
+        let mut t = Threat::default();
+        t.start_surge();
+        assert!(t.surging());
+        let remaining = t.surge;
+        t.start_surge();
+        assert_eq!(t.surge, remaining, "double-tapping O must not extend it");
+        assert!(!t.can_surge());
+    }
+
+    #[test]
+    fn the_surge_cooldown_outlasts_the_surge() {
+        let mut t = Threat::default();
+        t.start_surge();
+        assert!(t.surge_cooldown > t.surge);
+    }
+
+    #[test]
+    fn kill_pressure_saturates() {
+        let mut t = Threat::default();
+        for _ in 0..10_000 {
+            t.note_kill();
+        }
+        assert!(t.streak <= 1.6, "streak ran away to {}", t.streak);
+    }
+
+    #[test]
+    fn effective_threat_includes_streak_and_territory() {
+        let mut t = Threat::default();
+        t.level = 2.0;
+        t.streak = 1.0;
+        t.territory = 0.4;
+        assert!((t.effective() - 2.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn bands_and_colours_cover_the_whole_range() {
+        let mut t = Threat::default();
+        let mut seen = Vec::new();
+        let mut level = MIN_INTENT;
+        while level <= MAX_INTENT + 2.5 {
+            t.level = level;
+            let band = t.band();
+            if seen.last() != Some(&band) {
+                seen.push(band);
+            }
+            // Every level must produce a colour without panicking.
+            let _ = t.band_color();
+            level += 0.1;
+        }
+        assert_eq!(
+            seen,
+            vec![
+                "LULL",
+                "STIRRING",
+                "BUSY",
+                "SWARMING",
+                "OVERRUN",
+                "CRITICAL",
+                "APOCALYPTIC"
+            ]
+        );
+    }
+
+    #[test]
+    fn reset_returns_to_the_default_state() {
+        let mut t = Threat::default();
+        t.level = 7.0;
+        t.streak = 1.0;
+        t.start_surge();
+        t.reset();
+        assert_eq!(t.level, 1.0);
+        assert_eq!(t.streak, 0.0);
+        assert!(t.can_surge());
+    }
+
+    #[test]
+    fn time_power_compounds() {
+        let mut clock = RunClock::default();
+        clock.elapsed = 0.0;
+        let start = clock.time_power();
+        clock.elapsed = 600.0;
+        let ten_minutes = clock.time_power();
+        clock.elapsed = 1200.0;
+        let twenty_minutes = clock.time_power();
+        assert!(start >= 1.0);
+        // Compounding means the second ten minutes adds more than the first.
+        assert!(twenty_minutes - ten_minutes > ten_minutes - start);
+    }
+
+    #[test]
+    fn stages_advance_every_ninety_seconds() {
+        let mut clock = RunClock::default();
+        assert_eq!(clock.stage(), 1);
+        clock.elapsed = 89.0;
+        assert_eq!(clock.stage(), 1);
+        clock.elapsed = 90.0;
+        assert_eq!(clock.stage(), 2);
+    }
+
+    #[test]
+    fn enemy_power_combines_both_clocks() {
+        let mut t = Threat::default();
+        let mut clock = RunClock::default();
+        let base = enemy_power(&t, &clock);
+        t.level = 6.0;
+        assert!(enemy_power(&t, &clock) > base);
+        t.level = 1.0;
+        clock.elapsed = 900.0;
+        assert!(enemy_power(&t, &clock) > base);
+    }
+
+    // -- wave cycle ---------------------------------------------------------
+
+    #[test]
+    fn a_run_opens_in_prep() {
+        let c = WaveCycle::default();
+        assert!(c.in_prep());
+        assert_eq!(c.wave, 0);
+        assert_eq!(c.label(), "PREP");
+    }
+
+    #[test]
+    fn calling_early_banks_the_unused_window() {
+        let mut c = WaveCycle::default();
+        c.timer = 20.0;
+        let expected = c.pending_bonus();
+        assert!((expected - 0.5).abs() < 1e-6, "20s at 2.5%/s");
+        c.call_early();
+        assert_eq!(c.timer, 0.0);
+        assert!((c.reward_mult() - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn calling_early_during_an_assault_does_nothing() {
+        let mut c = WaveCycle::default();
+        c.phase = Phase::Assault;
+        c.timer = 10.0;
+        assert_eq!(c.pending_bonus(), 0.0);
+        c.call_early();
+        assert_eq!(c.timer, 10.0);
+    }
+
+    #[test]
+    fn a_full_wait_earns_no_bonus() {
+        let mut c = WaveCycle::default();
+        c.timer = 0.0;
+        assert_eq!(c.pending_bonus(), 0.0);
+        assert_eq!(c.reward_mult(), 1.0);
+    }
+
+    #[test]
+    fn assault_length_grows_but_is_capped() {
+        let mut c = WaveCycle::default();
+        c.wave = 1;
+        let early = c.assault_length();
+        c.wave = 500;
+        let late = c.assault_length();
+        assert!(late > early);
+        assert!(late <= 32.0 + 1e-6, "capped at base plus twelve, got {late}");
+    }
+
+    #[test]
+    fn prep_windows_shrink_but_never_vanish() {
+        let mut c = WaveCycle::default();
+        for wave in 0..200u32 {
+            c.wave = wave;
+            c.prep_length = (34.0 - wave as f32 * 0.9).max(12.0);
+            assert!(c.prep_length >= 12.0, "prep dropped to {}", c.prep_length);
+        }
+    }
+}

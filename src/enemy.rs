@@ -18,7 +18,7 @@ use crate::rng::Rng;
 use crate::threat::{RunClock, Threat, enemy_power};
 use crate::{AppState, GameSet, RunSetup};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum EnemyKind {
     DustBunny,
     Ant,
@@ -898,5 +898,243 @@ fn enemy_fall_off(
             enemy.falling = true;
             alt.vy = 2.0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_archetype_has_usable_stats() {
+        for kind in EnemyKind::ALL {
+            let s = kind.stats();
+            assert!(s.hp > 0.0, "{kind:?} has no health");
+            assert!(s.speed > 0.0, "{kind:?} cannot move");
+            assert!(s.damage > 0.0, "{kind:?} is harmless");
+            assert!(s.radius > 0.0, "{kind:?} has no body");
+            assert!(s.xp > 0.0, "{kind:?} is worth nothing");
+        }
+    }
+
+    #[test]
+    fn nothing_outruns_the_player() {
+        // A design guarantee: the player must always be able to walk out of a
+        // crowd, so no ordinary enemy may exceed their base speed.
+        for kind in EnemyKind::FODDER {
+            assert!(
+                kind.stats().speed < crate::player::BASE_SPEED,
+                "{kind:?} at {} outruns the player at {}",
+                kind.stats().speed,
+                crate::player::BASE_SPEED
+            );
+        }
+    }
+
+    #[test]
+    fn dashers_and_chargers_stay_catchable_even_mid_burst() {
+        // The dash multiplier is 2.4x and the boss charge is 2.2x; both must
+        // stay survivable, which in practice means under about triple.
+        let dasher = EnemyKind::StapleSkitter.stats().speed * 2.4;
+        assert!(dasher < crate::player::BASE_SPEED * 1.2, "dash hits {dasher}");
+        let charger = EnemyKind::BossStapler.stats().speed * 2.2;
+        assert!(charger < crate::player::BASE_SPEED, "charge hits {charger}");
+    }
+
+    #[test]
+    fn bosses_are_categorically_tougher() {
+        let worst_fodder = EnemyKind::FODDER
+            .iter()
+            .map(|k| k.stats().hp)
+            .fold(0.0f32, f32::max);
+        for boss in EnemyKind::BOSSES {
+            assert!(boss.stats().hp > worst_fodder * 10.0, "{boss:?} is soft");
+            assert!(boss.is_boss());
+        }
+    }
+
+    #[test]
+    fn fodder_is_never_marked_as_a_boss() {
+        for kind in EnemyKind::FODDER {
+            assert!(!kind.is_boss(), "{kind:?} leaked into the fodder pool");
+            assert!(kind.unlock_minute() < 100.0, "{kind:?} never unlocks");
+        }
+    }
+
+    #[test]
+    fn bosses_never_appear_in_the_trickle() {
+        for boss in EnemyKind::BOSSES {
+            assert!(boss.unlock_minute() > 100.0, "{boss:?} could trickle in");
+        }
+    }
+
+    #[test]
+    fn the_first_archetype_is_available_immediately() {
+        assert_eq!(EnemyKind::FODDER[0].unlock_minute(), 0.0);
+    }
+
+    #[test]
+    fn unlocks_are_ordered_and_spread_out() {
+        let mut previous = -1.0;
+        for kind in EnemyKind::FODDER {
+            let t = kind.unlock_minute();
+            assert!(t > previous, "{kind:?} unlocks out of order");
+            previous = t;
+        }
+    }
+
+    #[test]
+    fn every_archetype_is_named_in_every_world() {
+        for kind in EnemyKind::ALL {
+            for env in crate::environments::EnvKind::ALL {
+                let name = kind.name(env);
+                assert!(!name.is_empty(), "{kind:?} unnamed in {env:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn names_are_distinct_within_a_world() {
+        for env in crate::environments::EnvKind::ALL {
+            let mut names: Vec<_> = EnemyKind::ALL.iter().map(|k| k.name(env)).collect();
+            let total = names.len();
+            names.sort_unstable();
+            names.dedup();
+            assert_eq!(names.len(), total, "duplicate names in {env:?}");
+        }
+    }
+
+    #[test]
+    fn boss_names_read_as_bosses() {
+        for env in crate::environments::EnvKind::ALL {
+            for boss in EnemyKind::BOSSES {
+                let name = boss.name(env);
+                assert_eq!(
+                    name,
+                    name.to_uppercase(),
+                    "{name} should be shouted, not muttered"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_moth_flies() {
+        for kind in EnemyKind::ALL {
+            assert_eq!(kind.flies(), kind == EnemyKind::Moth);
+        }
+    }
+
+    #[test]
+    fn behaviours_are_assigned_and_bosses_get_boss_behaviours() {
+        for kind in EnemyKind::ALL {
+            let b = kind.behavior();
+            let is_boss_behaviour = matches!(
+                b,
+                Behavior::BossCharger | Behavior::BossSlammer | Behavior::BossBeamer
+            );
+            assert_eq!(is_boss_behaviour, kind.is_boss(), "{kind:?} mismatched");
+        }
+    }
+
+    #[test]
+    fn the_name_table_is_indexed_by_the_enum_order() {
+        // If someone reorders EnemyKind without reordering the table, this
+        // catches it: the desk names are the ones we can eyeball.
+        assert_eq!(
+            EnemyKind::DustBunny.name(crate::environments::EnvKind::Desk),
+            "Dust Bunny"
+        );
+        assert_eq!(
+            EnemyKind::BossLamp.name(crate::environments::EnvKind::Desk),
+            "THE DESK LAMP"
+        );
+    }
+
+    // -- status effects -----------------------------------------------------
+
+    #[test]
+    fn a_clean_status_block_does_not_slow_anything() {
+        assert_eq!(StatusEffects::default().speed_mult(), 1.0);
+    }
+
+    #[test]
+    fn stun_beats_slow() {
+        let mut s = StatusEffects::default();
+        s.apply_slow(0.5, 1.0);
+        s.apply_stun(1.0);
+        assert_eq!(s.speed_mult(), 0.0);
+    }
+
+    #[test]
+    fn slow_has_a_floor_so_nothing_freezes_solid() {
+        let mut s = StatusEffects::default();
+        s.apply_slow(5.0, 1.0);
+        assert!(s.speed_mult() >= 0.15);
+    }
+
+    #[test]
+    fn effects_take_the_strongest_and_longest() {
+        let mut s = StatusEffects::default();
+        s.apply_slow(0.3, 5.0);
+        s.apply_slow(0.7, 1.0);
+        assert!((s.slow - 0.7).abs() < 1e-6);
+        assert!((s.slow_time - 5.0).abs() < 1e-6);
+
+        s.apply_burn(3.0, 2.0);
+        s.apply_burn(1.0, 8.0);
+        assert!((s.burn_dps - 3.0).abs() < 1e-6);
+        assert!((s.burn_time - 8.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_expired_slow_stops_applying() {
+        let mut s = StatusEffects::default();
+        s.apply_slow(0.5, 0.0);
+        assert_eq!(s.speed_mult(), 1.0);
+    }
+
+    // -- director -----------------------------------------------------------
+
+    #[test]
+    fn the_director_starts_with_headroom() {
+        let d = Director::default();
+        assert_eq!(d.alive, 0);
+        assert!(d.cap > 100);
+        assert!(d.boss_timer > d.elite_timer, "elites must precede the boss");
+    }
+
+    #[test]
+    fn kind_selection_only_offers_unlocked_archetypes() {
+        let mut rng = Rng::seeded(1234);
+        for minute in [0.0f32, 1.0, 3.5, 7.0, 30.0] {
+            for _ in 0..500 {
+                let kind = pick_kind(&mut rng, minute).unwrap();
+                assert!(
+                    kind.unlock_minute() <= minute,
+                    "{kind:?} appeared at minute {minute}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn kind_selection_eventually_offers_everything() {
+        let mut rng = Rng::seeded(555);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..5000 {
+            seen.insert(pick_kind(&mut rng, 30.0).unwrap());
+        }
+        assert_eq!(seen.len(), EnemyKind::FODDER.len(), "some kind never rolls");
+    }
+
+    #[test]
+    fn early_kinds_still_appear_late() {
+        // The weighting favours new unlocks, but must not starve the old ones.
+        let mut rng = Rng::seeded(777);
+        let bunnies = (0..3000)
+            .filter(|_| pick_kind(&mut rng, 30.0) == Some(EnemyKind::DustBunny))
+            .count();
+        assert!(bunnies > 60, "dust bunnies vanished entirely ({bunnies})");
     }
 }

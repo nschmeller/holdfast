@@ -429,12 +429,16 @@ const GEAR_NAMES: [[&str; 4]; 3] = [
 pub fn roll_gear(rng: &mut Rng, luck: f32, rarity_bonus: f32) -> GearPiece {
     let slot = GearSlot::ALL[rng.below(3)];
     let mut rarity = 0;
-    let mut chance = 0.34 + luck + rarity_bonus;
+    // The cap matters: stacked luck and a maxed threat dial can push the raw
+    // sum past 1.0, which would make every single drop Legendary and flatten
+    // the whole gear economy. Capping each tier roll keeps the ladder intact
+    // while still making luck feel worth taking.
+    const MAX_TIER_CHANCE: f32 = 0.85;
+    let mut chance = (0.34 + luck + rarity_bonus).min(MAX_TIER_CHANCE);
     while rarity < 3 && rng.chance(chance) {
         rarity += 1;
-        // Each successive upgrade is harder, so Legendary stays rare even at
-        // absurd luck.
-        chance *= 0.42;
+        // Each successive upgrade is harder.
+        chance = (chance * 0.42).min(MAX_TIER_CHANCE);
     }
 
     let count = 1 + rarity.min(2);
@@ -705,4 +709,407 @@ pub fn recruit_hint(economy: &Economy) -> String {
         })
         .collect::<Vec<_>>()
         .join("  ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rng() -> Rng {
+        Rng::seeded(0xC0FFEE)
+    }
+
+    #[test]
+    fn levels_are_earned_and_banked() {
+        let mut p = Progression::default();
+        assert_eq!(p.level, 1);
+        p.gain(12.0);
+        assert_eq!(p.level, 2);
+        assert_eq!(p.pending_levels, 1);
+    }
+
+    #[test]
+    fn one_huge_xp_grant_can_cross_several_levels() {
+        let mut p = Progression::default();
+        p.gain(10_000.0);
+        assert!(p.level > 5, "only reached level {}", p.level);
+        assert_eq!(
+            p.pending_levels,
+            p.level - 1,
+            "every level gained must bank a card"
+        );
+    }
+
+    #[test]
+    fn the_xp_curve_is_strictly_increasing() {
+        let mut p = Progression::default();
+        let mut previous = p.to_next;
+        for _ in 0..60 {
+            p.gain(p.to_next);
+            assert!(p.to_next > previous, "curve flattened at level {}", p.level);
+            previous = p.to_next;
+        }
+    }
+
+    #[test]
+    fn skill_points_arrive_every_third_level() {
+        let mut p = Progression::default();
+        while p.level < 10 {
+            p.gain(p.to_next);
+        }
+        // Levels 3, 6 and 9 each grant one.
+        assert_eq!(p.skill_points, 3);
+    }
+
+    #[test]
+    fn fraction_is_always_a_sane_bar_value() {
+        let mut p = Progression::default();
+        for _ in 0..500 {
+            p.gain(7.3);
+            let f = p.fraction();
+            assert!((0.0..=1.0).contains(&f), "fraction was {f}");
+        }
+    }
+
+    #[test]
+    fn total_xp_accumulates_independently_of_levels() {
+        let mut p = Progression::default();
+        p.gain(50.0);
+        p.gain(50.0);
+        assert!((p.total_xp - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reset_clears_everything() {
+        let mut p = Progression::default();
+        p.gain(5000.0);
+        p.reset();
+        assert_eq!(p.level, 1);
+        assert_eq!(p.pending_levels, 0);
+        assert_eq!(p.total_xp, 0.0);
+    }
+
+    // -- stat boosts --------------------------------------------------------
+
+    #[test]
+    fn every_boost_moves_at_least_one_stat() {
+        for boost in StatBoost::ALL {
+            let before = PlayerStats::default();
+            let mut after = PlayerStats::default();
+            boost.apply(&mut after);
+            let changed = format!("{before:?}") != format!("{after:?}");
+            assert!(changed, "{boost:?} changed nothing");
+        }
+    }
+
+    #[test]
+    fn every_boost_has_a_title_and_a_detail() {
+        for boost in StatBoost::ALL {
+            assert!(!boost.title().is_empty());
+            assert!(!boost.detail().is_empty());
+        }
+    }
+
+    #[test]
+    fn crit_chance_cannot_exceed_its_cap() {
+        let mut s = PlayerStats::default();
+        for _ in 0..100 {
+            StatBoost::Crit.apply(&mut s);
+        }
+        assert!(s.crit_chance <= 0.95);
+    }
+
+    #[test]
+    fn build_discount_cannot_make_things_free() {
+        let mut s = PlayerStats::default();
+        for _ in 0..100 {
+            StatBoost::BuildDiscount.apply(&mut s);
+        }
+        assert!(s.build_discount <= 0.7);
+    }
+
+    #[test]
+    fn armour_never_makes_the_player_immortal() {
+        let mut s = PlayerStats::default();
+        s.armor = 10_000.0;
+        // The floor keeps a fraction of every hit no matter the armour.
+        assert!(s.mitigate(100.0) >= 12.0 - 1e-3);
+    }
+
+    #[test]
+    fn armour_reduces_ordinary_hits() {
+        let mut s = PlayerStats::default();
+        s.armor = 5.0;
+        assert!((s.mitigate(50.0) - 45.0).abs() < 1e-5);
+    }
+
+    // -- research -----------------------------------------------------------
+
+    #[test]
+    fn the_tree_has_every_branch_populated() {
+        let r = Research::default();
+        for branch in Branch::ALL {
+            assert!(
+                !r.in_branch(branch).is_empty(),
+                "{} has no nodes",
+                branch.title()
+            );
+        }
+    }
+
+    #[test]
+    fn every_branch_ends_in_a_repeatable_node() {
+        let r = Research::default();
+        for branch in Branch::ALL {
+            let has_endless = r
+                .in_branch(branch)
+                .into_iter()
+                .any(|i| r.nodes[i].endless);
+            assert!(has_endless, "{} cannot be pushed forever", branch.title());
+        }
+    }
+
+    #[test]
+    fn node_costs_rise_with_rank() {
+        let mut node = Research::default().nodes.remove(0);
+        let first = node.current_cost();
+        node.rank = 3;
+        assert!(node.current_cost() > first);
+    }
+
+    #[test]
+    fn finite_nodes_max_out_and_endless_ones_do_not() {
+        let r = Research::default();
+        let mut finite = r.nodes.iter().find(|n| !n.endless).unwrap().clone();
+        finite.rank = finite.max_rank;
+        assert!(finite.maxed());
+
+        let mut endless = r.nodes.iter().find(|n| n.endless).unwrap().clone();
+        endless.rank = 9999;
+        assert!(!endless.maxed(), "endless nodes must never cap");
+    }
+
+    #[test]
+    fn branch_titles_and_colours_are_distinct() {
+        let titles: Vec<_> = Branch::ALL.iter().map(|b| b.title()).collect();
+        let mut sorted = titles.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), titles.len());
+    }
+
+    // -- gear ---------------------------------------------------------------
+
+    #[test]
+    fn rolled_gear_is_always_well_formed() {
+        let mut rng = rng();
+        for _ in 0..5000 {
+            let g = roll_gear(&mut rng, 0.0, 0.0);
+            assert!(g.rarity <= 3, "rarity {} out of range", g.rarity);
+            assert!(!g.boosts.is_empty());
+            assert!(!g.name.is_empty());
+            assert!(g.boosts.iter().all(|(_, n)| *n >= 1));
+            assert!(!g.describe().is_empty());
+        }
+    }
+
+    #[test]
+    fn luck_and_threat_push_rarity_upward() {
+        let mut plain = rng();
+        let mut lucky = rng();
+        const N: usize = 4000;
+        let plain_total: usize = (0..N).map(|_| roll_gear(&mut plain, 0.0, 0.0).rarity).sum();
+        let lucky_total: usize = (0..N).map(|_| roll_gear(&mut lucky, 0.3, 0.3).rarity).sum();
+        assert!(
+            lucky_total > plain_total,
+            "luck {lucky_total} did not beat plain {plain_total}"
+        );
+    }
+
+    #[test]
+    fn legendary_stays_rare_even_at_absurd_luck() {
+        // Unbounded luck used to push every tier roll past certainty, which
+        // made every drop Legendary. The tier cap is what stops that.
+        let mut rng = rng();
+        const N: usize = 8000;
+        let legendaries = (0..N)
+            .filter(|_| roll_gear(&mut rng, 5.0, 5.0).rarity == 3)
+            .count();
+        let share = legendaries as f64 / N as f64;
+        assert!(share < 0.12, "legendary share was {share}");
+    }
+
+    #[test]
+    fn common_gear_remains_the_baseline_without_luck() {
+        let mut rng = rng();
+        const N: usize = 8000;
+        let commons = (0..N)
+            .filter(|_| roll_gear(&mut rng, 0.0, 0.0).rarity == 0)
+            .count();
+        let share = commons as f64 / N as f64;
+        assert!((0.6..0.72).contains(&share), "common share was {share}");
+    }
+
+    #[test]
+    fn gear_score_rewards_rarity_and_stacks() {
+        let common = GearPiece {
+            name: "a".into(),
+            slot: GearSlot::Head,
+            rarity: 0,
+            boosts: vec![(StatBoost::Damage, 1)],
+        };
+        let legendary = GearPiece {
+            name: "b".into(),
+            slot: GearSlot::Head,
+            rarity: 3,
+            boosts: vec![(StatBoost::Damage, 1)],
+        };
+        assert!(legendary.score() > common.score());
+    }
+
+    #[test]
+    fn equipping_stores_by_slot() {
+        let mut e = Equipped::default();
+        assert!(e.get(GearSlot::Head).is_none());
+        e.set(GearPiece {
+            name: "hat".into(),
+            slot: GearSlot::Head,
+            rarity: 1,
+            boosts: vec![(StatBoost::Armor, 2)],
+        });
+        assert_eq!(e.get(GearSlot::Head).unwrap().name, "hat");
+        assert!(e.get(GearSlot::Body).is_none());
+        e.reset();
+        assert!(e.get(GearSlot::Head).is_none());
+    }
+
+    // -- offers -------------------------------------------------------------
+
+    #[test]
+    fn an_offer_is_three_cards() {
+        let mut rng = rng();
+        let mut loadout = Loadout::default();
+        loadout.reset();
+        let boosts = AppliedBoosts::default();
+        let cards = build_offer(&mut rng, &loadout, &boosts);
+        assert_eq!(cards.len(), 3);
+        assert!(cards.iter().all(|c| !c.title.is_empty()));
+        assert!(cards.iter().all(|c| c.rarity <= 3));
+    }
+
+    #[test]
+    fn an_offer_never_repeats_a_card() {
+        let mut rng = rng();
+        let mut loadout = Loadout::default();
+        loadout.reset();
+        let boosts = AppliedBoosts::default();
+        for _ in 0..200 {
+            let cards = build_offer(&mut rng, &loadout, &boosts);
+            let mut titles: Vec<_> = cards.iter().map(|c| c.title.clone()).collect();
+            titles.sort();
+            let before = titles.len();
+            titles.dedup();
+            assert_eq!(titles.len(), before, "duplicate card in one offer");
+        }
+    }
+
+    #[test]
+    fn offers_keep_coming_once_every_weapon_is_mastered() {
+        let mut rng = rng();
+        let mut loadout = Loadout::default();
+        loadout.reset();
+        for kind in crate::weapons::WeaponKind::ALL {
+            loadout.add(kind);
+            for _ in 0..MAX_LEVEL {
+                loadout.level_up(kind);
+            }
+        }
+        let boosts = AppliedBoosts::default();
+        let cards = build_offer(&mut rng, &loadout, &boosts);
+        assert_eq!(cards.len(), 3, "the pool must never run dry");
+    }
+
+    #[test]
+    fn applying_a_stat_card_records_the_boost() {
+        let mut stats = PlayerStats::default();
+        let mut loadout = Loadout::default();
+        let mut economy = Economy::default();
+        let mut boosts = AppliedBoosts::default();
+        let card = Card {
+            title: "t".into(),
+            detail: "d".into(),
+            kind: CardKind::Stat(StatBoost::Damage),
+            rarity: 0,
+        };
+        apply_card(&card, &mut stats, &mut loadout, &mut economy, &mut boosts);
+        assert_eq!(boosts.entries, vec![(StatBoost::Damage, 1)]);
+        apply_card(&card, &mut stats, &mut loadout, &mut economy, &mut boosts);
+        assert_eq!(boosts.entries, vec![(StatBoost::Damage, 2)], "stacks");
+    }
+
+    #[test]
+    fn resource_cards_pay_out_immediately() {
+        let mut stats = PlayerStats::default();
+        let mut loadout = Loadout::default();
+        let mut economy = Economy::default();
+        let mut boosts = AppliedBoosts::default();
+        apply_card(
+            &Card {
+                title: "s".into(),
+                detail: String::new(),
+                kind: CardKind::FreeScrap(60.0),
+                rarity: 0,
+            },
+            &mut stats,
+            &mut loadout,
+            &mut economy,
+            &mut boosts,
+        );
+        assert!((economy.scrap - 60.0).abs() < 1e-6);
+        apply_card(
+            &Card {
+                title: "c".into(),
+                detail: String::new(),
+                kind: CardKind::FreeCores(3.0),
+                rarity: 0,
+            },
+            &mut stats,
+            &mut loadout,
+            &mut economy,
+            &mut boosts,
+        );
+        assert!((economy.cores - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn weapon_cards_reach_the_loadout() {
+        let mut stats = PlayerStats::default();
+        let mut loadout = Loadout::default();
+        loadout.reset();
+        let mut economy = Economy::default();
+        let mut boosts = AppliedBoosts::default();
+        apply_card(
+            &Card {
+                title: "w".into(),
+                detail: String::new(),
+                kind: CardKind::NewWeapon(crate::weapons::WeaponKind::Stapler),
+                rarity: 2,
+            },
+            &mut stats,
+            &mut loadout,
+            &mut economy,
+            &mut boosts,
+        );
+        assert_eq!(
+            loadout.level_of(crate::weapons::WeaponKind::Stapler),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn card_colours_are_defined_for_every_rarity() {
+        for r in 0..=5 {
+            let _ = card_color(r);
+        }
+    }
 }

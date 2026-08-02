@@ -288,3 +288,152 @@ pub fn format_count(n: u64) -> String {
         format!("{:.2}M", n as f32 / 1_000_000.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_tracks_its_fraction() {
+        let mut h = Health::new(80.0);
+        assert_eq!(h.fraction(), 1.0);
+        h.current = 20.0;
+        assert!((h.fraction() - 0.25).abs() < 1e-6);
+        h.current = -50.0;
+        assert_eq!(h.fraction(), 0.0, "fraction must never go negative");
+        h.current = 500.0;
+        assert_eq!(h.fraction(), 1.0, "fraction must never exceed one");
+    }
+
+    #[test]
+    fn zero_max_health_does_not_divide_by_zero() {
+        let h = Health {
+            current: 0.0,
+            max: 0.0,
+            invuln: 0.0,
+        };
+        assert_eq!(h.fraction(), 0.0);
+    }
+
+    #[test]
+    fn heal_clamps_to_max() {
+        let mut h = Health::new(100.0);
+        h.current = 40.0;
+        h.heal(25.0);
+        assert!((h.current - 65.0).abs() < 1e-6);
+        h.heal(1000.0);
+        assert_eq!(h.current, 100.0);
+    }
+
+    #[test]
+    fn death_is_at_or_below_zero() {
+        let mut h = Health::new(10.0);
+        assert!(!h.is_dead());
+        h.current = 0.0;
+        assert!(h.is_dead());
+        h.current = -1.0;
+        assert!(h.is_dead());
+    }
+
+    #[test]
+    fn body_push_accumulates_normalised_impulse() {
+        let mut b = Body::new(Vec2::ZERO, 0.5);
+        b.push(Vec2::new(10.0, 0.0), 3.0);
+        assert!((b.impulse - Vec2::new(3.0, 0.0)).length() < 1e-5);
+        b.push(Vec2::new(0.0, -4.0), 2.0);
+        assert!((b.impulse - Vec2::new(3.0, -2.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn body_push_ignores_zero_direction() {
+        let mut b = Body::new(Vec2::ZERO, 0.5);
+        b.push(Vec2::ZERO, 5.0);
+        assert_eq!(b.impulse, Vec2::ZERO);
+    }
+
+    #[test]
+    fn ephemeral_progress_runs_zero_to_one() {
+        let mut e = Ephemeral::new(2.0);
+        assert!(e.t().abs() < 1e-6);
+        e.life = 1.0;
+        assert!((e.t() - 0.5).abs() < 1e-6);
+        e.life = 0.0;
+        assert!((e.t() - 1.0).abs() < 1e-6);
+        e.life = -3.0;
+        assert!((e.t() - 1.0).abs() < 1e-6, "overrun must saturate at one");
+    }
+
+    #[test]
+    fn ephemeral_with_zero_life_is_safe() {
+        let e = Ephemeral::new(0.0);
+        assert_eq!(e.t(), 0.0);
+    }
+
+    #[test]
+    fn damp_moves_towards_the_target_and_converges() {
+        let mut v = 0.0;
+        for _ in 0..600 {
+            v = damp(v, 10.0, 5.0, 1.0 / 60.0);
+        }
+        assert!((v - 10.0).abs() < 0.01, "converged to {v}");
+    }
+
+    #[test]
+    fn damp_never_overshoots() {
+        // Even with an absurd dt the exponential form cannot pass the target.
+        let v = damp(0.0, 1.0, 20.0, 10.0);
+        assert!(v <= 1.0 + 1e-6, "overshot to {v}");
+    }
+
+    #[test]
+    fn damp_with_zero_dt_is_a_no_op() {
+        assert_eq!(damp(3.0, 99.0, 5.0, 0.0), 3.0);
+    }
+
+    #[test]
+    fn damp_vec_variants_track_the_scalar_form() {
+        let v = damp_vec2(Vec2::ZERO, Vec2::new(4.0, -2.0), 6.0, 0.1);
+        let x = damp(0.0, 4.0, 6.0, 0.1);
+        assert!((v.x - x).abs() < 1e-6);
+        let v3 = damp_vec3(Vec3::ZERO, Vec3::splat(4.0), 6.0, 0.1);
+        assert!((v3.z - x).abs() < 1e-6);
+    }
+
+    #[test]
+    fn yaw_towards_faces_the_cardinal_directions() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        assert!(yaw_towards(Vec2::new(0.0, 1.0)).abs() < 1e-6);
+        assert!((yaw_towards(Vec2::new(1.0, 0.0)) - FRAC_PI_2).abs() < 1e-6);
+        assert!((yaw_towards(Vec2::new(0.0, -1.0)).abs() - PI).abs() < 1e-6);
+    }
+
+    #[test]
+    fn yaw_towards_is_stable_for_a_zero_vector() {
+        assert_eq!(yaw_towards(Vec2::ZERO), 0.0);
+    }
+
+    #[test]
+    fn world_and_flat_round_trip() {
+        let p = Vec2::new(3.0, -7.0);
+        assert_eq!(flat(to_world(p, 2.5)), p);
+        assert_eq!(to_world(p, 2.5).y, 2.5);
+    }
+
+    #[test]
+    fn time_formats_as_minutes_and_seconds() {
+        assert_eq!(format_time(0.0), "0:00");
+        assert_eq!(format_time(9.9), "0:09");
+        assert_eq!(format_time(60.0), "1:00");
+        assert_eq!(format_time(671.0), "11:11");
+        assert_eq!(format_time(-5.0), "0:00", "negative time must not wrap");
+    }
+
+    #[test]
+    fn counts_format_compactly() {
+        assert_eq!(format_count(0), "0");
+        assert_eq!(format_count(999), "999");
+        assert_eq!(format_count(1000), "1.0k");
+        assert_eq!(format_count(14_800), "14.8k");
+        assert_eq!(format_count(2_500_000), "2.50M");
+    }
+}

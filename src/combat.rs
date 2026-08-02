@@ -775,3 +775,199 @@ fn sync_transforms(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entity(i: u32) -> Entity {
+        Entity::from_raw_u32(i).expect("valid test entity index")
+    }
+
+    fn grid_with(points: &[(u32, Vec2)]) -> EnemyGrid {
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(&ArenaBounds {
+            half_x: 20.0,
+            half_z: 13.0,
+        });
+        for (i, pos) in points {
+            grid.insert(GridEntry {
+                entity: entity(*i),
+                pos: *pos,
+                radius: 0.5,
+                is_boss: false,
+            });
+        }
+        grid
+    }
+
+    #[test]
+    fn an_empty_grid_finds_nothing() {
+        let grid = grid_with(&[]);
+        assert!(grid.nearest(Vec2::ZERO, 50.0).is_none());
+        assert!(grid.best_target(Vec2::ZERO, 50.0).is_none());
+    }
+
+    #[test]
+    fn nearest_picks_the_closest_entry() {
+        let grid = grid_with(&[(1, Vec2::new(5.0, 0.0)), (2, Vec2::new(1.0, 0.0))]);
+        assert_eq!(grid.nearest(Vec2::ZERO, 20.0).unwrap().entity, entity(2));
+    }
+
+    #[test]
+    fn nearest_respects_its_radius() {
+        let grid = grid_with(&[(1, Vec2::new(9.0, 0.0))]);
+        assert!(grid.nearest(Vec2::ZERO, 5.0).is_none());
+        assert!(grid.nearest(Vec2::ZERO, 10.0).is_some());
+    }
+
+    #[test]
+    fn for_each_near_matches_a_brute_force_scan() {
+        // The grid is an optimisation; it must return exactly what a linear
+        // scan would, or weapons will silently miss targets near cell edges.
+        let mut rng = crate::rng::Rng::seeded(4242);
+        let points: Vec<(u32, Vec2)> = (0..400)
+            .map(|i| {
+                (
+                    i,
+                    Vec2::new(rng.range(-20.0, 20.0), rng.range(-13.0, 13.0)),
+                )
+            })
+            .collect();
+        let grid = grid_with(&points);
+
+        for _ in 0..200 {
+            let origin = Vec2::new(rng.range(-20.0, 20.0), rng.range(-13.0, 13.0));
+            let radius = rng.range(0.5, 14.0);
+
+            let mut expected: Vec<Entity> = points
+                .iter()
+                .filter(|(_, p)| p.distance(origin) <= radius)
+                .map(|(i, _)| entity(*i))
+                .collect();
+            expected.sort_unstable();
+
+            let mut found = Vec::new();
+            grid.for_each_near(origin, radius, |e| found.push(e.entity));
+            found.sort_unstable();
+
+            assert_eq!(found, expected, "origin {origin:?} radius {radius}");
+        }
+    }
+
+    #[test]
+    fn queries_far_outside_the_grid_are_safe() {
+        let grid = grid_with(&[(1, Vec2::ZERO)]);
+        // Must not panic or index out of bounds.
+        assert!(grid.nearest(Vec2::new(10_000.0, 10_000.0), 5.0).is_none());
+        let mut hits = 0;
+        grid.for_each_near(Vec2::new(-9999.0, 0.0), 3.0, |_| hits += 1);
+        assert_eq!(hits, 0);
+    }
+
+    #[test]
+    fn entries_outside_the_grid_are_dropped_not_panicked_on() {
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(&ArenaBounds {
+            half_x: 5.0,
+            half_z: 5.0,
+        });
+        grid.insert(GridEntry {
+            entity: entity(1),
+            pos: Vec2::new(10_000.0, 10_000.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+        assert!(grid.nearest(Vec2::ZERO, 100.0).is_none());
+    }
+
+    #[test]
+    fn best_target_prefers_a_boss_over_closer_chaff() {
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(&ArenaBounds::default());
+        grid.insert(GridEntry {
+            entity: entity(1),
+            pos: Vec2::new(1.0, 0.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+        grid.insert(GridEntry {
+            entity: entity(2),
+            pos: Vec2::new(9.0, 0.0),
+            radius: 2.0,
+            is_boss: true,
+        });
+        assert_eq!(
+            grid.best_target(Vec2::ZERO, 20.0).unwrap().entity,
+            entity(2),
+            "the laser should ignore chaff while a boss is in range"
+        );
+    }
+
+    #[test]
+    fn best_target_falls_back_to_nearest_without_a_boss() {
+        let grid = grid_with(&[(1, Vec2::new(8.0, 0.0)), (2, Vec2::new(2.0, 0.0))]);
+        assert_eq!(
+            grid.best_target(Vec2::ZERO, 20.0).unwrap().entity,
+            entity(2)
+        );
+    }
+
+    #[test]
+    fn rebuilding_clears_the_previous_frame() {
+        let mut grid = grid_with(&[(1, Vec2::ZERO)]);
+        assert!(grid.nearest(Vec2::ZERO, 5.0).is_some());
+        grid.rebuild(&ArenaBounds::default());
+        assert!(
+            grid.nearest(Vec2::ZERO, 5.0).is_none(),
+            "stale entries would let weapons shoot dead enemies"
+        );
+    }
+
+    #[test]
+    fn rebuilding_to_a_different_arena_size_is_safe() {
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(&ArenaBounds {
+            half_x: 5.0,
+            half_z: 5.0,
+        });
+        grid.rebuild(&ArenaBounds {
+            half_x: 40.0,
+            half_z: 30.0,
+        });
+        grid.insert(GridEntry {
+            entity: entity(1),
+            pos: Vec2::new(35.0, 25.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+        assert!(grid.nearest(Vec2::new(35.0, 25.0), 2.0).is_some());
+    }
+
+    #[test]
+    fn shot_builders_set_the_right_faction() {
+        let f = SpawnShot::friendly(Vec2::ZERO, Vec2::X, 10.0, 5.0, ShotVisual::Dart);
+        assert!(f.friendly);
+        let e = SpawnShot::enemy(Vec2::ZERO, Vec2::X, 10.0, 5.0, ShotVisual::Tack);
+        assert!(!e.friendly);
+    }
+
+    #[test]
+    fn shot_directions_are_normalised() {
+        let s = SpawnShot::friendly(Vec2::ZERO, Vec2::new(30.0, 40.0), 10.0, 5.0, ShotVisual::Dart);
+        assert!((s.dir.length() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_zero_direction_shot_does_not_produce_nan() {
+        let s = SpawnShot::friendly(Vec2::ZERO, Vec2::ZERO, 10.0, 5.0, ShotVisual::Dart);
+        assert!(s.dir.is_finite());
+    }
+
+    #[test]
+    fn actors_default_to_colliding_and_confined() {
+        let a = Actor::default();
+        assert!(a.collides);
+        assert!(a.confined);
+    }
+}

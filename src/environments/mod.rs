@@ -103,13 +103,24 @@ impl EnvKind {
     }
 
     pub fn build(self, rng: &mut Rng) -> SceneData {
-        match self {
+        let mut scene = match self {
             Self::Desk => desk::build(rng),
             Self::Forest => forest::build(rng),
             Self::Rooftop => rooftop::build(rng),
             Self::Grid => grid::build(rng),
             Self::Arcane => arcane::build(rng),
+        };
+
+        // Pull territory markers far enough inside that their whole capture
+        // radius is reachable. Authoring zones by eye against a corner is easy
+        // to get slightly wrong, and the failure mode - a zone the player can
+        // never fully stand in - is invisible until someone tries to hold it.
+        let bounds = scene.bounds;
+        for zone in &mut scene.zones {
+            *zone = bounds.clamp(*zone, crate::allies::ZONE_RADIUS);
         }
+
+        scene
     }
 }
 
@@ -461,5 +472,345 @@ fn tick_pulsing_hazards(
             hazard.radius * 0.35
         };
         transform.scale = Vec3::new(scale, 1.0, scale);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_all() -> Vec<(EnvKind, SceneData)> {
+        EnvKind::ALL
+            .iter()
+            .map(|k| (*k, k.build(&mut Rng::seeded(0xA11CE))))
+            .collect()
+    }
+
+    #[test]
+    fn every_world_builds_without_panicking() {
+        assert_eq!(build_all().len(), EnvKind::COUNT);
+    }
+
+    #[test]
+    fn the_kind_list_matches_the_declared_count() {
+        assert_eq!(EnvKind::ALL.len(), EnvKind::COUNT);
+        // The name table in `enemy.rs` indexes by `env as usize`, so the
+        // discriminants must line up with the array order.
+        for (i, kind) in EnvKind::ALL.iter().enumerate() {
+            assert_eq!(*kind as usize, i, "{kind:?} is out of order");
+        }
+    }
+
+    #[test]
+    fn cycling_worlds_wraps_in_both_directions() {
+        for kind in EnvKind::ALL {
+            assert_eq!(kind.next().prev(), kind);
+            assert_eq!(kind.prev().next(), kind);
+        }
+        let mut seen = vec![EnvKind::Desk];
+        let mut cursor = EnvKind::Desk;
+        for _ in 1..EnvKind::COUNT {
+            cursor = cursor.next();
+            seen.push(cursor);
+        }
+        assert_eq!(cursor.next(), EnvKind::Desk, "the carousel must loop");
+        seen.sort_by_key(|k| *k as usize);
+        seen.dedup();
+        assert_eq!(seen.len(), EnvKind::COUNT, "next() skipped a world");
+    }
+
+    #[test]
+    fn every_world_is_fully_described() {
+        for kind in EnvKind::ALL {
+            assert!(!kind.title().is_empty(), "{kind:?} has no title");
+            assert!(!kind.tagline().is_empty(), "{kind:?} has no tagline");
+            assert!(!kind.quirk().is_empty(), "{kind:?} has no quirk");
+            assert!(!kind.short_name().is_empty(), "{kind:?} has no chip label");
+            assert!(
+                kind.short_name().len() <= 7,
+                "{kind:?} chip label will overflow its box"
+            );
+        }
+    }
+
+    #[test]
+    fn world_titles_and_accents_are_distinct() {
+        let mut titles: Vec<_> = EnvKind::ALL.iter().map(|k| k.title()).collect();
+        titles.sort_unstable();
+        titles.dedup();
+        assert_eq!(titles.len(), EnvKind::COUNT);
+
+        // Accents identify a world at a glance, so no two may collide.
+        for a in EnvKind::ALL {
+            for b in EnvKind::ALL {
+                if a as usize >= b as usize {
+                    continue;
+                }
+                let (x, y) = (a.accent().to_linear(), b.accent().to_linear());
+                let delta = (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs();
+                assert!(delta > 0.2, "{a:?} and {b:?} look the same");
+            }
+        }
+    }
+
+    #[test]
+    fn every_arena_is_a_sensible_size() {
+        for (kind, scene) in build_all() {
+            let b = scene.bounds;
+            assert!(b.half_x >= 15.0 && b.half_x <= 40.0, "{kind:?} x {}", b.half_x);
+            assert!(b.half_z >= 10.0 && b.half_z <= 30.0, "{kind:?} z {}", b.half_z);
+            // Wider than tall keeps the third-person overlook framing sane.
+            assert!(b.half_x > b.half_z, "{kind:?} is taller than it is wide");
+        }
+    }
+
+    #[test]
+    fn every_arena_is_furnished() {
+        for (kind, scene) in build_all() {
+            assert!(scene.props.len() > 10, "{kind:?} is bare");
+            assert!(!scene.lights.is_empty(), "{kind:?} has no point lights");
+            assert!(scene.sun_illuminance > 0.0, "{kind:?} has no sun");
+        }
+    }
+
+    #[test]
+    fn every_arena_has_contestable_territory() {
+        for (kind, scene) in build_all() {
+            assert!(
+                scene.zones.len() >= 4,
+                "{kind:?} has only {} zones",
+                scene.zones.len()
+            );
+        }
+    }
+
+    #[test]
+    fn zones_sit_inside_their_arena_with_room_to_stand() {
+        for (kind, scene) in build_all() {
+            for zone in &scene.zones {
+                let clamped = scene.bounds.clamp(*zone, crate::allies::ZONE_RADIUS);
+                assert!(
+                    (clamped - *zone).length() < 1e-3,
+                    "{kind:?} zone {zone:?} hangs off the edge"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zones_are_spread_out_rather_than_stacked() {
+        for (kind, scene) in build_all() {
+            for (i, a) in scene.zones.iter().enumerate() {
+                for b in scene.zones.iter().skip(i + 1) {
+                    assert!(
+                        a.distance(*b) > crate::allies::ZONE_RADIUS,
+                        "{kind:?} has overlapping zones at {a:?} and {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hazards_are_placed_inside_the_arena() {
+        for (kind, scene) in build_all() {
+            for h in &scene.hazards {
+                assert!(
+                    scene.bounds.contains(h.pos),
+                    "{kind:?} hazard at {:?} is off the board",
+                    h.pos
+                );
+                assert!(h.radius > 0.0, "{kind:?} has a zero-radius hazard");
+                assert!(h.slow > 0.0 && h.slow <= 1.0, "{kind:?} slow {}", h.slow);
+            }
+        }
+    }
+
+    #[test]
+    fn healing_hazards_only_appear_where_they_are_meant_to() {
+        for (kind, scene) in build_all() {
+            let healing = scene
+                .hazards
+                .iter()
+                .any(|h| h.kind == HazardKind::Font && h.dps < 0.0);
+            assert_eq!(
+                healing,
+                kind == EnvKind::Arcane,
+                "{kind:?} healing terrain is a Sanctum signature"
+            );
+        }
+    }
+
+    #[test]
+    fn pulsing_hazards_have_a_legible_duty_cycle() {
+        for (kind, scene) in build_all() {
+            for h in &scene.hazards {
+                let Some((period, on)) = h.duty else { continue };
+                assert!(period > 1.0, "{kind:?} pulses too fast to read");
+                assert!(
+                    (0.1..0.75).contains(&on),
+                    "{kind:?} duty {on} leaves no safe window"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_spawn_point_at_the_origin_is_never_walled_in() {
+        // The player always starts at the centre; if a world buries the origin
+        // in props, the run begins stuck inside a mug.
+        for (kind, scene) in build_all() {
+            let mut field = ObstacleField::default();
+            for prop in &scene.props {
+                if let Some(shape) = prop.collider {
+                    field.push(prop.pos, shape, prop.blocks_shots, prop.height);
+                }
+            }
+            let resolved = field.resolve(Vec2::ZERO, crate::player::PLAYER_RADIUS);
+            assert!(
+                resolved.length() < 4.0,
+                "{kind:?} shoves the player {} units at spawn",
+                resolved.length()
+            );
+        }
+    }
+
+    #[test]
+    fn arenas_leave_room_to_move() {
+        // Sample a lattice and require that most of it is walkable, or the
+        // arena is a maze rather than a battlefield.
+        for (kind, scene) in build_all() {
+            let mut field = ObstacleField::default();
+            for prop in &scene.props {
+                if let Some(shape) = prop.collider {
+                    field.push(prop.pos, shape, prop.blocks_shots, prop.height);
+                }
+            }
+            let (mut open, mut total) = (0, 0);
+            let mut x = -scene.bounds.half_x;
+            while x <= scene.bounds.half_x {
+                let mut z = -scene.bounds.half_z;
+                while z <= scene.bounds.half_z {
+                    total += 1;
+                    if !field.overlaps(Vec2::new(x, z), crate::player::PLAYER_RADIUS) {
+                        open += 1;
+                    }
+                    z += 1.0;
+                }
+                x += 1.0;
+            }
+            let share = f64::from(open) / f64::from(total);
+            assert!(share > 0.6, "{kind:?} is only {share:.2} walkable");
+        }
+    }
+
+    #[test]
+    fn gusts_and_spotlights_are_configured_coherently() {
+        for (kind, scene) in build_all() {
+            let g = &scene.gust;
+            assert!(!g.label.is_empty(), "{kind:?} gust has no label");
+            assert!(g.duration > 0.0 && g.cooldown > 0.0, "{kind:?} gust timing");
+            assert!(g.strength > 0.0, "{kind:?} gust does nothing");
+            assert!(
+                (g.dir.length() - 1.0).abs() < 1e-3,
+                "{kind:?} gust direction is not normalised"
+            );
+            assert!(g.lane_half_width > 0.0);
+
+            let s = &scene.spotlight;
+            assert!(!s.label.is_empty(), "{kind:?} spotlight has no label");
+            assert!(s.radius > 0.0);
+            assert!(s.damage_bonus > 0.0);
+            assert!(
+                scene.bounds.contains(s.center),
+                "{kind:?} spotlight is off the board"
+            );
+        }
+    }
+
+    #[test]
+    fn worlds_are_visually_distinct() {
+        // Two arenas that share a sky and a sun read as the same place.
+        let scenes = build_all();
+        for (i, (a_kind, a)) in scenes.iter().enumerate() {
+            for (b_kind, b) in scenes.iter().skip(i + 1) {
+                let sky_delta = {
+                    let (x, y) = (a.sky.to_linear(), b.sky.to_linear());
+                    (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs()
+                };
+                let ambient_delta = {
+                    let (x, y) = (a.ambient.to_linear(), b.ambient.to_linear());
+                    (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs()
+                };
+                assert!(
+                    sky_delta > 1e-4 || ambient_delta > 0.01,
+                    "{a_kind:?} and {b_kind:?} are lit identically"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn building_a_world_twice_with_one_seed_is_deterministic() {
+        for kind in EnvKind::ALL {
+            let a = kind.build(&mut Rng::seeded(7));
+            let b = kind.build(&mut Rng::seeded(7));
+            assert_eq!(a.props.len(), b.props.len(), "{kind:?} prop count drifted");
+            assert_eq!(a.zones, b.zones, "{kind:?} zones drifted");
+            for (pa, pb) in a.props.iter().zip(b.props.iter()) {
+                assert!((pa.pos - pb.pos).length() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn different_seeds_vary_the_scatter() {
+        // Only worlds with random scatter need to differ; all five have some.
+        for kind in EnvKind::ALL {
+            let a = kind.build(&mut Rng::seeded(1));
+            let b = kind.build(&mut Rng::seeded(2));
+            let same = a.props.len() == b.props.len()
+                && a.props
+                    .iter()
+                    .zip(b.props.iter())
+                    .all(|(x, y)| (x.pos - y.pos).length() < 1e-6);
+            assert!(!same, "{kind:?} ignores its seed entirely");
+        }
+    }
+
+    #[test]
+    fn tall_props_block_shots_and_flat_ones_do_not() {
+        for (kind, scene) in build_all() {
+            for prop in &scene.props {
+                if prop.collider.is_none() {
+                    continue;
+                }
+                if prop.blocks_shots {
+                    assert!(
+                        prop.height >= 0.75,
+                        "{kind:?} has a {}-high prop stopping shots",
+                        prop.height
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prop_spec_builder_defaults_are_sane() {
+        let p = PropSpec::new(crate::meshgen::cube(1.0, 1.0, 1.0), Vec2::ZERO);
+        assert!(p.collider.is_none());
+        assert!(!p.blocks_shots);
+
+        let solid = PropSpec::new(crate::meshgen::cube(1.0, 1.0, 1.0), Vec2::ZERO)
+            .solid(ColliderShape::Circle(1.0), 2.0);
+        assert!(solid.blocks_shots, "tall props should stop shots");
+
+        let low = PropSpec::new(crate::meshgen::cube(1.0, 1.0, 1.0), Vec2::ZERO)
+            .solid(ColliderShape::Circle(1.0), 0.2);
+        assert!(!low.blocks_shots, "flat props should not");
+
+        let forced = solid.passthrough();
+        assert!(!forced.blocks_shots);
     }
 }

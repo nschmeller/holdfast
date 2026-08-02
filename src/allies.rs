@@ -924,3 +924,223 @@ fn zone_visuals(
         transform.scale = Vec3::new(fill, 1.0, fill);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reset_economy_can_afford_something_immediately() {
+        let mut e = Economy::default();
+        e.reset();
+        let cheapest = TurretKind::ALL
+            .iter()
+            .map(|k| k.scrap_cost())
+            .fold(f32::MAX, f32::min);
+        assert!(
+            e.can_afford_scrap(cheapest),
+            "the first prep window must allow at least one build"
+        );
+    }
+
+    #[test]
+    fn spending_only_succeeds_when_affordable() {
+        let mut e = Economy::default();
+        e.gain_scrap(50.0);
+        assert!(e.spend_scrap(30.0));
+        assert!((e.scrap - 20.0).abs() < 1e-5);
+        assert!(!e.spend_scrap(30.0), "overspending must fail");
+        assert!((e.scrap - 20.0).abs() < 1e-5, "a failed spend must not deduct");
+    }
+
+    #[test]
+    fn cores_behave_the_same_way() {
+        let mut e = Economy::default();
+        e.gain_cores(4.0);
+        assert!(e.spend_cores(4.0));
+        assert!(!e.spend_cores(0.5));
+        assert_eq!(e.cores, 0.0);
+    }
+
+    #[test]
+    fn lifetime_totals_ignore_spending() {
+        let mut e = Economy::default();
+        e.gain_scrap(100.0);
+        e.spend_scrap(90.0);
+        e.gain_cores(5.0);
+        e.spend_cores(5.0);
+        assert!((e.lifetime_scrap - 100.0).abs() < 1e-5);
+        assert!((e.lifetime_cores - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn reset_wipes_the_ledger() {
+        let mut e = Economy::default();
+        e.gain_scrap(500.0);
+        e.gain_cores(50.0);
+        e.reset();
+        assert_eq!(e.cores, 0.0);
+        assert_eq!(e.lifetime_scrap, 0.0);
+    }
+
+    #[test]
+    fn every_ally_is_described_and_priced() {
+        for kind in AllyKind::ALL {
+            assert!(!kind.name().is_empty());
+            assert!(!kind.blurb().is_empty());
+            assert!(kind.core_cost() > 0.0);
+            let (hp, speed, damage, range, cooldown) = kind.stats();
+            assert!(hp > 0.0 && speed > 0.0 && damage > 0.0);
+            assert!(range > 0.0 && cooldown > 0.0);
+        }
+    }
+
+    #[test]
+    fn allies_keep_pace_with_the_player() {
+        // A squad that cannot follow is useless, so nobody may be much slower
+        // than the hero.
+        for kind in AllyKind::ALL {
+            let speed = kind.stats().1;
+            assert!(
+                speed > crate::player::BASE_SPEED * 0.4,
+                "{kind:?} at {speed} will always be left behind"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bulwark_is_the_tank_and_the_scout_is_the_cheap_one() {
+        let bulwark_hp = AllyKind::Bulwark.stats().0;
+        for kind in AllyKind::ALL {
+            if kind != AllyKind::Bulwark {
+                assert!(bulwark_hp > kind.stats().0, "{kind:?} out-tanks the Bulwark");
+            }
+            assert!(AllyKind::Scout.core_cost() <= kind.core_cost());
+        }
+    }
+
+    #[test]
+    fn only_the_gunner_fights_at_range() {
+        for kind in AllyKind::ALL {
+            assert_eq!(kind.ranged(), kind == AllyKind::Gunner);
+        }
+        assert!(AllyKind::Gunner.stats().3 > AllyKind::Bulwark.stats().3);
+    }
+
+    #[test]
+    fn ally_trim_colours_are_distinct() {
+        for a in AllyKind::ALL {
+            for b in AllyKind::ALL {
+                if a as usize >= b as usize {
+                    continue;
+                }
+                let (x, y) = (a.trim_color().to_linear(), b.trim_color().to_linear());
+                let delta =
+                    (x.red - y.red).abs() + (x.green - y.green).abs() + (x.blue - y.blue).abs();
+                assert!(delta > 0.15, "{a:?} and {b:?} look alike");
+            }
+        }
+    }
+
+    #[test]
+    fn stances_cycle_through_all_three() {
+        let mut s = Stance::Follow;
+        let mut seen = vec![s];
+        for _ in 0..2 {
+            s = s.next();
+            seen.push(s);
+        }
+        assert_eq!(s.next(), Stance::Follow, "the cycle must close");
+        seen.sort_by_key(|s| s.label());
+        seen.dedup();
+        assert_eq!(seen.len(), 3);
+    }
+
+    #[test]
+    fn every_stance_has_a_label() {
+        for s in [Stance::Follow, Stance::Hold, Stance::Guard] {
+            assert!(!s.label().is_empty());
+        }
+    }
+
+    #[test]
+    fn every_structure_is_described_and_priced() {
+        for kind in TurretKind::ALL {
+            assert!(!kind.name().is_empty());
+            assert!(!kind.blurb().is_empty());
+            assert!(kind.scrap_cost() > 0.0);
+            let (hp, ..) = kind.stats();
+            assert!(hp > 0.0, "{kind:?} would die instantly");
+        }
+    }
+
+    #[test]
+    fn the_barricade_is_the_cheapest_and_toughest_thing_you_can_build() {
+        let (barricade_hp, damage, range, rate, _) = TurretKind::Barricade.stats();
+        assert_eq!(damage, 0.0, "a barricade must not shoot");
+        assert_eq!(range, 0.0);
+        assert_eq!(rate, 0.0);
+        for kind in TurretKind::ALL {
+            assert!(barricade_hp >= kind.stats().0, "{kind:?} out-tanks the wall");
+            assert!(TurretKind::Barricade.scrap_cost() <= kind.scrap_cost());
+        }
+    }
+
+    #[test]
+    fn only_the_generator_pays_income() {
+        for kind in TurretKind::ALL {
+            let income = kind.income();
+            assert_eq!(
+                income > 0.0,
+                kind == TurretKind::Generator,
+                "{kind:?} income is wrong"
+            );
+        }
+    }
+
+    #[test]
+    fn the_generator_eventually_pays_for_itself() {
+        let cost = TurretKind::Generator.scrap_cost();
+        let payback = cost / TurretKind::Generator.income();
+        assert!(
+            (10.0..120.0).contains(&payback),
+            "payback in {payback}s is not a real decision"
+        );
+    }
+
+    #[test]
+    fn the_shocker_controls_rather_than_kills() {
+        let (_, damage, range, rate, _) = TurretKind::Shocker.stats();
+        assert_eq!(damage, 0.0);
+        assert!(range > 0.0 && rate > 0.0, "it still needs to tick");
+    }
+
+    #[test]
+    fn damage_turrets_trade_rate_against_punch() {
+        let (_, tack_dmg, _, tack_rate, _) = TurretKind::Tack.stats();
+        let (_, lob_dmg, _, lob_rate, _) = TurretKind::Lobber.stats();
+        assert!(tack_rate < lob_rate, "the tack turret should be the fast one");
+        assert!(lob_dmg > tack_dmg, "the lobber should be the heavy one");
+    }
+
+    #[test]
+    fn a_fresh_squad_has_a_cap_and_no_members() {
+        let mut s = Squad::default();
+        s.reset();
+        assert_eq!(s.count, 0);
+        assert!(s.cap > 0);
+        assert_eq!(s.stance, Stance::Follow);
+    }
+
+    #[test]
+    fn zones_start_neutral() {
+        let z = Zone {
+            owner: ZoneOwner::Neutral,
+            progress: 0.0,
+            contested: false,
+            pulse: 0.0,
+        };
+        assert_eq!(z.owner, ZoneOwner::Neutral);
+        assert!(!z.contested);
+    }
+}

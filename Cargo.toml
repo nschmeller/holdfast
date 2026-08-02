@@ -8,6 +8,14 @@ readme = "README.md"
 keywords = ["game", "roguelite", "bevy", "strategy"]
 categories = ["games"]
 
+[lib]
+name = "holdfast"
+path = "src/lib.rs"
+
+[[bin]]
+name = "holdfast"
+path = "src/main.rs"
+
 [features]
 default = []
 # Turns Bevy's ECS panics from "<Enable the debug feature to see the name>"

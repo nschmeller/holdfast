@@ -619,3 +619,165 @@ pub fn friendly_damageable() -> Damageable {
         hostile_target: true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fresh_loadout_has_exactly_the_starter_weapon() {
+        let mut l = Loadout::default();
+        l.reset();
+        assert_eq!(l.slots.len(), 1);
+        assert_eq!(l.level_of(WeaponKind::PencilDart), Some(1));
+    }
+
+    #[test]
+    fn adding_a_held_weapon_levels_it_instead_of_duplicating() {
+        let mut l = Loadout::default();
+        l.reset();
+        l.add(WeaponKind::PencilDart);
+        assert_eq!(l.slots.len(), 1);
+        assert_eq!(l.level_of(WeaponKind::PencilDart), Some(2));
+    }
+
+    #[test]
+    fn the_loadout_respects_its_slot_cap() {
+        let mut l = Loadout::default();
+        l.reset();
+        for kind in WeaponKind::ALL {
+            l.add(kind);
+        }
+        assert_eq!(l.slots.len(), MAX_WEAPONS);
+        assert!(!l.has_room());
+    }
+
+    #[test]
+    fn weapon_levels_stop_at_the_cap() {
+        let mut l = Loadout::default();
+        l.reset();
+        for _ in 0..50 {
+            l.level_up(WeaponKind::PencilDart);
+        }
+        assert_eq!(l.level_of(WeaponKind::PencilDart), Some(MAX_LEVEL));
+    }
+
+    #[test]
+    fn levelling_an_unheld_weapon_is_a_no_op() {
+        let mut l = Loadout::default();
+        l.reset();
+        l.level_up(WeaponKind::Stapler);
+        assert_eq!(l.level_of(WeaponKind::Stapler), None);
+    }
+
+    #[test]
+    fn a_full_loadout_only_offers_what_it_already_holds() {
+        let mut l = Loadout::default();
+        l.reset();
+        for kind in WeaponKind::ALL {
+            l.add(kind);
+        }
+        for kind in l.offerable() {
+            assert!(
+                l.level_of(kind).is_some(),
+                "{kind:?} offered with no slot free"
+            );
+        }
+    }
+
+    #[test]
+    fn maxed_weapons_drop_out_of_the_offer_pool() {
+        let mut l = Loadout::default();
+        l.reset();
+        for _ in 0..MAX_LEVEL {
+            l.level_up(WeaponKind::PencilDart);
+        }
+        assert!(!l.offerable().contains(&WeaponKind::PencilDart));
+    }
+
+    #[test]
+    fn an_empty_loadout_can_offer_everything() {
+        let l = Loadout::default();
+        assert_eq!(l.offerable().len(), WeaponKind::ALL.len());
+    }
+
+    #[test]
+    fn every_weapon_is_described() {
+        for kind in WeaponKind::ALL {
+            assert!(!kind.name().is_empty());
+            assert!(!kind.blurb().is_empty());
+            assert!(kind.mastery().starts_with("MASTERY:"));
+        }
+    }
+
+    #[test]
+    fn weapon_names_are_unique() {
+        let mut names: Vec<_> = WeaponKind::ALL.iter().map(|k| k.name()).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total);
+    }
+
+    #[test]
+    fn levelling_a_weapon_strictly_improves_it() {
+        let stats = crate::player::PlayerStats::default();
+        for kind in WeaponKind::ALL {
+            let mut previous_damage = 0.0;
+            for level in 1..=MAX_LEVEL {
+                let d = kind.damage_at(level, &stats);
+                assert!(d > previous_damage, "{kind:?} damage stalled at {level}");
+                previous_damage = d;
+            }
+            // The orbit weapon has no cooldown by design.
+            if kind != WeaponKind::ClipOrbit {
+                assert!(
+                    kind.cooldown_at(MAX_LEVEL, &stats) < kind.cooldown_at(1, &stats),
+                    "{kind:?} never fires faster"
+                );
+            }
+            assert!(kind.range_at(MAX_LEVEL, &stats) >= kind.range_at(1, &stats));
+        }
+    }
+
+    #[test]
+    fn player_stats_scale_weapon_output() {
+        let mut buffed = crate::player::PlayerStats::default();
+        buffed.damage_mult = 2.0;
+        buffed.haste = 2.0;
+        buffed.area = 2.0;
+        let base = crate::player::PlayerStats::default();
+
+        let kind = WeaponKind::PencilDart;
+        assert!((kind.damage_at(1, &buffed) / kind.damage_at(1, &base) - 2.0).abs() < 1e-4);
+        assert!((kind.cooldown_at(1, &base) / kind.cooldown_at(1, &buffed) - 2.0).abs() < 1e-4);
+        assert!((kind.range_at(1, &buffed) / kind.range_at(1, &base) - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn cooldowns_stay_positive_under_extreme_haste() {
+        let mut stats = crate::player::PlayerStats::default();
+        stats.haste = 1000.0;
+        for kind in WeaponKind::ALL {
+            let cd = kind.cooldown_at(MAX_LEVEL, &stats);
+            assert!(cd >= 0.0 && cd.is_finite(), "{kind:?} cooldown {cd}");
+        }
+    }
+
+    #[test]
+    fn short_range_weapons_stay_short_range() {
+        let stats = crate::player::PlayerStats::default();
+        let stapler = WeaponKind::Stapler.range_at(MAX_LEVEL, &stats);
+        let dart = WeaponKind::PencilDart.range_at(1, &stats);
+        assert!(stapler < dart, "the stapler lost its identity");
+    }
+
+    #[test]
+    fn rotate_preserves_length_and_turns_the_right_way() {
+        let v = Vec2::new(1.0, 0.0);
+        let r = rotate(v, std::f32::consts::FRAC_PI_2);
+        assert!((r.length() - 1.0).abs() < 1e-5);
+        assert!((r - Vec2::new(0.0, 1.0)).length() < 1e-5);
+        assert!((rotate(v, 0.0) - v).length() < 1e-6);
+    }
+}
