@@ -11,7 +11,7 @@ use crate::art::GameArt;
 use crate::combat::Damageable;
 use crate::common::*;
 use crate::enemy::StatusEffects;
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 /// The player's base movement speed. Every enemy is tuned below this.
 pub const BASE_SPEED: f32 = 8.4;
@@ -147,7 +147,7 @@ impl Plugin for PlayerPlugin {
                     .in_set(GameSet::Move),
             )
             .add_systems(Update, player_regen.in_set(GameSet::Resolve))
-            .add_systems(OnExit(AppState::Menu), spawn_player);
+            .add_systems(OnExit(AppState::Menu), spawn_player.in_set(RunSetup::Spawn));
     }
 }
 

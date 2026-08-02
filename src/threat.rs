@@ -244,6 +244,12 @@ impl WaveCycle {
         1.0 + self.early_bonus
     }
 
+    /// How long the current wave's assault runs. Grows slowly - the pressure
+    /// is meant to come from density, not from longer sieges.
+    pub fn assault_length(&self) -> f32 {
+        20.0 + (self.wave as f32 * 0.4).min(12.0)
+    }
+
     pub fn call_early(&mut self) {
         if self.in_prep() {
             self.early_bonus = self.pending_bonus();
@@ -282,8 +288,7 @@ pub fn tick_waves(
             cycle.budget = (18.0 + cycle.wave as f32 * 6.0)
                 * threat.spawn_mult()
                 * clock.time_power().sqrt();
-            // Assault length grows slowly; the pressure comes from density.
-            cycle.timer = 20.0 + (cycle.wave as f32 * 0.4).min(12.0);
+            cycle.timer = cycle.assault_length();
             cycle.announce = 2.5;
         }
         Phase::Assault => {

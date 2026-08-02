@@ -108,7 +108,9 @@ struct PlanBanner;
 #[derive(Component)]
 struct PlanText;
 #[derive(Component)]
-struct AnnounceLabel;
+struct AnnounceRoot;
+#[derive(Component)]
+struct AnnounceText;
 #[derive(Component)]
 struct ControlsLabel;
 
@@ -377,9 +379,10 @@ fn centre_overlays(root: &mut ChildSpawnerCommands) {
         bar(col, 400.0, 11.0, pal::BOSS_TRIM, BossFill);
     });
 
-    // Wave / boss announcements.
+    // Wave / boss announcements. The container and the text carry separate
+    // markers so the update system can prove its queries are disjoint.
     root.spawn((
-        AnnounceLabel,
+        AnnounceRoot,
         Node {
             position_type: PositionType::Absolute,
             top: Val::Percent(26.0),
@@ -389,7 +392,7 @@ fn centre_overlays(root: &mut ChildSpawnerCommands) {
             ..default()
         },
         Pickable::IGNORE,
-        children![text("", 44.0, pal::BOSS_TRIM)],
+        children![(text("", 44.0, pal::BOSS_TRIM), AnnounceText)],
     ));
 
     // Hint banner.
@@ -397,7 +400,9 @@ fn centre_overlays(root: &mut ChildSpawnerCommands) {
         HintBanner,
         Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Percent(17.0),
+            // Low enough to clear the level-up card row, which occupies the
+            // middle band whenever it is open.
+            bottom: Val::Percent(8.0),
             left: Val::Percent(50.0),
             margin: UiRect::left(Val::Px(-260.0)),
             width: Val::Px(520.0),
@@ -468,27 +473,28 @@ fn update_vitals(
     }
 }
 
+/// Three of these queries write `&mut Text` and two write `&mut Node`; the
+/// marker filters alone do not prove them disjoint to the scheduler, so each
+/// group goes in its own `ParamSet`.
 fn update_clock(
     clock: Res<RunClock>,
     cycle: Res<WaveCycle>,
     director: Res<Director>,
-    mut set: ParamSet<(
+    mut texts: ParamSet<(
         Query<&mut Text, With<ClockLabel>>,
         Query<(&mut Text, &mut TextColor), With<PhaseLabel>>,
+        Query<&mut Text, With<AnnounceText>>,
+    )>,
+    mut nodes: ParamSet<(
         Query<&mut Node, With<PhaseBarFill>>,
+        Query<&mut Node, With<AnnounceRoot>>,
     )>,
-    mut announce: ParamSet<(
-        Query<&mut Node, With<AnnounceLabel>>,
-        Query<&mut Text, (With<AnnounceLabel>, Without<ClockLabel>)>,
-    )>,
-    children: Query<&Children, With<AnnounceLabel>>,
-    mut texts: Query<(&mut Text, &mut TextColor), Without<PhaseLabel>>,
 ) {
-    for mut t in &mut set.p0() {
+    for mut t in &mut texts.p0() {
         t.0 = format_time(clock.elapsed);
     }
 
-    for (mut t, mut color) in &mut set.p1() {
+    for (mut t, mut color) in &mut texts.p1() {
         let remaining = cycle.timer.max(0.0).ceil() as i32;
         t.0 = match cycle.phase {
             Phase::Prep => format!(
@@ -505,15 +511,15 @@ fn update_clock(
 
     let total = match cycle.phase {
         Phase::Prep => cycle.prep_length,
-        Phase::Assault => 20.0 + (cycle.wave as f32 * 0.4).min(12.0),
+        Phase::Assault => cycle.assault_length(),
     };
-    for mut node in &mut set.p2() {
+    for mut node in &mut nodes.p0() {
         node.width = Val::Percent((cycle.timer / total.max(0.01) * 100.0).clamp(0.0, 100.0));
     }
 
     // Boss / wave announcement.
     let message = director.announce.as_ref().map(|(m, _)| m.clone());
-    for mut node in &mut announce.p0() {
+    for mut node in &mut nodes.p1() {
         node.display = if message.is_some() {
             Display::Flex
         } else {
@@ -521,12 +527,8 @@ fn update_clock(
         };
     }
     if let Some(msg) = message {
-        for kids in &children {
-            for child in kids.iter() {
-                if let Ok((mut t, _)) = texts.get_mut(child) {
-                    t.0 = msg.clone();
-                }
-            }
+        for mut t in &mut texts.p2() {
+            t.0.clone_from(&msg);
         }
     }
 }

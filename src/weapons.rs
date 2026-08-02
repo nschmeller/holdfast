@@ -12,7 +12,7 @@ use crate::common::*;
 use crate::enemy::{Enemy, StatusEffects};
 use crate::player::{Player, PlayerStats};
 use crate::rng::Rng;
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 pub const MAX_WEAPONS: usize = 6;
 pub const MAX_LEVEL: u32 = 8;
@@ -203,7 +203,7 @@ impl Plugin for WeaponPlugin {
                     .chain()
                     .in_set(GameSet::Combat),
             )
-            .add_systems(OnExit(AppState::Menu), reset_loadout);
+            .add_systems(OnExit(AppState::Menu), reset_loadout.in_set(RunSetup::Reset));
     }
 }
 

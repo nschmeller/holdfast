@@ -15,7 +15,7 @@ use crate::enemy::{Enemy, StatusEffects};
 use crate::palette as pal;
 use crate::player::{Player, PlayerStats};
 use crate::threat::Threat;
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 // -- economy ----------------------------------------------------------------
 
@@ -351,7 +351,10 @@ impl Plugin for AlliesPlugin {
                     .in_set(GameSet::Resolve),
             )
             .add_systems(Update, zone_visuals.in_set(GameSet::Present))
-            .add_systems(OnExit(AppState::Menu), reset_command_state);
+            .add_systems(
+                OnExit(AppState::Menu),
+                reset_command_state.in_set(RunSetup::Reset),
+            );
     }
 }
 

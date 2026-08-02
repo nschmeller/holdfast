@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use crate::enemy::EnemyKind;
 use crate::environments::EnvKind;
 use crate::threat::RunClock;
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 /// When each subsystem comes online, in run-seconds. Ordered so the player is
 /// only ever learning one new verb at a time.
@@ -122,7 +122,10 @@ impl Plugin for OnboardingPlugin {
                 (tick_unlocks, tick_hints, notice_new_enemies)
                     .in_set(GameSet::Present),
             )
-            .add_systems(OnExit(AppState::Menu), reset_onboarding);
+            .add_systems(
+                OnExit(AppState::Menu),
+                reset_onboarding.in_set(RunSetup::Reset),
+            );
     }
 }
 

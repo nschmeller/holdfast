@@ -16,7 +16,7 @@ use crate::palette as pal;
 use crate::player::Player;
 use crate::rng::Rng;
 use crate::threat::{RunClock, Threat, enemy_power};
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EnemyKind {
@@ -313,7 +313,7 @@ impl Plugin for EnemyPlugin {
             )
             .add_systems(Update, enemy_contact.in_set(GameSet::Combat))
             .add_systems(Update, enemy_fall_off.in_set(GameSet::Resolve))
-            .add_systems(OnExit(AppState::Menu), reset_director);
+            .add_systems(OnExit(AppState::Menu), reset_director.in_set(RunSetup::Reset));
     }
 }
 
@@ -535,6 +535,14 @@ pub fn spawn_enemy(
             falling: false,
         },
         StatusEffects::default(),
+        // Without this the shared movement pass skips them and `enemy_think`
+        // writes a velocity nothing ever integrates.
+        crate::combat::Actor {
+            collides: !kind.flies(),
+            // Deliberately unconfined: knockback should be able to shove them
+            // clean off the edge, which `enemy_fall_off` then finishes.
+            confined: false,
+        },
         Health::new(hp),
         Body::new(pos, radius),
         Altitude {
@@ -878,7 +886,7 @@ fn enemy_fall_off(
                     pos: body.pos,
                     by_player: true,
                 });
-                commands.entity(entity).insert(Doomed);
+                commands.entity(entity).try_insert(Doomed);
             }
             continue;
         }

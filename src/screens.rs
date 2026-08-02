@@ -19,7 +19,7 @@ use crate::progress::{
 use crate::rng::Rng;
 use crate::threat::{RunClock, Threat, WaveCycle};
 use crate::weapons::Loadout;
-use crate::AppState;
+use crate::{AppState, RunSetup};
 
 #[derive(Component)]
 struct ScreenRoot;
@@ -43,7 +43,7 @@ impl Plugin for ScreensPlugin {
             .add_systems(OnEnter(AppState::GameOver), build_gameover)
             .add_systems(
                 OnExit(AppState::Menu),
-                (clear_screens, start_run).chain(),
+                (clear_screens, start_run).chain().in_set(RunSetup::Clear),
             )
             .add_systems(OnExit(AppState::LevelUp), clear_screens)
             .add_systems(OnExit(AppState::SkillTree), clear_screens)
@@ -108,61 +108,9 @@ fn card_panel(accent: Color) -> impl Bundle {
 
 // -- menu -------------------------------------------------------------------
 
-fn build_menu(mut commands: Commands, env: Res<EnvKind>) {
-    commands.spawn(overlay(1.0)).with_children(|root| {
-        root.spawn(text("DESK FREE-FOR-ALL", 62.0, pal::ACCENT));
-        root.spawn(text(
-            "Hold the ground. Set the pace. It never stops.",
-            17.0,
-            pal::HUD_DIM,
-        ));
-
-        root.spawn((
-            Node {
-                margin: UiRect::top(Val::Px(18.0)),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                padding: UiRect::axes(Val::Px(34.0), Val::Px(18.0)),
-                row_gap: Val::Px(7.0),
-                border: UiRect::all(Val::Px(2.0)),
-                border_radius: BorderRadius::all(Val::Px(11.0)),
-                ..default()
-            },
-            BackgroundColor(pal::HUD_PANEL_SOLID),
-            BorderColor::all(pal::ACCENT),
-            children![
-                text("< LEFT / RIGHT >", 13.0, pal::HUD_DIM),
-                (text(env.title(), 34.0, pal::HUD_TEXT), EnvTitle),
-                (text(env.tagline(), 15.0, pal::HUD_DIM), EnvTagline),
-                (text(env.quirk(), 14.0, pal::SCREEN_GLOW), EnvQuirk),
-            ],
-        ));
-
-        root.spawn((
-            Node {
-                margin: UiRect::top(Val::Px(14.0)),
-                ..default()
-            },
-            text("PRESS ENTER TO DEPLOY", 24.0, pal::XP_GREEN),
-        ));
-
-        root.spawn((
-            Node {
-                margin: UiRect::top(Val::Px(22.0)),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(3.0),
-                ..default()
-            },
-            children![
-                text("WASD move    SPACE plan (slows time)    Q/E rotate camera", 14.0, pal::HUD_DIM),
-                text("B build    R recruit    F rally    G stance    T research", 14.0, pal::HUD_DIM),
-                text("- / =  threat dial    O overclock    ENTER call wave early", 14.0, pal::HUD_DIM),
-                text("Everything aims itself. You decide where to stand and what to spend.", 13.0, pal::HUD_DIM),
-            ],
-        ));
-    });
-}
+/// The wordmark's tagline. Deliberately world-agnostic: the desk is one of
+/// five, not the premise.
+const TAGLINE: &str = "FIVE SMALL WORLDS.  ONE RULE:  HOLD YOUR GROUND.";
 
 #[derive(Component)]
 struct EnvTitle;
@@ -170,17 +118,178 @@ struct EnvTitle;
 struct EnvTagline;
 #[derive(Component)]
 struct EnvQuirk;
+#[derive(Component)]
+struct EnvDetailPanel;
+/// One selector chip, tagged with the world it selects.
+#[derive(Component)]
+struct WorldChip(EnvKind);
 
+fn build_menu(mut commands: Commands, env: Res<EnvKind>) {
+    let selected = *env;
+
+    commands.spawn(overlay(1.0)).with_children(|root| {
+        // -- wordmark ------------------------------------------------------
+        root.spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(2.0),
+                ..default()
+            },
+            children![
+                text("HOLDFAST", 78.0, pal::HUD_TEXT),
+                text(TAGLINE, 14.0, pal::ACCENT),
+                (
+                    Node {
+                        margin: UiRect::top(Val::Px(6.0)),
+                        ..default()
+                    },
+                    text("a survival command roguelite", 13.0, pal::HUD_DIM),
+                ),
+            ],
+        ));
+
+        // -- world selector -------------------------------------------------
+        root.spawn((
+            Node {
+                margin: UiRect::top(Val::Px(26.0)),
+                column_gap: Val::Px(10.0),
+                ..default()
+            },
+        ))
+        .with_children(|row| {
+            for world in EnvKind::ALL {
+                let active = world == selected;
+                row.spawn((
+                    WorldChip(world),
+                    Node {
+                        width: Val::Px(118.0),
+                        height: Val::Px(58.0),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(chip_background(world, active)),
+                    BorderColor::all(chip_border(world, active)),
+                    children![text(
+                        world.short_name(),
+                        18.0,
+                        if active { world.accent() } else { pal::HUD_DIM }
+                    )],
+                ));
+            }
+        });
+
+        root.spawn((
+            Node {
+                margin: UiRect::top(Val::Px(7.0)),
+                ..default()
+            },
+            text("< LEFT / RIGHT to choose a world >", 12.0, pal::HUD_DIM),
+        ));
+
+        // -- detail panel ---------------------------------------------------
+        root.spawn((
+            EnvDetailPanel,
+            Node {
+                margin: UiRect::top(Val::Px(14.0)),
+                width: Val::Px(640.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(Val::Px(28.0), Val::Px(16.0)),
+                row_gap: Val::Px(6.0),
+                border: UiRect::all(Val::Px(2.0)),
+                border_radius: BorderRadius::all(Val::Px(11.0)),
+                ..default()
+            },
+            BackgroundColor(pal::HUD_PANEL_SOLID),
+            BorderColor::all(selected.accent()),
+            children![
+                (text(selected.title(), 32.0, pal::HUD_TEXT), EnvTitle),
+                (text(selected.tagline(), 15.0, pal::HUD_DIM), EnvTagline),
+                (
+                    Node {
+                        margin: UiRect::top(Val::Px(4.0)),
+                        ..default()
+                    },
+                    text(selected.quirk(), 14.0, selected.accent()),
+                    EnvQuirk,
+                ),
+            ],
+        ));
+
+        root.spawn((
+            Node {
+                margin: UiRect::top(Val::Px(18.0)),
+                ..default()
+            },
+            text("PRESS ENTER TO DEPLOY", 24.0, pal::XP_GREEN),
+        ));
+
+        // -- controls -------------------------------------------------------
+        root.spawn((
+            Node {
+                margin: UiRect::top(Val::Px(24.0)),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(3.0),
+                ..default()
+            },
+            children![
+                text("WASD move    SPACE plan (slows time to a crawl)    Q/E rotate", 14.0, pal::HUD_DIM),
+                text("B build    R recruit    F rally    G stance    T research", 14.0, pal::HUD_DIM),
+                text("- / =  threat dial    O overclock    ENTER call the wave early", 14.0, pal::HUD_DIM),
+                (
+                    Node {
+                        margin: UiRect::top(Val::Px(7.0)),
+                        ..default()
+                    },
+                    text(
+                        "Everything aims itself. You decide where to stand, what to build, and how fast this goes.",
+                        13.0,
+                        pal::HUD_DIM,
+                    ),
+                ),
+            ],
+        ));
+    });
+}
+
+fn chip_background(world: EnvKind, active: bool) -> Color {
+    if active {
+        world.accent().with_alpha(0.16)
+    } else {
+        Color::srgba(1.0, 1.0, 1.0, 0.04)
+    }
+}
+
+fn chip_border(world: EnvKind, active: bool) -> Color {
+    if active {
+        world.accent()
+    } else {
+        Color::srgba(1.0, 1.0, 1.0, 0.12)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn menu_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut env: ResMut<EnvKind>,
     mut next: ResMut<NextState<AppState>>,
     mut sfx: MessageWriter<SfxEvent>,
-    mut titles: ParamSet<(
+    mut labels: ParamSet<(
         Query<&mut Text, With<EnvTitle>>,
         Query<&mut Text, With<EnvTagline>>,
-        Query<&mut Text, With<EnvQuirk>>,
+        Query<(&mut Text, &mut TextColor), With<EnvQuirk>>,
     )>,
+    mut panel: Query<&mut BorderColor, (With<EnvDetailPanel>, Without<WorldChip>)>,
+    mut chips: Query<
+        (&WorldChip, &mut BackgroundColor, &mut BorderColor, &Children),
+        Without<EnvDetailPanel>,
+    >,
+    mut chip_text: Query<&mut TextColor, (Without<EnvQuirk>, Without<EnvTitle>)>,
 ) {
     let mut changed = false;
     if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
@@ -193,15 +302,31 @@ fn menu_input(
     }
 
     if changed {
+        let selected = *env;
         sfx.write(SfxEvent::at(crate::audio::Sfx::Tick, 0.8));
-        for mut t in &mut titles.p0() {
-            t.0 = env.title().to_string();
+
+        for mut t in &mut labels.p0() {
+            t.0 = selected.title().to_string();
         }
-        for mut t in &mut titles.p1() {
-            t.0 = env.tagline().to_string();
+        for mut t in &mut labels.p1() {
+            t.0 = selected.tagline().to_string();
         }
-        for mut t in &mut titles.p2() {
-            t.0 = env.quirk().to_string();
+        for (mut t, mut c) in &mut labels.p2() {
+            t.0 = selected.quirk().to_string();
+            c.0 = selected.accent();
+        }
+        for mut border in &mut panel {
+            *border = BorderColor::all(selected.accent());
+        }
+        for (chip, mut bg, mut border, children) in &mut chips {
+            let active = chip.0 == selected;
+            bg.0 = chip_background(chip.0, active);
+            *border = BorderColor::all(chip_border(chip.0, active));
+            for child in children.iter() {
+                if let Ok(mut color) = chip_text.get_mut(child) {
+                    color.0 = if active { chip.0.accent() } else { pal::HUD_DIM };
+                }
+            }
         }
     }
 

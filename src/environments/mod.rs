@@ -18,7 +18,7 @@ use crate::arena::{ArenaBounds, ColliderShape, Gust, Hazard, HazardKind, Obstacl
 use crate::art::{GameArt, Glow};
 use crate::common::{Body, RunEntity, to_world};
 use crate::rng::Rng;
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum EnvKind {
@@ -55,6 +55,29 @@ impl EnvKind {
             Self::Rooftop => "BLOCK 9 ROOFTOP",
             Self::Grid => "GRID ZERO",
             Self::Arcane => "THE ARCANE SANCTUM",
+        }
+    }
+
+    /// Short label for the world selector chips.
+    pub fn short_name(self) -> &'static str {
+        match self {
+            Self::Desk => "DESK",
+            Self::Forest => "WILD",
+            Self::Rooftop => "CITY",
+            Self::Grid => "GRID",
+            Self::Arcane => "ARCANE",
+        }
+    }
+
+    /// The world's signature colour, used for its chip, its detail panel border
+    /// and anywhere else the UI needs to say "you are here".
+    pub fn accent(self) -> Color {
+        match self {
+            Self::Desk => Color::srgb(1.0, 0.745, 0.29),
+            Self::Forest => Color::srgb(0.494, 0.863, 0.549),
+            Self::Rooftop => Color::srgb(1.0, 0.251, 0.588),
+            Self::Grid => Color::srgb(0.302, 0.949, 1.0),
+            Self::Arcane => Color::srgb(0.682, 0.42, 1.0),
         }
     }
 
@@ -260,7 +283,7 @@ impl Plugin for ArenaPlugin {
             .init_resource::<EnvDirty>()
             .init_resource::<Gust>()
             .init_resource::<Spotlight>()
-            .add_systems(OnExit(AppState::Menu), mark_dirty)
+            .add_systems(OnExit(AppState::Menu), mark_dirty.in_set(RunSetup::Reset))
             .add_systems(
                 Update,
                 rebuild_environment.run_if(|d: Res<EnvDirty>| d.0),
@@ -363,8 +386,15 @@ fn rebuild_environment(
         ));
     }
 
-    // Environmental hazards.
+    // Environmental hazards. Each kind gets its own emissive so the floor
+    // reads at a glance: red burns, brown slows, green heals.
     for h in scene.hazards {
+        let tint = match h.kind {
+            HazardKind::Scald => Glow::Warning,
+            HazardKind::Sticky => Glow::Scrap,
+            HazardKind::Shock => Glow::Plasma,
+            HazardKind::Font => Glow::ZoneHeld,
+        };
         let mut e = commands.spawn((
             Hazard {
                 kind: h.kind,
@@ -377,7 +407,7 @@ fn rebuild_environment(
             },
             Body::new(h.pos, h.radius),
             Mesh3d(art.disc.clone()),
-            MeshMaterial3d(art.unlit.clone()),
+            MeshMaterial3d(art.glow(tint)),
             Transform::from_translation(to_world(h.pos, 0.03))
                 .with_scale(Vec3::new(h.radius, 1.0, h.radius)),
             EnvEntity,

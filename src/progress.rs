@@ -12,7 +12,7 @@ use crate::palette as pal;
 use crate::player::PlayerStats;
 use crate::rng::Rng;
 use crate::weapons::{Loadout, MAX_LEVEL, WeaponKind};
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 // -- experience -------------------------------------------------------------
 
@@ -494,7 +494,7 @@ impl Plugin for ProgressPlugin {
             .add_message::<RecomputeStats>()
             .add_systems(Update, check_level_up.in_set(GameSet::Resolve))
             .add_systems(Update, recompute_stats)
-            .add_systems(OnExit(AppState::Menu), reset_progress);
+            .add_systems(OnExit(AppState::Menu), reset_progress.in_set(RunSetup::Reset));
     }
 }
 

@@ -1,9 +1,19 @@
 [package]
-name = "desk-free-for-all"
+name = "holdfast"
 version = "0.1.0"
 edition = "2024"
-description = "A survive-the-desk 3D arena roguelite. Keyboard-only."
+description = "Five small worlds. One rule: hold your ground. A keyboard-only 3D survival command roguelite."
 license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["game", "roguelite", "bevy", "strategy"]
+categories = ["games"]
+
+[features]
+default = []
+# Turns Bevy's ECS panics from "<Enable the debug feature to see the name>"
+# into real system and component names. Costs a full rebuild of Bevy, so it is
+# opt-in: `cargo run --features debug-names` when a schedule conflict appears.
+debug-names = ["bevy/debug"]
 
 [dependencies]
 # Zero non-Bevy dependencies on purpose: every mesh, material, sound and font

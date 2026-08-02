@@ -15,7 +15,7 @@ use crate::common::*;
 use crate::onboarding::{HintTone, HintQueue, Unlocks};
 use crate::player::Player;
 use crate::threat::{Threat, WaveCycle};
-use crate::{AppState, GameSet};
+use crate::{AppState, GameSet, RunSetup};
 
 /// Time scale while planning. Not zero: a little motion keeps the board legible
 /// and stops the transition feeling like a freeze-frame bug.
@@ -64,6 +64,7 @@ pub struct CommandPlugin;
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlanMode>()
+            .init_resource::<SimSpeed>()
             .add_systems(
                 Update,
                 (
@@ -78,13 +79,13 @@ impl Plugin for CommandPlugin {
                     .in_set(GameSet::Input),
             )
             .add_systems(Update, update_ghost.in_set(GameSet::Present))
-            .add_systems(OnExit(AppState::Menu), reset_plan);
+            .add_systems(OnExit(AppState::Menu), reset_plan.in_set(RunSetup::Reset));
     }
 }
 
-fn reset_plan(mut plan: ResMut<PlanMode>, mut time: ResMut<Time<Virtual>>) {
+fn reset_plan(mut plan: ResMut<PlanMode>, base: Res<SimSpeed>, mut time: ResMut<Time<Virtual>>) {
     *plan = PlanMode::default();
-    time.set_relative_speed(1.0);
+    time.set_relative_speed(base.0);
 }
 
 fn toggle_plan_mode(
@@ -110,10 +111,25 @@ fn toggle_plan_mode(
     }
 }
 
+/// The baseline simulation rate that plan mode multiplies against. Normally
+/// 1.0; the dev harness overrides it to fast-forward a run.
+#[derive(Resource)]
+pub struct SimSpeed(pub f32);
+
+impl Default for SimSpeed {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
 /// Plan mode slows the *virtual* clock, which is what every gameplay system
 /// reads. The camera and UI use real time, so they stay responsive.
-fn drive_time_scale(plan: Res<PlanMode>, mut time: ResMut<Time<Virtual>>) {
-    let want = if plan.active { PLAN_TIME_SCALE } else { 1.0 };
+fn drive_time_scale(
+    plan: Res<PlanMode>,
+    base: Res<SimSpeed>,
+    mut time: ResMut<Time<Virtual>>,
+) {
+    let want = base.0 * if plan.active { PLAN_TIME_SCALE } else { 1.0 };
     if (time.relative_speed() - want).abs() > 1e-3 {
         time.set_relative_speed(want);
     }

@@ -1,6 +1,7 @@
-# DESK FREE-FOR-ALL — Design
+# HOLDFAST — Design
 
-A keyboard-only 3D **survival command** game. You are a small hero holding
+**Five small worlds. One rule: hold your ground.** A keyboard-only 3D **survival
+command** roguelite. You are a small hero holding
 ground against an endless escalation. The skill being tested is *decision-making
 under compounding pressure*, not reflexes.
 
@@ -12,7 +13,7 @@ under compounding pressure*, not reflexes.
    player chooses how fast. Every point of speed is paid for in reward.
 3. **Ground is worth something.** Territory, structures and squad positioning
    turn the arena into a board you shape, not just a space you kite around.
-4. **One vocabulary, four worlds.** The same twelve threat archetypes appear
+4. **One vocabulary, five worlds.** The same twelve threat archetypes appear
    everywhere, renamed and retinted, so knowledge transfers between runs.
 
 ## The three clocks

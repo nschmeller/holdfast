@@ -35,8 +35,8 @@ impl Default for CameraRig {
         Self {
             yaw: 0.0,
             target_yaw: 0.0,
-            distance: 26.0,
-            target_distance: 26.0,
+            distance: BASE_DISTANCE,
+            target_distance: BASE_DISTANCE,
             pitch: 0.86,
             focus: Vec3::ZERO,
             shake: 0.0,
@@ -44,10 +44,14 @@ impl Default for CameraRig {
     }
 }
 
-const BASE_DISTANCE: f32 = 26.0;
+/// Tuned by eye against the desk arena, which is the smallest of the five: far
+/// enough back that roughly two thirds of the board is on screen, so the player
+/// can see a flank collapsing before it reaches them, but close enough that
+/// individual enemies still read as individuals.
+const BASE_DISTANCE: f32 = 34.0;
 /// How far the camera pulls back when the player enters plan mode, so the whole
 /// board is visible while they think.
-const PLAN_DISTANCE: f32 = 36.0;
+const PLAN_DISTANCE: f32 = 52.0;
 
 #[derive(Component)]
 pub struct MainCamera;

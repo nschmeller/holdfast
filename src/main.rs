@@ -1,4 +1,4 @@
-//! DESK FREE-FOR-ALL
+//! HOLDFAST - five small worlds, one rule: hold your ground.
 //!
 //! A keyboard-only 3D survival command game. You hold ground against an endless
 //! escalation, and you set the pace yourself. See `DESIGN.md` for the pillars.
@@ -14,6 +14,7 @@ mod camera;
 mod combat;
 mod command;
 mod common;
+mod devtools;
 mod enemy;
 mod environments;
 mod fx;
@@ -54,6 +55,21 @@ impl AppState {
     }
 }
 
+/// Ordered phases of starting a run, all running on `OnExit(Menu)`.
+///
+/// Without this the clear pass races the spawn pass and can delete the hero it
+/// was supposed to make room for - which is exactly what happened the first
+/// time the game ran.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RunSetup {
+    /// Despawn everything left over from the previous run.
+    Clear,
+    /// Return resources to their starting values.
+    Reset,
+    /// Create the hero and the arena.
+    Spawn,
+}
+
 /// Ordered phases within a gameplay frame.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GameSet {
@@ -69,6 +85,12 @@ pub enum GameSet {
     Resolve,
     /// Cameras, particles, HUD.
     Present,
+    /// Despawn everything marked `Doomed`.
+    ///
+    /// Strictly last. Several systems can condemn the same entity in one frame
+    /// - a projectile, a hazard tick and a fall off the edge all racing - and
+    /// reaping mid-frame would leave the others writing to a dead entity.
+    Reap,
 }
 
 fn main() {
@@ -78,7 +100,7 @@ fn main() {
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Desk Free-For-All".into(),
+                    title: "HOLDFAST".into(),
                     resolution: WindowResolution::new(1280, 720),
                     present_mode: PresentMode::AutoVsync,
                     // Stop the browser from stealing the arrow keys and space
@@ -109,6 +131,11 @@ fn main() {
         .insert_resource(bevy::light::DirectionalLightShadowMap { size: 2048 });
 
     app.configure_sets(
+        OnExit(AppState::Menu),
+        (RunSetup::Clear, RunSetup::Reset, RunSetup::Spawn).chain(),
+    );
+
+    app.configure_sets(
         Update,
         (
             GameSet::Input,
@@ -117,6 +144,7 @@ fn main() {
             GameSet::Combat,
             GameSet::Resolve,
             GameSet::Present,
+            GameSet::Reap,
         )
             .chain()
             .run_if(in_state(AppState::Playing)),
@@ -149,6 +177,7 @@ fn main() {
         fx::FxPlugin,
         hud::HudPlugin,
         screens::ScreensPlugin,
+        devtools::DevToolsPlugin,
     ));
 
     app.run();

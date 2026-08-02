@@ -54,13 +54,14 @@ fn handle_deaths(
     mut commands: Commands,
     art: Res<GameArt>,
     stats: Res<PlayerStats>,
-    threat: Res<Threat>,
+    // Taken mutably once: this system both reads the reward multiplier and
+    // feeds the kill streak back into it.
+    mut threat: ResMut<Threat>,
     cycle: Res<WaveCycle>,
     mut clock: ResMut<RunClock>,
     mut director: ResMut<Director>,
     mut rng: ResMut<Rng>,
     mut deaths: MessageReader<DeathEvent>,
-    mut threat_mut: ResMut<Threat>,
     enemies: Query<&Enemy>,
     mut bursts: MessageWriter<BurstEvent>,
     mut sfx: MessageWriter<SfxEvent>,
@@ -82,13 +83,13 @@ fn handle_deaths(
 
         let Ok(enemy) = enemies.get(death.entity) else {
             // Allies and structures die quietly; only enemies pay out.
-            commands.entity(death.entity).insert(Doomed);
+            commands.entity(death.entity).try_insert(Doomed);
             continue;
         };
 
         director.alive = director.alive.saturating_sub(1);
         clock.kills += 1;
-        threat_mut.note_kill();
+        threat.note_kill();
 
         let is_boss = enemy.rank == Rank::Boss;
         let is_elite = enemy.rank == Rank::Elite;
@@ -204,7 +205,7 @@ fn handle_deaths(
             sfx.write(SfxEvent::at(crate::audio::Sfx::Kill, 0.35));
         }
 
-        commands.entity(death.entity).insert(Doomed);
+        commands.entity(death.entity).try_insert(Doomed);
     }
 }
 
@@ -386,6 +387,6 @@ fn collect(
             }
         }
 
-        commands.entity(entity).insert(Doomed);
+        commands.entity(entity).try_insert(Doomed);
     }
 }

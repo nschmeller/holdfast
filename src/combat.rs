@@ -327,10 +327,8 @@ impl Plugin for CombatPlugin {
                     .chain()
                     .in_set(GameSet::Combat),
             )
-            .add_systems(
-                Update,
-                (expire_hazards, reap_doomed).chain().in_set(GameSet::Resolve),
-            )
+            .add_systems(Update, expire_hazards.in_set(GameSet::Resolve))
+            .add_systems(Update, reap_doomed.in_set(GameSet::Reap))
             .add_systems(Update, sync_transforms.in_set(GameSet::Present))
             // Overlays freeze gameplay but the world should still be drawn in
             // the right place, so transform sync also runs outside Playing.
@@ -466,7 +464,7 @@ fn move_projectiles(
     for (entity, mut proj, mut body, mut transform) in &mut projectiles {
         proj.life -= dt;
         if proj.life <= 0.0 {
-            commands.entity(entity).insert(Doomed);
+            commands.entity(entity).try_insert(Doomed);
             continue;
         }
 
@@ -493,7 +491,7 @@ fn move_projectiles(
                 body.pos = prev;
                 proj.hit.clear();
             } else {
-                commands.entity(entity).insert(Doomed);
+                commands.entity(entity).try_insert(Doomed);
                 continue;
             }
         }
@@ -583,7 +581,7 @@ fn move_projectiles(
         if proj.pierce > 0 {
             proj.pierce -= 1;
         } else {
-            commands.entity(entity).insert(Doomed);
+            commands.entity(entity).try_insert(Doomed);
         }
     }
 }
@@ -722,7 +720,7 @@ fn expire_hazards(
     for (entity, mut eph, mut transform) in &mut q {
         eph.life -= dt;
         if eph.life <= 0.0 {
-            commands.entity(entity).insert(Doomed);
+            commands.entity(entity).try_insert(Doomed);
             continue;
         }
         // Shrink out rather than popping.
