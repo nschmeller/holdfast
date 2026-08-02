@@ -220,8 +220,17 @@ fn tile_window(
     monitors: Query<(Entity, &Monitor, Option<&PrimaryMonitor>)>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    // Leave a margin so window chrome and the dock stay reachable.
-    const MARGIN: i32 = 24;
+    const SIDE: i32 = 32;
+    /// Share of the monitor's height a tiled window may use.
+    ///
+    /// The remainder becomes slack above and below, because the window is
+    /// positioned by its content area but drawn with a title bar above it, a
+    /// desktop can reserve a menu bar and a dock, and the coordinate space the
+    /// backend applies is not always the one asked for. Filling the screen
+    /// exactly puts the bottom of the game off the bottom of the display; the
+    /// window is centred vertically instead, so a placement that lands a
+    /// hundred pixels out is still entirely on screen.
+    const HEIGHT_SHARE: f32 = 0.62;
 
     let Some((slot, of)) = config.tile else {
         return;
@@ -241,12 +250,13 @@ fn tile_window(
     all.sort_unstable_by_key(|&(entity, ..)| entity);
     for (index, (_, monitor, primary)) in all.iter().enumerate() {
         info!(
-            "devtools: monitor {index}{} {:?} {}x{} at {}",
+            "devtools: monitor {index}{} {:?} {}x{} at {} scale {}",
             if *primary { " (primary)" } else { "" },
             monitor.name,
             monitor.physical_width,
             monitor.physical_height,
-            monitor.physical_position
+            monitor.physical_position,
+            monitor.scale_factor
         );
     }
 
@@ -264,7 +274,9 @@ fn tile_window(
     let chosen = by_name
         .or_else(|| all.get(config.monitor.unwrap_or(0)))
         .or_else(|| all.first());
-    let Some((_, monitor, _)) = chosen else { return };
+    let Some((_, monitor, _)) = chosen else {
+        return;
+    };
     let monitor = *monitor;
 
     let slot = i32::try_from(slot.min(of - 1)).unwrap_or(0);
@@ -272,25 +284,28 @@ fn tile_window(
     let screen_w = i32::try_from(monitor.physical_width).unwrap_or(1920);
     let screen_h = i32::try_from(monitor.physical_height).unwrap_or(1080);
 
-    let column = (screen_w - MARGIN * 2) / of;
-    // Cap the height at 4:3 of the column so a narrow slot does not produce a
-    // letterbox the game's fixed overlook camera looks silly in.
-    let height = (screen_h - MARGIN * 3).min(column * 3 / 4);
+    let column = (screen_w - SIDE * 2) / of;
+    let width = (column - SIDE).max(320);
+    // Cap at 9:16 of the width too, so a wide slot does not become a letterbox
+    // the fixed overlook camera looks silly in.
+    let budget = (screen_h as f32 * HEIGHT_SHARE) as i32;
+    let height = budget.min(width * 9 / 16).max(240);
+    let top = monitor.physical_position.y + (screen_h - height) / 2;
 
     for mut window in &mut windows {
         window.resolution = WindowResolution::new(
-            u32::try_from(column - MARGIN).unwrap_or(640).max(320),
-            u32::try_from(height).unwrap_or(480).max(240),
+            u32::try_from(width).unwrap_or(640),
+            u32::try_from(height).unwrap_or(480),
         );
         window.position = WindowPosition::At(IVec2::new(
-            monitor.physical_position.x + MARGIN + column * slot,
-            monitor.physical_position.y + MARGIN * 2,
+            monitor.physical_position.x + SIDE + column * slot,
+            top,
         ));
     }
     placed.0 = true;
     info!(
-        "devtools: tiled into slot {slot} of {of} on the monitor at {}",
-        monitor.physical_position
+        "devtools: tiled into slot {slot} of {of}: {width}x{height} at ({}, {top}) on a {screen_w}x{screen_h} monitor",
+        monitor.physical_position.x + SIDE + column * slot
     );
 }
 

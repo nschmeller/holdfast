@@ -320,7 +320,12 @@ impl Plugin for CombatPlugin {
             .add_message::<BurstEvent>()
             .add_message::<SfxEvent>()
             .add_systems(Update, rebuild_grid.in_set(GameSet::Input))
-            .add_systems(Update, integrate_actors.in_set(GameSet::Move))
+            .add_systems(
+                Update,
+                (integrate_actors, separate_bodies)
+                    .chain()
+                    .in_set(GameSet::Move),
+            )
             .add_systems(
                 Update,
                 (
@@ -381,6 +386,96 @@ fn integrate_actors(
         if actor.confined {
             let r = body.radius;
             body.pos = bounds.clamp(body.pos, r);
+        }
+    }
+}
+
+/// Most an overlap can move a body in one frame.
+///
+/// Separation is a relaxation, not a constraint solver: capping the step keeps
+/// a deep overlap - two things spawned on the same tile - from flinging one of
+/// them across the arena, at the cost of taking a few frames to resolve.
+const MAX_SEPARATION_STEP: f32 = 0.9;
+
+/// How far apart to look for neighbours, beyond the body's own radius. Larger
+/// than any enemy so nothing is missed, small enough to stay in nearby cells.
+const NEIGHBOUR_REACH: f32 = 3.0;
+
+/// The displacement that pushes a body at `pos` clear of one at `other`.
+///
+/// `share` is how much of the overlap this body absorbs: 1.0 when the other
+/// body will not move at all, 0.5 when both are pushing each other apart.
+/// Returns zero when they are not touching.
+fn separation(
+    pos: Vec2,
+    radius: f32,
+    other: Vec2,
+    other_radius: f32,
+    share: f32,
+    tie: u64,
+) -> Vec2 {
+    let delta = pos - other;
+    let distance = delta.length();
+    let overlap = radius + other_radius - distance;
+    if overlap <= 0.0 {
+        return Vec2::ZERO;
+    }
+    // Exactly coincident centres have no direction to escape along, which
+    // happens whenever two things spawn on the same point. Pick one from the
+    // entity's own bits so the choice is stable frame to frame and two stacked
+    // bodies do not pick the same way out and stay stacked.
+    let away = if distance > 1e-4 {
+        delta / distance
+    } else {
+        let angle = (tie % 628) as f32 * 0.01;
+        Vec2::new(angle.cos(), angle.sin())
+    };
+    away * (overlap * share).min(MAX_SEPARATION_STEP)
+}
+
+/// Keep bodies out of each other's space.
+///
+/// Without this a swarm converges to a single point on top of the hero and
+/// reads as one enemy with a great deal of health - and the player cannot see
+/// what is hitting them. Enemies absorb the whole overlap against the player
+/// rather than sharing it: being shoved around by contact would take control
+/// away from the player in a game that is otherwise about deciding things.
+fn separate_bodies(
+    grid: Res<EnemyGrid>,
+    obstacles: Res<ObstacleField>,
+    player: Query<&Body, With<Player>>,
+    mut enemies: Query<(Entity, &mut Body, &Enemy), Without<Player>>,
+) {
+    let hero = player.iter().next().map(|body| (body.pos, body.radius));
+
+    for (entity, mut body, enemy) in &mut enemies {
+        let (pos, radius) = (body.pos, body.radius);
+        let tie = u64::from(entity.index().index());
+        let flies = enemy.kind.flies();
+        let mut push = Vec2::ZERO;
+
+        // Flyers are drawn above the fight, so sharing ground with the hero
+        // and with walkers is correct for them.
+        if let Some((hero_pos, hero_radius)) = hero
+            && !flies
+        {
+            push += separation(pos, radius, hero_pos, hero_radius, 1.0, tie);
+        }
+
+        grid.for_each_near(pos, radius + NEIGHBOUR_REACH, |other| {
+            if other.entity == entity {
+                return;
+            }
+            push += separation(pos, radius, other.pos, other.radius, 0.5, tie);
+        });
+
+        if push == Vec2::ZERO {
+            continue;
+        }
+        body.pos = pos + push.clamp_length_max(MAX_SEPARATION_STEP);
+        // Being pushed clear of a crowd must not push anything into a wall.
+        if !flies {
+            body.pos = obstacles.resolve(body.pos, radius);
         }
     }
 }
@@ -975,5 +1070,83 @@ mod tests {
         let a = Actor::default();
         assert!(a.collides);
         assert!(a.confined);
+    }
+    #[test]
+    fn bodies_that_do_not_touch_are_left_alone() {
+        let push = separation(Vec2::new(5.0, 0.0), 0.5, Vec2::ZERO, 0.5, 1.0, 3);
+        assert_eq!(push, Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_full_share_pushes_clear_of_the_other_body() {
+        // A monster standing on the hero must end up outside them, not merely
+        // nudged: overlapping the player is what this whole pass exists to stop.
+        let (pos, radius) = (Vec2::new(0.3, 0.0), 0.5);
+        let (other, other_radius) = (Vec2::ZERO, 0.6);
+        let push = separation(pos, radius, other, other_radius, 1.0, 0);
+        let settled = pos + push;
+        assert!(
+            settled.distance(other) >= radius + other_radius - 1e-4,
+            "still overlapping at {settled:?}"
+        );
+    }
+
+    #[test]
+    fn separation_pushes_directly_away() {
+        let push = separation(Vec2::new(1.0, 0.0), 1.0, Vec2::ZERO, 1.0, 1.0, 0);
+        assert!(push.x > 0.0 && push.y.abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_half_share_leaves_the_rest_for_the_other_body() {
+        // A shallow overlap, so the per-frame cap does not mask the ratio.
+        let full = separation(Vec2::new(1.0, 0.0), 0.6, Vec2::ZERO, 0.6, 1.0, 0);
+        let half = separation(Vec2::new(1.0, 0.0), 0.6, Vec2::ZERO, 0.6, 0.5, 0);
+        assert!((full.length() - 0.2).abs() < 1e-5, "{full:?}");
+        assert!((half.length() - full.length() * 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn coincident_bodies_still_find_a_way_out() {
+        // Two things spawned on the same point have no direction to separate
+        // along; without a fallback they stay welded together forever.
+        let push = separation(Vec2::ZERO, 0.5, Vec2::ZERO, 0.5, 1.0, 17);
+        assert!(push.length() > 0.0, "coincident bodies never separated");
+    }
+
+    #[test]
+    fn coincident_bodies_pick_different_directions_by_identity() {
+        let a = separation(Vec2::ZERO, 0.5, Vec2::ZERO, 0.5, 0.5, 3);
+        let b = separation(Vec2::ZERO, 0.5, Vec2::ZERO, 0.5, 0.5, 400);
+        assert!(
+            a.distance(b) > 0.1,
+            "two stacked bodies both fled the same way and stayed stacked"
+        );
+    }
+
+    #[test]
+    fn one_frame_of_separation_is_bounded() {
+        // A deep overlap resolves over several frames rather than teleporting.
+        let push = separation(Vec2::new(0.01, 0.0), 40.0, Vec2::ZERO, 40.0, 1.0, 0);
+        assert!(push.length() <= MAX_SEPARATION_STEP + 1e-6, "{push:?}");
+    }
+
+    #[test]
+    fn repeated_separation_converges_rather_than_oscillating() {
+        // Relaxation has to settle: a pair that keeps overshooting would jitter
+        // on screen forever.
+        let mut a = Vec2::new(0.05, 0.0);
+        let mut b = Vec2::new(-0.05, 0.0);
+        for _ in 0..64 {
+            let pa = separation(a, 0.6, b, 0.6, 0.5, 1);
+            let pb = separation(b, 0.6, a, 0.6, 0.5, 2);
+            a += pa;
+            b += pb;
+        }
+        assert!(
+            a.distance(b) >= 1.2 - 1e-3,
+            "settled only {} apart",
+            a.distance(b)
+        );
     }
 }

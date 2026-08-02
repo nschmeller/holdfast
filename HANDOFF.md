@@ -59,6 +59,23 @@ Launch two side by side on the external monitor:
 Screenshots occasionally come back solid black at exactly 56997 bytes. That is
 a capture race, not a rendering bug - retry and the same scene appears.
 
+## The playtest loop
+
+Two agent definitions in `.claude/agents/`:
+
+- **`playtester`** (fast, cheap model) drives one live instance through the
+  pilot bridge in a given persona and leaves everything it saw in its instance
+  directory: `FINDINGS.md`, `log.txt`, `stdout.log`, screenshots.
+- **`playtest-evaluator`** (heavy model, no hurry) reads *all* of that
+  afterwards, verifies each claim against the source, de-duplicates across
+  testers, and returns one ranked brief.
+
+Do not read a pile of raw findings yourself - that is what the evaluator is
+for. Give each playtester its own instance directory, its own window slot, and
+a distinct persona; a cautious first-timer and a min-maxer break different
+things. Cheap models confabulate, so the evaluator's verification pass is
+load-bearing, not ceremony.
+
 ## Definition of done for any change
 
     export PATH="$HOME/.cargo/bin:$PATH"

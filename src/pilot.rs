@@ -29,6 +29,14 @@
 //! | `shot out.png` | Screenshot the window |
 //! | `note anything` | Write a line to the log |
 //! | `quit` | Exit the game |
+//! | `roam 20` | Wander unaided for twenty seconds |
+//! | `chase 8` / `flee 8` | Close on, or run from, the nearest enemy |
+//! | `goto -12 6 [limit]` | Walk to a point, ending early on arrival |
+//!
+//! The last four exist because the far side of this channel is usually a
+//! language model, which thinks in whole turns of several seconds. Without
+//! them the hero stands motionless between decisions, which is neither a fair
+//! test of the game nor much to watch.
 //!
 //! Commands run in order. `tap`, `hold`, `wait` and `shot` each consume at
 //! least a frame; the rest are free, so `press W` and `tap SPACE` on adjacent
@@ -242,6 +250,24 @@ enum Cmd {
     Shot(String),
     Note(String),
     Quit,
+    /// Drive the player for a while without further instruction.
+    Steer(Steer, f32),
+}
+
+/// Autonomous movement, so a slow reader on the far side of the channel does
+/// not leave the hero standing still between turns. Each of these presses real
+/// WASD keys rather than writing movement directly, so what gets exercised is
+/// the same input path a human uses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Steer {
+    /// Wander, changing heading periodically and whenever progress stalls.
+    Roam,
+    /// Close on the nearest enemy.
+    Chase,
+    /// Put distance between yourself and the nearest enemy.
+    Flee,
+    /// Walk to a point, finishing early on arrival.
+    Goto(Vec2),
 }
 
 impl Cmd {
@@ -253,9 +279,33 @@ impl Cmd {
     fn consumes_frame(&self) -> bool {
         matches!(
             self,
-            Self::Tap(_) | Self::Hold(..) | Self::Wait(_) | Self::Shot(_)
+            Self::Tap(_) | Self::Hold(..) | Self::Wait(_) | Self::Shot(_) | Self::Steer(..)
         )
     }
+}
+
+/// Which movement keys express a direction, as eight-way.
+///
+/// The threshold is just under `sin(22.5 degrees)` scaled to the diagonal, so a
+/// heading within an eighth-turn of a diagonal presses both of its keys.
+fn keys_for_direction(dir: Vec2) -> Vec<KeyCode> {
+    const DEADZONE: f32 = 0.38;
+    let mut keys = Vec::with_capacity(2);
+    // W is -Y and S is +Y: the arena's second axis is world Z, which grows
+    // towards the camera.
+    if dir.y < -DEADZONE {
+        keys.push(KeyCode::KeyW);
+    }
+    if dir.y > DEADZONE {
+        keys.push(KeyCode::KeyS);
+    }
+    if dir.x < -DEADZONE {
+        keys.push(KeyCode::KeyA);
+    }
+    if dir.x > DEADZONE {
+        keys.push(KeyCode::KeyD);
+    }
+    keys
 }
 
 const LETTERS: [KeyCode; 26] = [
@@ -383,8 +433,34 @@ fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
         ))),
         "note" => Ok(Some(Cmd::Note(rest.join(" ")))),
         "quit" | "exit" => Ok(Some(Cmd::Quit)),
+        "roam" => Ok(Some(Cmd::Steer(Steer::Roam, seconds(&verb, rest.first())?))),
+        "chase" => Ok(Some(Cmd::Steer(
+            Steer::Chase,
+            seconds(&verb, rest.first())?,
+        ))),
+        "flee" => Ok(Some(Cmd::Steer(Steer::Flee, seconds(&verb, rest.first())?))),
+        "goto" => {
+            let x = number(&verb, rest.first())?;
+            let z = number(&verb, rest.get(1))?;
+            // The duration is a safety net, not the goal: arriving ends it.
+            let limit = rest.get(2).map_or(Ok(30.0), |v| number(&verb, Some(v)))?;
+            Ok(Some(Cmd::Steer(
+                Steer::Goto(Vec2::new(x, z)),
+                limit.clamp(0.0, 600.0),
+            )))
+        }
         other => Err(format!("unknown command {other:?}")),
     }
+}
+
+fn number(verb: &str, arg: Option<&&str>) -> Result<f32, String> {
+    arg.ok_or_else(|| format!("{verb}: missing a number"))?
+        .parse()
+        .map_err(|_| format!("{verb}: {arg:?} is not a number"))
+}
+
+fn seconds(verb: &str, arg: Option<&&str>) -> Result<f32, String> {
+    Ok(number(verb, arg)?.clamp(0.0, 600.0))
 }
 
 // -- the channel ------------------------------------------------------------
@@ -395,6 +471,61 @@ struct Active {
     remaining: f32,
     /// Keys to let go of when the timer runs out.
     release: Vec<KeyCode>,
+    /// Set for the autonomous movement commands, which re-decide every frame.
+    steer: Option<Steer>,
+}
+
+/// Wander state, kept between frames so `roam` looks like someone exploring
+/// rather than someone vibrating.
+#[derive(Debug)]
+struct Wander {
+    heading: Vec2,
+    /// Time left on the current heading.
+    hold: f32,
+    /// Where we were when progress was last checked.
+    last_pos: Vec2,
+    since_check: f32,
+    rng: crate::rng::Rng,
+}
+
+impl Default for Wander {
+    fn default() -> Self {
+        Self {
+            heading: Vec2::new(0.0, -1.0),
+            hold: 0.0,
+            last_pos: Vec2::ZERO,
+            since_check: 0.0,
+            rng: crate::rng::Rng::seeded(0xB01D_FA57),
+        }
+    }
+}
+
+impl Wander {
+    /// Decide which way to walk this frame.
+    ///
+    /// Rerolls the heading on a timer, and again whenever the hero has barely
+    /// moved - which means a prop is in the way. Without the stall check a
+    /// roaming tester spends whole minutes pressed against the same mug.
+    fn step(&mut self, pos: Vec2, dt: f32) -> Vec2 {
+        self.hold -= dt;
+        self.since_check += dt;
+        if self.since_check >= 0.5 {
+            let progress = pos.distance(self.last_pos);
+            self.last_pos = pos;
+            self.since_check = 0.0;
+            if progress < 0.4 {
+                self.hold = 0.0;
+            }
+        }
+        if self.hold <= 0.0 {
+            // `unit_circle` is a world-space XZ vector; the arena works in a
+            // flat Vec2 whose second component is that Z.
+            let dir = self.rng.unit_circle();
+            self.heading = Vec2::new(dir.x, dir.z);
+            self.hold = self.rng.range(1.1, 2.6);
+        }
+        self.heading
+    }
 }
 
 /// Values carried between snapshots so the report can describe change rather
@@ -423,6 +554,11 @@ struct Pilot {
     held: HashSet<KeyCode>,
     /// Keys pressed for exactly this frame, released at the start of the next.
     tapped: Vec<KeyCode>,
+    /// Movement keys the current steering command is holding down.
+    steering: Vec<KeyCode>,
+    wander: Wander,
+    /// Name for this instance, so a report says which window it came from.
+    label: String,
     /// Notable changes since the last snapshot.
     events: Vec<String>,
     seq: u64,
@@ -433,6 +569,12 @@ struct Pilot {
 
 impl Pilot {
     fn new(dir: PathBuf) -> Self {
+        // Name the instance after its directory unless told otherwise, so a
+        // report always says which of several windows it came from.
+        let label = env::var("DFFA_LABEL").ok().unwrap_or_else(|| {
+            dir.file_name()
+                .map_or_else(|| "pilot".to_string(), |n| n.to_string_lossy().into_owned())
+        });
         Self {
             dir,
             cursor: 0,
@@ -441,6 +583,9 @@ impl Pilot {
             active: None,
             held: HashSet::new(),
             tapped: Vec::new(),
+            steering: Vec::new(),
+            wander: Wander::default(),
+            label,
             events: Vec::new(),
             seq: 0,
             since_snapshot: SNAPSHOT_PERIOD,
@@ -554,6 +699,8 @@ fn run_queue(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
+    hero: Query<&Body, With<Player>>,
+    foes: Query<&Body, With<Enemy>>,
 ) {
     let dt = time.delta_secs();
     pilot.wall += dt;
@@ -564,13 +711,24 @@ fn run_queue(
         }
     }
 
+    let hero_pos = hero.iter().next().map(|body| body.pos);
+
     if let Some(active) = pilot.active.as_mut() {
         active.remaining -= dt;
-        if active.remaining <= 0.0 {
+        // A `goto` ends on arrival; its duration is only a safety net against
+        // a target that turns out to be unreachable.
+        let arrived = match (active.steer, hero_pos) {
+            (Some(Steer::Goto(target)), Some(pos)) => pos.distance(target) < 1.6,
+            _ => false,
+        };
+        if active.remaining <= 0.0 || arrived {
             let release = std::mem::take(&mut active.release);
             pilot.active = None;
             for key in release {
                 pilot.held.remove(&key);
+                keys.release(key);
+            }
+            for key in std::mem::take(&mut pilot.steering) {
                 keys.release(key);
             }
         }
@@ -611,12 +769,27 @@ fn run_queue(
                 pilot.active = Some(Active {
                     remaining: secs,
                     release: list,
+                    steer: None,
                 });
             }
             Cmd::Wait(secs) => {
                 pilot.active = Some(Active {
                     remaining: secs,
                     release: Vec::new(),
+                    steer: None,
+                });
+            }
+            Cmd::Steer(steer, secs) => {
+                pilot.record(match steer {
+                    Steer::Roam => format!("roaming for {secs:.0}s"),
+                    Steer::Chase => format!("chasing for {secs:.0}s"),
+                    Steer::Flee => format!("fleeing for {secs:.0}s"),
+                    Steer::Goto(t) => format!("walking to ({:.0},{:.0})", t.x, t.y),
+                });
+                pilot.active = Some(Active {
+                    remaining: secs,
+                    release: Vec::new(),
+                    steer: Some(steer),
                 });
             }
             Cmd::Shot(path) => {
@@ -634,6 +807,38 @@ fn run_queue(
         if stop {
             break;
         }
+    }
+
+    // Steering re-decides which way to walk every frame, so it runs after the
+    // queue has had its turn and can have just installed a new one.
+    if let (Some(steer), Some(pos)) = (pilot.active.as_ref().and_then(|a| a.steer), hero_pos) {
+        let dir = match steer {
+            Steer::Roam => pilot.wander.step(pos, dt),
+            Steer::Goto(target) => (target - pos).normalize_or_zero(),
+            Steer::Chase | Steer::Flee => {
+                let nearest = foes
+                    .iter()
+                    .map(|body| body.pos)
+                    .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+                match nearest {
+                    // With nothing to chase or run from, keep exploring rather
+                    // than stand still - a frozen tester finds nothing.
+                    None => pilot.wander.step(pos, dt),
+                    Some(foe) if steer == Steer::Chase => (foe - pos).normalize_or_zero(),
+                    Some(foe) => (pos - foe).normalize_or_zero(),
+                }
+            }
+        };
+        let wanted = keys_for_direction(dir);
+        for key in std::mem::take(&mut pilot.steering) {
+            if !wanted.contains(&key) && !pilot.held.contains(&key) {
+                keys.release(key);
+            }
+        }
+        for key in &wanted {
+            keys.press(*key);
+        }
+        pilot.steering = wanted;
     }
 
     // Re-press every frame: `press` is idempotent once the key is down, and
@@ -704,6 +909,7 @@ fn write_snapshot(
     note_changes(&mut pilot, &pacing, &sheet, &meta, &field, player, hero_pos);
 
     let mut json = Json::new();
+    json.text("instance", &pilot.label.clone());
     json.count("seq", pilot.seq);
     json.num("wall", pilot.wall);
     json.text("state", &format!("{:?}", pacing.state.get()));
@@ -1168,7 +1374,92 @@ mod tests {
         assert!(Cmd::Hold(vec![], 1.0).consumes_frame());
         assert!(Cmd::Wait(1.0).consumes_frame());
         assert!(Cmd::Shot("x".into()).consumes_frame());
+        assert!(Cmd::Steer(Steer::Roam, 5.0).consumes_frame());
         assert!(!Cmd::Press(vec![]).consumes_frame());
         assert!(!Cmd::Note("x".into()).consumes_frame());
+    }
+
+    #[test]
+    fn the_autonomous_movement_verbs_parse() {
+        assert_eq!(
+            parse_line("roam 20"),
+            Ok(Some(Cmd::Steer(Steer::Roam, 20.0)))
+        );
+        assert_eq!(
+            parse_line("chase 8"),
+            Ok(Some(Cmd::Steer(Steer::Chase, 8.0)))
+        );
+        assert_eq!(
+            parse_line("flee 4.5"),
+            Ok(Some(Cmd::Steer(Steer::Flee, 4.5)))
+        );
+        assert_eq!(
+            parse_line("goto -12 6"),
+            Ok(Some(Cmd::Steer(Steer::Goto(Vec2::new(-12.0, 6.0)), 30.0)))
+        );
+        assert_eq!(
+            parse_line("goto 3 4 12"),
+            Ok(Some(Cmd::Steer(Steer::Goto(Vec2::new(3.0, 4.0)), 12.0)))
+        );
+        assert!(parse_line("goto 3").is_err());
+        assert!(parse_line("roam").is_err());
+    }
+
+    #[test]
+    fn cardinal_directions_press_one_key_and_diagonals_press_two() {
+        // W is negative Y: the arena's second axis is world Z.
+        assert_eq!(keys_for_direction(Vec2::NEG_Y), vec![KeyCode::KeyW]);
+        assert_eq!(keys_for_direction(Vec2::Y), vec![KeyCode::KeyS]);
+        assert_eq!(keys_for_direction(Vec2::NEG_X), vec![KeyCode::KeyA]);
+        assert_eq!(keys_for_direction(Vec2::X), vec![KeyCode::KeyD]);
+
+        let northeast = keys_for_direction(Vec2::new(1.0, -1.0).normalize());
+        assert_eq!(northeast.len(), 2, "a diagonal should press two keys");
+        assert!(northeast.contains(&KeyCode::KeyW) && northeast.contains(&KeyCode::KeyD));
+    }
+
+    #[test]
+    fn a_zero_direction_presses_nothing() {
+        assert!(keys_for_direction(Vec2::ZERO).is_empty());
+    }
+
+    #[test]
+    fn opposite_keys_are_never_pressed_together() {
+        // Pressing W and S at once cancels out in the movement code, so a
+        // rounding slip here would silently freeze a roaming tester.
+        let mut wander = Wander::default();
+        for step in 0..400 {
+            let dir = wander.step(Vec2::new(step as f32 * 0.01, 0.0), 0.1);
+            let keys = keys_for_direction(dir);
+            assert!(!(keys.contains(&KeyCode::KeyW) && keys.contains(&KeyCode::KeyS)));
+            assert!(!(keys.contains(&KeyCode::KeyA) && keys.contains(&KeyCode::KeyD)));
+        }
+    }
+
+    #[test]
+    fn roaming_changes_heading_over_time() {
+        let mut wander = Wander::default();
+        let first = wander.step(Vec2::ZERO, 0.016);
+        let mut moved = false;
+        for _ in 0..300 {
+            if wander.step(Vec2::ZERO, 0.05).distance(first) > 0.1 {
+                moved = true;
+                break;
+            }
+        }
+        assert!(moved, "a roamer that never turns is just a straight line");
+    }
+
+    #[test]
+    fn roaming_rerolls_immediately_when_progress_stalls() {
+        // Standing still means something is in the way; the heading has to
+        // change or the tester leans on a prop for the whole session.
+        let mut wander = Wander::default();
+        wander.step(Vec2::ZERO, 0.016);
+        let stuck = wander.heading;
+        for _ in 0..12 {
+            wander.step(Vec2::ZERO, 0.1);
+        }
+        assert_ne!(wander.heading, stuck, "a blocked roamer must turn");
     }
 }
