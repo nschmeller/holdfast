@@ -85,6 +85,33 @@ impl FogMap {
     pub fn explored_area(&self) -> f32 {
         self.explored.len() as f32 * FOG_CELL * FOG_CELL
     }
+
+    #[must_use]
+    pub fn explored_cells(&self) -> usize {
+        self.explored.len()
+    }
+
+    #[must_use]
+    pub fn visible_cells(&self) -> usize {
+        self.visible.len()
+    }
+
+    /// How much veil a cell gets: `None` for none at all.
+    ///
+    /// Three states, and the whole feature turns on getting them right - so it
+    /// is a function that can be tested rather than a branch buried in mesh
+    /// generation.
+    #[must_use]
+    pub fn veil(&self, cell: IVec2) -> Option<f32> {
+        match (self.explored.contains(&cell), self.visible.contains(&cell)) {
+            // In sight right now: nothing between the player and the ground.
+            (_, true) => None,
+            // Seen before: you remember the terrain, dimmed.
+            (true, false) => Some(DIM_ALPHA),
+            // Never seen.
+            (false, false) => Some(1.0),
+        }
+    }
 }
 
 /// Attach to anything the fog should hide.
@@ -220,11 +247,9 @@ fn rebuild_overlay(
     for dz in -reach..=reach {
         for dx in -reach..=reach {
             let cell = origin + IVec2::new(dx, dz);
-            let explored = fog.explored.contains(&cell);
-            if explored && fog.visible.contains(&cell) {
+            let Some(alpha) = fog.veil(cell) else {
                 continue; // Fully lit: no overlay at all.
-            }
-            let alpha = if explored { DIM_ALPHA } else { 1.0 };
+            };
 
             let min = cell_min(cell);
             let max = min + Vec2::splat(FOG_CELL);
@@ -241,12 +266,13 @@ fn rebuild_overlay(
                 positions.push([x, 0.0, z]);
                 normals.push([0.0, 1.0, 0.0]);
                 uvs.push([u, v]);
-                colors.push([0.0, 0.0, 0.015, alpha]);
+                colors.push([1.0, 1.0, 1.0, alpha]);
             }
             indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
         }
     }
 
+    let quads = positions.len() / 4;
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
@@ -265,24 +291,33 @@ fn rebuild_overlay(
         meshes.remove(&current.0);
         commands.entity(entity).insert(Mesh3d(handle));
     } else {
+        info!("fog: overlay created with {quads} quads");
         commands.spawn((
             FogOverlay,
             Mesh3d(handle),
-            MeshMaterial3d(art.unlit.clone()),
+            MeshMaterial3d(art.fog.clone()),
             // Above the ground and any decal, below every standing prop.
-            Transform::from_xyz(0.0, 0.09, 0.0),
+            Transform::from_xyz(0.0, 0.35, 0.0),
             crate::common::RunEntity,
         ));
     }
 }
 
 /// Hide whatever the fog covers.
-fn apply_fog_visibility(fog: Res<FogMap>, mut q: Query<(&Body, &FogOccluded, &mut Visibility)>) {
-    for (body, occlusion, mut visibility) in &mut q {
+///
+/// Keyed on the transform rather than on `Body`, because streamed terrain has
+/// no `Body` - it is scenery, not an actor. Querying for one silently skipped
+/// every prop and every patch of ground, which is most of what fog is for.
+fn apply_fog_visibility(
+    fog: Res<FogMap>,
+    mut q: Query<(&Transform, &FogOccluded, &mut Visibility)>,
+) {
+    for (transform, occlusion, mut visibility) in &mut q {
+        let pos = Vec2::new(transform.translation.x, transform.translation.z);
         let shown = if occlusion.require_sight {
-            fog.is_visible(body.pos)
+            fog.is_visible(pos)
         } else {
-            fog.is_explored(body.pos)
+            fog.is_explored(pos)
         };
         let want = if shown {
             Visibility::Inherited
@@ -374,5 +409,60 @@ mod tests {
             SIGHT_RADIUS < window,
             "sight {SIGHT_RADIUS} exceeds the {window}-unit streaming window"
         );
+    }
+    #[test]
+    fn the_three_fog_states_are_distinct() {
+        let mut fog = FogMap::default();
+        let seen_now = IVec2::new(0, 0);
+        let remembered = IVec2::new(5, 0);
+        let unknown = IVec2::new(50, 0);
+        fog.explored.insert(seen_now);
+        fog.visible.insert(seen_now);
+        fog.explored.insert(remembered);
+
+        assert_eq!(fog.veil(seen_now), None, "ground in sight takes no veil");
+        assert_eq!(
+            fog.veil(remembered),
+            Some(DIM_ALPHA),
+            "ground you remember is dimmed, not hidden"
+        );
+        assert_eq!(fog.veil(unknown), Some(1.0), "unseen ground is blacked out");
+    }
+
+    #[test]
+    fn a_fresh_map_veils_everything() {
+        // Otherwise the first frame of a run shows the whole neighbourhood.
+        let fog = FogMap::default();
+        for cell in [IVec2::ZERO, IVec2::new(3, -9), IVec2::new(-100, 100)] {
+            assert_eq!(fog.veil(cell), Some(1.0));
+        }
+    }
+
+    #[test]
+    fn walking_leaves_a_dimmed_trail_rather_than_re_hiding_it() {
+        let mut fog = FogMap::default();
+        let behind = IVec2::new(-9, 0);
+        fog.explored.insert(behind);
+        fog.visible.insert(behind);
+        assert_eq!(fog.veil(behind), None);
+
+        // Player moves on; the cell drops out of sight but stays remembered.
+        fog.visible.clear();
+        assert_eq!(fog.veil(behind), Some(DIM_ALPHA));
+        assert!(fog.is_explored(cell_min(behind) + Vec2::splat(FOG_CELL * 0.5)));
+        assert!(!fog.is_visible(cell_min(behind) + Vec2::splat(FOG_CELL * 0.5)));
+    }
+
+    #[test]
+    fn resetting_forgets_the_previous_run() {
+        let mut fog = FogMap::default();
+        fog.explored.insert(IVec2::ZERO);
+        fog.visible.insert(IVec2::ZERO);
+        fog.revealed = 42;
+        fog.reset();
+        assert_eq!(fog.explored_cells(), 0);
+        assert_eq!(fog.visible_cells(), 0);
+        assert_eq!(fog.revealed, 0);
+        assert_eq!(fog.veil(IVec2::ZERO), Some(1.0));
     }
 }

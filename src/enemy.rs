@@ -630,6 +630,7 @@ pub fn spawn_enemy(
             ..default()
         },
         VisualScale::new(scale),
+        crate::fog::FogOccluded::living(),
         Mesh3d(art.enemy_mesh(kind)),
         MeshMaterial3d(art.solid.clone()),
         Transform::from_translation(to_world(pos, 0.0)).with_scale(Vec3::splat(scale)),

@@ -361,7 +361,7 @@ fn build_chunk(
                 ChunkEntity(coord),
                 Mesh3d(meshes.add(ground)),
                 MeshMaterial3d(art.ground.clone()),
-                Transform::from_translation(to_world(chunk_min(coord), 0.0)),
+                Transform::from_translation(to_world(chunk_center(coord), 0.0)),
                 crate::fog::FogOccluded::default(),
             ))
             .id(),

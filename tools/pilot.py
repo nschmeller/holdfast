@@ -104,6 +104,12 @@ def digest(s):
     )
     out.append(f"        {kinds}")
 
+    f = s.get("fog")
+    if f:
+        out.append(
+            f"EXPLORED {f['explored_area']:.0f} sq units  ({f['cells_in_sight']} cells in sight)"
+        )
+
     ec = s["economy"]
     out.append(f"SCRAP {ec['scrap']:.0f} (+{ec['scrap_per_sec']:.1f}/s)  CORES {ec['cores']:.0f}")
 

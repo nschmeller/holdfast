@@ -80,6 +80,8 @@ pub struct GameArt {
     pub metal: Handle<StandardMaterial>,
     pub glass: Handle<StandardMaterial>,
     pub unlit: Handle<StandardMaterial>,
+    /// Fog overlay: colour lives here, only opacity varies per vertex.
+    pub fog: Handle<StandardMaterial>,
     pub ground: Handle<StandardMaterial>,
     glows: HashMap<Glow, Handle<StandardMaterial>>,
 
@@ -171,6 +173,16 @@ fn build_art(
     });
     let unlit = materials.add(StandardMaterial {
         base_color: Color::WHITE,
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    // Fog carries its colour in the material and only its opacity in the
+    // mesh. A near-black vertex colour turned out not to render at all, and
+    // whatever the reason, the colour has no business being per-vertex when
+    // every cell shares it - only how much of it shows differs.
+    let fog = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.012, 0.014, 0.03),
         unlit: true,
         alpha_mode: AlphaMode::Blend,
         ..default()
@@ -295,6 +307,7 @@ fn build_art(
         metal,
         glass,
         unlit,
+        fog,
         ground,
         glows,
         player,

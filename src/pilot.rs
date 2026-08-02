@@ -872,6 +872,7 @@ struct Sheet<'w> {
 
 #[derive(SystemParam)]
 struct Meta<'w> {
+    fog: Res<'w, crate::fog::FogMap>,
     unlocks: Res<'w, Unlocks>,
     plan: Res<'w, crate::command::PlanMode>,
     offer: Res<'w, CardOffer>,
@@ -915,6 +916,12 @@ fn write_snapshot(
     json.text("state", &format!("{:?}", pacing.state.get()));
     json.text("world", env.title());
     json.count("queued", pilot.queue.len());
+
+    json.obj("fog");
+    json.num("explored_area", meta.fog.explored_area());
+    json.count("explored_cells", meta.fog.explored_cells());
+    json.count("cells_in_sight", meta.fog.visible_cells());
+    json.end();
 
     json.obj("run");
     json.num("elapsed", pacing.clock.elapsed);
