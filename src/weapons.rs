@@ -219,6 +219,7 @@ fn reset_loadout(mut loadout: ResMut<Loadout>) {
 fn fire_weapons(
     time: Res<Time>,
     stats: Res<PlayerStats>,
+    obstacles: Res<crate::arena::ObstacleField>,
     pools: Res<crate::world::LightPools>,
     grid: Res<EnemyGrid>,
     mut loadout: ResMut<Loadout>,
@@ -265,7 +266,7 @@ fn fire_weapons(
         }
 
         // Most weapons need a target; the area ones do not.
-        let target = grid.nearest(origin, range);
+        let target = grid.nearest_visible(origin, range, &obstacles);
         let aim = target.map_or(facing_dir, |t| (t.pos - origin).normalize_or_zero());
 
         match kind {
@@ -480,7 +481,7 @@ fn fire_weapons(
                 let mut excluded: Option<Entity> = None;
                 for _ in 0..shots_to_fire {
                     let Some(t) = grid
-                        .best_target(origin, range)
+                        .best_visible_target(origin, range, &obstacles)
                         .filter(|t| excluded.is_none_or(|ex| ex != t.entity))
                     else {
                         break;

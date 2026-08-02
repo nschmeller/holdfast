@@ -56,6 +56,10 @@ pub struct EnemyGrid {
     buckets: Vec<Vec<GridEntry>>,
 }
 
+/// Height a shot travels at, for line-of-sight tests. Matches the threshold
+/// `PropSpec::solid` uses to decide whether a prop stops shots at all.
+pub const SHOT_HEIGHT: f32 = 0.55;
+
 #[derive(Debug, Clone, Copy)]
 pub struct GridEntry {
     pub entity: Entity,
@@ -147,8 +151,36 @@ impl EnemyGrid {
 
     /// Nearest enemy to `pos` within `radius`, if any.
     pub fn nearest(&self, pos: Vec2, radius: f32) -> Option<GridEntry> {
+        self.nearest_where(pos, radius, |_| true)
+    }
+
+    /// Nearest enemy that something at `pos` can actually shoot.
+    ///
+    /// Targeting without this looks broken from the outside: the hero locks on
+    /// to whatever is closest, and then patiently fires a dart into the side of
+    /// a book for ten seconds because the thing it picked is behind it.
+    pub fn nearest_visible(
+        &self,
+        pos: Vec2,
+        radius: f32,
+        obstacles: &ObstacleField,
+    ) -> Option<GridEntry> {
+        self.nearest_where(pos, radius, |e| {
+            !obstacles.blocks_segment(pos, e.pos, SHOT_HEIGHT)
+        })
+    }
+
+    fn nearest_where(
+        &self,
+        pos: Vec2,
+        radius: f32,
+        mut allow: impl FnMut(&GridEntry) -> bool,
+    ) -> Option<GridEntry> {
         let mut best: Option<(f32, GridEntry)> = None;
         self.for_each_near(pos, radius, |e| {
+            if !allow(e) {
+                return;
+            }
             let d = e.pos.distance_squared(pos);
             if best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, *e));
@@ -160,8 +192,32 @@ impl EnemyGrid {
     /// Prefers bosses, then whatever is closest. Turrets and the laser use this
     /// so high-value targets do not get ignored in favour of chaff.
     pub fn best_target(&self, pos: Vec2, radius: f32) -> Option<GridEntry> {
+        self.best_target_where(pos, radius, |_| true)
+    }
+
+    /// As [`Self::best_target`], but only among enemies with a clear line.
+    pub fn best_visible_target(
+        &self,
+        pos: Vec2,
+        radius: f32,
+        obstacles: &ObstacleField,
+    ) -> Option<GridEntry> {
+        self.best_target_where(pos, radius, |e| {
+            !obstacles.blocks_segment(pos, e.pos, SHOT_HEIGHT)
+        })
+    }
+
+    fn best_target_where(
+        &self,
+        pos: Vec2,
+        radius: f32,
+        mut allow: impl FnMut(&GridEntry) -> bool,
+    ) -> Option<GridEntry> {
         let mut best: Option<(bool, f32, GridEntry)> = None;
         self.for_each_near(pos, radius, |e| {
+            if !allow(e) {
+                return;
+            }
             let d = e.pos.distance_squared(pos);
             let better = match best {
                 None => true,
@@ -882,6 +938,7 @@ fn sync_transforms(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arena::ColliderShape;
 
     fn entity(i: u32) -> Entity {
         Entity::from_raw_u32(i).expect("valid test entity index")
@@ -1139,5 +1196,121 @@ mod tests {
             "settled only {} apart",
             a.distance(b)
         );
+    }
+    #[test]
+    fn targeting_skips_enemies_behind_cover() {
+        // The whole point: firing at something you cannot hit reads as the
+        // weapon being broken.
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(Vec2::ZERO);
+        grid.insert(GridEntry {
+            entity: entity(1),
+            pos: Vec2::new(10.0, 0.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+        grid.insert(GridEntry {
+            entity: entity(2),
+            pos: Vec2::new(0.0, 14.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+
+        let mut field = ObstacleField::default();
+        // A wall between the shooter and the nearer enemy.
+        field.push(
+            Vec2::new(5.0, 0.0),
+            ColliderShape::rect(1.0, 4.0),
+            true,
+            2.0,
+        );
+
+        // Without line of sight the closest one wins...
+        assert_eq!(grid.nearest(Vec2::ZERO, 50.0).unwrap().entity, entity(1));
+        // ...and with it, the shootable one does.
+        assert_eq!(
+            grid.nearest_visible(Vec2::ZERO, 50.0, &field)
+                .unwrap()
+                .entity,
+            entity(2)
+        );
+    }
+
+    #[test]
+    fn a_boss_behind_cover_does_not_hold_a_turret_hostage() {
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(Vec2::ZERO);
+        grid.insert(GridEntry {
+            entity: entity(1),
+            pos: Vec2::new(12.0, 0.0),
+            radius: 1.5,
+            is_boss: true,
+        });
+        grid.insert(GridEntry {
+            entity: entity(2),
+            pos: Vec2::new(0.0, 8.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+        let mut field = ObstacleField::default();
+        field.push(
+            Vec2::new(6.0, 0.0),
+            ColliderShape::rect(1.0, 4.0),
+            true,
+            2.0,
+        );
+
+        assert_eq!(
+            grid.best_target(Vec2::ZERO, 50.0).unwrap().entity,
+            entity(1)
+        );
+        assert_eq!(
+            grid.best_visible_target(Vec2::ZERO, 50.0, &field)
+                .unwrap()
+                .entity,
+            entity(2)
+        );
+    }
+
+    #[test]
+    fn low_cover_does_not_block_a_shot() {
+        // A flat prop is scenery, not a wall; shots pass over it.
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(Vec2::ZERO);
+        grid.insert(GridEntry {
+            entity: entity(1),
+            pos: Vec2::new(10.0, 0.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+        let mut field = ObstacleField::default();
+        field.push(
+            Vec2::new(5.0, 0.0),
+            ColliderShape::rect(1.0, 4.0),
+            false,
+            0.2,
+        );
+        assert!(grid.nearest_visible(Vec2::ZERO, 50.0, &field).is_some());
+    }
+
+    #[test]
+    fn nothing_visible_means_no_target_rather_than_a_wrong_one() {
+        let mut grid = EnemyGrid::default();
+        grid.rebuild(Vec2::ZERO);
+        grid.insert(GridEntry {
+            entity: entity(1),
+            pos: Vec2::new(10.0, 0.0),
+            radius: 0.5,
+            is_boss: false,
+        });
+        let mut field = ObstacleField::default();
+        field.push(
+            Vec2::new(5.0, 0.0),
+            ColliderShape::rect(1.0, 6.0),
+            true,
+            3.0,
+        );
+        assert!(grid.nearest_visible(Vec2::ZERO, 50.0, &field).is_none());
+        assert!(grid.best_visible_target(Vec2::ZERO, 50.0, &field).is_none());
     }
 }

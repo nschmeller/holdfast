@@ -530,6 +530,7 @@ fn handle_build(
 fn ally_think(
     time: Res<Time>,
     grid: Res<EnemyGrid>,
+    obstacles: Res<ObstacleField>,
     squad: Res<Squad>,
     player: Query<&Body, (With<Player>, Without<Ally>)>,
     zones: Query<(&Zone, &Body), Without<Ally>>,
@@ -577,7 +578,7 @@ fn ally_think(
         };
 
         // -- fight what is in reach ----------------------------------------
-        let target = grid.nearest(body.pos, ally.range + 2.0);
+        let target = grid.nearest_visible(body.pos, ally.range + 2.0, &obstacles);
 
         // Chase a target only a short way from the goal, so a Guard does not
         // get walked off its zone by a single wandering ant.
@@ -667,6 +668,7 @@ fn ally_think(
 fn turret_think(
     time: Res<Time>,
     grid: Res<EnemyGrid>,
+    obstacles: Res<ObstacleField>,
     mut turrets: Query<(&mut Turret, &Body, &mut Transform)>,
     mut shots: MessageWriter<SpawnShot>,
     mut statuses: Query<&mut StatusEffects, With<Enemy>>,
@@ -697,7 +699,7 @@ fn turret_think(
             continue;
         }
 
-        let Some(t) = grid.best_target(body.pos, turret.range) else {
+        let Some(t) = grid.best_visible_target(body.pos, turret.range, &obstacles) else {
             continue;
         };
 

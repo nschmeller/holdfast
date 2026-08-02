@@ -147,7 +147,7 @@ impl Plugin for DevToolsPlugin {
             // PreStartup, because the initial `OnEnter(Menu)` transition -
             // which builds the world selector - runs before `Startup`.
             .add_systems(PreStartup, apply_startup_config)
-            .insert_resource(WindowPlaced(false))
+            .init_resource::<WindowPlaced>()
             // Startup, not PreStartup: the primary window has to exist first.
             .add_systems(Startup, place_window)
             .add_systems(Update, (tile_window, force_unlocks, tick_dev))
@@ -205,10 +205,24 @@ fn place_window(
     }
 }
 
-/// Set once the window has been tiled, so the placement is not fought over
-/// every frame - the user should be able to drag the window afterwards.
-#[derive(Resource)]
-struct WindowPlaced(bool);
+/// Where the window is meant to end up, and how many corrections it has left.
+///
+/// One shot is not enough. The position handed to the backend is not always
+/// the position that lands: window managers add decoration, reserve menu bars,
+/// and on macOS the coordinate space a multi-monitor request is interpreted in
+/// does not reliably match the one the monitor reported itself in. Rather than
+/// model any of that, this measures the error and corrects for it - which works
+/// whatever the transform turns out to be.
+#[derive(Resource, Debug, Default)]
+struct WindowPlaced {
+    /// Where we want the window's top-left, in the monitor's own coordinates.
+    want: Option<IVec2>,
+    /// What we most recently asked for, which may differ after a correction.
+    asked: IVec2,
+    /// Frames to wait before believing the position read back.
+    settle: u8,
+    corrections: u8,
+}
 
 /// Lay the window into a horizontal slice of the chosen monitor.
 ///
@@ -220,17 +234,26 @@ fn tile_window(
     monitors: Query<(Entity, &Monitor, Option<&PrimaryMonitor>)>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    const SIDE: i32 = 16;
-    /// Share of the monitor's height a tiled window may use.
+    /// Clear space kept between a window and the edges of its monitor.
+    const EDGE: i32 = 24;
+    /// Clear space kept between two tiled windows.
+    const GAP: i32 = 28;
+    /// Extra room left above the content area for the title bar the window
+    /// manager draws there, which is not part of the size we ask for.
+    const CHROME: i32 = 40;
+    /// Tallest a window may be relative to its width.
     ///
-    /// The remainder becomes slack above and below, because the window is
-    /// positioned by its content area but drawn with a title bar above it, a
-    /// desktop can reserve a menu bar and a dock, and the coordinate space the
-    /// backend applies is not always the one asked for. Filling the screen
-    /// exactly puts the bottom of the game off the bottom of the display; the
-    /// window is centred vertically instead, so a placement that lands a
-    /// hundred pixels out is still entirely on screen.
-    const HEIGHT_SHARE: f32 = 0.82;
+    /// Two windows side by side on a wide monitor are width-limited, which
+    /// leaves a great deal of vertical space unused. Allowing a squarer window
+    /// spends it: the camera is a top-down overlook, so height buys the player
+    /// more world rather than letterboxing.
+    const MAX_ASPECT: i32 = 15;
+
+    // Already placed and corrected: leave it alone so the user can drag it.
+    if placed.want.is_some() {
+        correct_position(&mut placed, &mut windows);
+        return;
+    }
 
     // A monitor without a tile is simply the only tile: one code path decides
     // where a window goes. The alternative - letting `MonitorSelection::Index`
@@ -241,7 +264,7 @@ fn tile_window(
         (None, None, None) => return,
         _ => (0, 1),
     };
-    if placed.0 || monitors.is_empty() {
+    if monitors.is_empty() {
         return;
     }
 
@@ -285,45 +308,82 @@ fn tile_window(
     };
     let monitor = *monitor;
 
-    let slot = i32::try_from(slot.min(of - 1)).unwrap_or(0);
     let of = i32::try_from(of).unwrap_or(1).max(1);
+    let slot = i32::try_from(slot).unwrap_or(0).min(of - 1);
     let screen_w = i32::try_from(monitor.physical_width).unwrap_or(1920);
     let screen_h = i32::try_from(monitor.physical_height).unwrap_or(1080);
 
-    let column = (screen_w - SIDE * 2) / of;
+    // Lay out n windows with a gap between each and a margin at both ends,
+    // then centre the whole row: leftover pixels become symmetric slack rather
+    // than a lopsided strip on the right.
+    let usable = screen_w - EDGE * 2 - GAP * (of - 1);
     let width = config
         .resolution
         .and_then(|(w, _)| i32::try_from(w).ok())
-        .unwrap_or(column - SIDE)
-        .min(column - SIDE)
+        .unwrap_or(usable / of)
+        .min(usable / of)
         .max(320);
-    // A single tile is centred rather than pinned to the left edge.
-    let gutter = if of == 1 {
-        (screen_w - width) / 2
-    } else {
-        SIDE
-    };
-    // Cap at 9:16 of the width too, so a wide slot does not become a letterbox
-    // the fixed overlook camera looks silly in.
-    let budget = (screen_h as f32 * HEIGHT_SHARE) as i32;
-    let height = budget.min(width * 3 / 4).max(240);
-    let top = monitor.physical_position.y + (screen_h - height) / 2;
+    let row = width * of + GAP * (of - 1);
+    let left = (screen_w - row) / 2;
 
+    let budget = screen_h - EDGE * 2 - CHROME;
+    let height = budget.min(width * MAX_ASPECT / 16).max(240);
+    let top = (screen_h - height) / 2 + CHROME / 2;
+
+    let want = monitor.physical_position + IVec2::new(left + (width + GAP) * slot, top);
     for mut window in &mut windows {
         window.resolution = WindowResolution::new(
             u32::try_from(width).unwrap_or(640),
             u32::try_from(height).unwrap_or(480),
         );
-        window.position = WindowPosition::At(IVec2::new(
-            monitor.physical_position.x + gutter + column * slot,
-            top,
-        ));
+        window.position = WindowPosition::At(want);
     }
-    placed.0 = true;
-    info!(
-        "devtools: tiled into slot {slot} of {of}: {width}x{height} at ({}, {top}) on a {screen_w}x{screen_h} monitor",
-        monitor.physical_position.x + gutter + column * slot
-    );
+    placed.want = Some(want);
+    placed.asked = want;
+    placed.settle = 20;
+    placed.corrections = 6;
+    info!("devtools: tiled into slot {slot} of {of}: {width}x{height}, want {want}");
+}
+
+/// Ask again until the window actually sits where it was asked to.
+///
+/// The first request is placed while the window still lives on whichever
+/// display it opened on. If that display has a different scale factor from the
+/// target - a Retina laptop beside an external monitor is the ordinary case -
+/// the coordinates are interpreted in the wrong space and the window lands at
+/// some fraction of the intended offset. Once it has moved to the target, the
+/// same request is honoured exactly. So the fix is to repeat the request, not
+/// to compute a correction: an arithmetic correction assumes a translation
+/// error and oscillates forever against a scale one.
+fn correct_position(
+    placed: &mut WindowPlaced,
+    windows: &mut Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    let Some(want) = placed.want else { return };
+    if placed.corrections == 0 {
+        return;
+    }
+    if placed.settle > 0 {
+        placed.settle -= 1;
+        return;
+    }
+
+    for mut window in windows {
+        let WindowPosition::At(actual) = window.position else {
+            return;
+        };
+        // Two pixels of slop is decoration rounding, not a misplacement.
+        if (actual - want).abs().max_element() <= 2 {
+            placed.corrections = 0;
+            info!("devtools: window settled at {actual}");
+            return;
+        }
+        info!("devtools: window landed at {actual}, want {want}; asking again");
+        window.position = WindowPosition::At(want);
+        placed.asked = want;
+        placed.settle = 20;
+        placed.corrections -= 1;
+    }
 }
 
 /// Skip the onboarding schedule so late-game systems can be exercised without

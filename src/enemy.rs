@@ -540,6 +540,13 @@ fn pick_kind(rng: &mut Rng, minutes: f32) -> Option<EnemyKind> {
 /// no perimeter to spawn on any more, so the player *is* the perimeter.
 const SPAWN_RING: f32 = 34.0;
 
+/// How far ahead an enemy checks for something to walk around.
+const AVOID_LOOKAHEAD: f32 = 1.4;
+
+/// How hard it commits to going around. Enough to clear a corner, not so much
+/// that a chase turns into a circle.
+const AVOID_STRENGTH: f32 = 0.9;
+
 fn spawn_point(anchor: Vec2, obstacles: &ObstacleField, rng: &mut Rng, radius: f32) -> Vec2 {
     for _ in 0..12 {
         let a = rng.range(0.0, std::f32::consts::TAU);
@@ -692,6 +699,7 @@ pub struct EnvTint(pub Color);
 fn enemy_think(
     time: Res<Time>,
     gust: Res<Gust>,
+    obstacles: Res<ObstacleField>,
     mut rng: ResMut<Rng>,
     player: Query<(&Body, Entity), (With<Player>, Without<Enemy>)>,
     mut enemies: Query<(&mut Enemy, &mut Body, &mut Altitude, &StatusEffects)>,
@@ -721,6 +729,35 @@ fn enemy_think(
 
         let speed = enemy.speed * status.speed_mult();
         let mut desired = dir * speed;
+
+        // Walk around cover rather than into it.
+        //
+        // Chasing in a straight line and letting depenetration sort it out
+        // looks exactly like what it is: a queue of monsters grinding against
+        // the side of a book. Probing ahead and sliding along whatever is in
+        // the way costs one obstacle query and turns the same crowd into
+        // something that flows around the furniture.
+        if !enemy.kind.flies() {
+            let reach = body.radius + AVOID_LOOKAHEAD;
+            let probe = body.pos + dir * reach;
+            let push = obstacles.resolve(probe, body.radius) - probe;
+            if push.length_squared() > 1e-6 {
+                let normal = push.normalize();
+                // Drop the component heading into the surface...
+                let into = desired.dot(normal).min(0.0);
+                desired -= normal * into;
+                // ...and commit to one way around. The side comes from the
+                // enemy's own phase, so a crowd splits and flows rather than
+                // every member dithering at the same corner.
+                let side = if enemy.phase < std::f32::consts::PI {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let tangent = Vec2::new(-normal.y, normal.x) * side;
+                desired += tangent * speed * AVOID_STRENGTH;
+            }
+        }
 
         match enemy.kind.behavior() {
             Behavior::Chase => {}
