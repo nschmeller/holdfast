@@ -194,7 +194,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
 
 /// Wood: planks running along X, with grain streaks and a warm falloff towards
 /// the edges so the middle of the desk reads as the lit area.
-fn floor() -> Mesh {
+pub(super) fn floor() -> Mesh {
     ground_grid(HALF_X, HALF_Z, 0.9, |_, _, c| {
         let plank = (c.y / 3.2).floor();
         let grain = noise_soft(c.x * 0.7, plank * 9.3, 11);
@@ -220,7 +220,7 @@ fn floor() -> Mesh {
 /// The raised lip around the desk. Visual only: the player is already held
 /// inside by the arena bounds, and giving it a collider would just create a
 /// sticky one-unit gutter around the whole playfield.
-fn rim(s: &mut SceneData) {
+pub(super) fn rim(s: &mut SceneData) {
     let mut b = MeshWeld::new();
     let t = 0.7;
     let h = 0.5;
@@ -241,7 +241,7 @@ fn rim(s: &mut SceneData) {
 
 // -- props ------------------------------------------------------------------
 
-fn monitor() -> Mesh {
+pub(super) fn monitor() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(4.4, 0.22, 2.0), at(0.0, 0.11, 0.4), pal::PLASTIC_DARK);
     b.add(&cylinder(0.34, 1.6), at(0.0, 0.9, 0.2), pal::PLASTIC_MID);
@@ -270,7 +270,7 @@ fn monitor() -> Mesh {
     b.build()
 }
 
-fn desk_lamp() -> Mesh {
+pub(super) fn desk_lamp() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder(1.2, 0.24), at(0.0, 0.12, 0.0), pal::METAL_DARK);
     b.add(
@@ -292,7 +292,7 @@ fn desk_lamp() -> Mesh {
     b.build()
 }
 
-fn keyboard() -> Mesh {
+pub(super) fn keyboard() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(13.0, 0.4, 4.4), at(0.0, 0.2, 0.0), pal::PLASTIC_DARK);
     // Keycaps. A 14x4 grid with a spacebar row reads unmistakably as a
@@ -314,7 +314,7 @@ fn keyboard() -> Mesh {
     b.build()
 }
 
-fn mousepad() -> Mesh {
+pub(super) fn mousepad() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(9.0, 0.05, 7.0), at(0.0, 0.0, 0.0), pal::MOUSEPAD);
     b.add(
@@ -325,7 +325,7 @@ fn mousepad() -> Mesh {
     b.build()
 }
 
-fn coffee_mug() -> Mesh {
+pub(super) fn coffee_mug() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder_hi(1.0, 1.7), at(0.0, 0.85, 0.0), pal::CERAMIC);
     b.add(&cylinder_hi(0.88, 0.1), at(0.0, 1.62, 0.0), pal::COFFEE);
@@ -338,7 +338,7 @@ fn coffee_mug() -> Mesh {
     b.build()
 }
 
-fn pen_holder() -> Mesh {
+pub(super) fn pen_holder() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &cylinder_hi(0.85, 1.7),
@@ -371,7 +371,7 @@ fn pen_holder() -> Mesh {
     b.build()
 }
 
-fn book_stack() -> Mesh {
+pub(super) fn book_stack() -> Mesh {
     let mut b = MeshWeld::new();
     let covers = [pal::DANGER, pal::LEAF, pal::SCREEN_GLOW];
     for (i, color) in covers.iter().enumerate() {
@@ -388,7 +388,7 @@ fn book_stack() -> Mesh {
     b.build()
 }
 
-fn headphones() -> Mesh {
+pub(super) fn headphones() -> Mesh {
     let mut b = MeshWeld::new();
     // Band lying flat, two cups.
     b.add(&torus(0.16, 1.5), at(0.0, 0.16, 0.0), pal::PLASTIC_DARK);
@@ -407,7 +407,7 @@ fn headphones() -> Mesh {
     b.build()
 }
 
-fn plant_pot() -> Mesh {
+pub(super) fn plant_pot() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &cone(1.1, 1.5),
@@ -434,7 +434,7 @@ fn plant_pot() -> Mesh {
     b.build()
 }
 
-fn tape_dispenser() -> Mesh {
+pub(super) fn tape_dispenser() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(2.6, 0.5, 1.4), at(0.0, 0.25, 0.0), pal::PLASTIC_DARK);
     b.add(&cube(1.2, 1.0, 1.2), at(-0.6, 0.7, 0.0), pal::PLASTIC_MID);
@@ -447,7 +447,7 @@ fn tape_dispenser() -> Mesh {
     b.build()
 }
 
-fn stapler_prop() -> Mesh {
+pub(super) fn stapler_prop() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(3.2, 0.36, 1.1), at(0.0, 0.18, 0.0), pal::PLASTIC_DARK);
     b.add(
@@ -463,7 +463,7 @@ fn stapler_prop() -> Mesh {
     b.build()
 }
 
-fn cable_coil() -> Mesh {
+pub(super) fn cable_coil() -> Mesh {
     let mut b = MeshWeld::new();
     // A loose coil: three offset rings.
     for (i, r) in [1.5f32, 1.15, 0.8].iter().enumerate() {
@@ -477,7 +477,7 @@ fn cable_coil() -> Mesh {
     b.build()
 }
 
-fn rubiks_cube() -> Mesh {
+pub(super) fn rubiks_cube() -> Mesh {
     let mut b = MeshWeld::new();
     let faces = [
         pal::DANGER,
@@ -521,7 +521,7 @@ fn rubiks_cube() -> Mesh {
     b.build()
 }
 
-fn calculator() -> Mesh {
+pub(super) fn calculator() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(2.8, 0.24, 1.7), at(0.0, 0.12, 0.0), pal::PLASTIC_MID);
     b.add(&cube(2.2, 0.06, 0.5), at(0.0, 0.26, -0.5), pal::SCREEN_DIM);
@@ -537,7 +537,7 @@ fn calculator() -> Mesh {
     b.build()
 }
 
-fn sticky_pad(color: Color) -> Mesh {
+pub(super) fn sticky_pad(color: Color) -> Mesh {
     let mut b = MeshWeld::new();
     for i in 0..4 {
         b.add(
@@ -549,14 +549,14 @@ fn sticky_pad(color: Color) -> Mesh {
     b.build()
 }
 
-fn eraser() -> Mesh {
+pub(super) fn eraser() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(1.1, 0.42, 0.62), at(0.0, 0.21, 0.0), pal::ERASER_PINK);
     b.add(&cube(0.5, 0.44, 0.64), at(0.0, 0.21, 0.0), pal::PAPER);
     b.build()
 }
 
-fn usb_stick() -> Mesh {
+pub(super) fn usb_stick() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &cube(1.1, 0.26, 0.44),
@@ -567,7 +567,7 @@ fn usb_stick() -> Mesh {
     b.build()
 }
 
-fn loose_paperclip() -> Mesh {
+pub(super) fn loose_paperclip() -> Mesh {
     let mut b = MeshWeld::new();
     for (i, r) in [0.3f32, 0.19].iter().enumerate() {
         b.add(

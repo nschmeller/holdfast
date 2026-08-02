@@ -204,7 +204,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
     s
 }
 
-fn floor(rng: &mut Rng) -> Mesh {
+pub(super) fn floor(rng: &mut Rng) -> Mesh {
     let seed = (rng.next_u64() & 0xFFFF) as u32;
     ground_grid(HALF_X, HALF_Z, 1.0, |_, _, c| {
         let n = noise_soft(c.x * 0.28, c.y * 0.28, seed);
@@ -227,7 +227,7 @@ fn floor(rng: &mut Rng) -> Mesh {
 
 // -- props ------------------------------------------------------------------
 
-fn fallen_log() -> Mesh {
+pub(super) fn fallen_log() -> Mesh {
     let mut b = MeshWeld::new();
     // Trunk lying along X.
     b.add(&cylinder_hi(1.5, 17.0), at_rot_z(0.0, 1.5, 0.0, 90.0), BARK);
@@ -267,7 +267,7 @@ fn fallen_log() -> Mesh {
     b.build()
 }
 
-fn stump(r: f32) -> Mesh {
+pub(super) fn stump(r: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder_hi(r, 2.2), at(0.0, 1.1, 0.0), BARK);
     for (i, rr) in [0.9f32, 0.62, 0.35].iter().enumerate() {
@@ -291,7 +291,7 @@ fn stump(r: f32) -> Mesh {
     b.build()
 }
 
-fn glow_mushroom(scale: f32) -> Mesh {
+pub(super) fn glow_mushroom(scale: f32) -> Mesh {
     let mut b = MeshWeld::new();
     let mut rng = Rng::seeded(0x5480 ^ (scale * 100.0) as u64);
     // One tall cap plus a cluster of small ones.
@@ -339,7 +339,7 @@ fn glow_mushroom(scale: f32) -> Mesh {
     b.build()
 }
 
-fn root_arch(len: f32) -> Mesh {
+pub(super) fn root_arch(len: f32) -> Mesh {
     let mut weld = MeshWeld::new();
     // Three segments forming a shallow arch out of and back into the soil.
     let steps = 7;
@@ -357,7 +357,7 @@ fn root_arch(len: f32) -> Mesh {
     weld.build()
 }
 
-fn pebble(r: f32, rng: &mut Rng) -> Mesh {
+pub(super) fn pebble(r: f32, rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let grey = 0.34 + rng.f32() * 0.2;
     b.add(
@@ -368,7 +368,7 @@ fn pebble(r: f32, rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn acorn() -> Mesh {
+pub(super) fn acorn() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &sphere(0.34),
@@ -384,7 +384,7 @@ fn acorn() -> Mesh {
     b.build()
 }
 
-fn fern(rng: &mut Rng) -> Mesh {
+pub(super) fn fern(rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let fronds = 5 + rng.below(4);
     for i in 0..fronds {
@@ -401,7 +401,7 @@ fn fern(rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn flower(rng: &mut Rng) -> Mesh {
+pub(super) fn flower(rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let h = rng.range(0.8, 1.5);
     b.add(&cylinder(0.05, h), at(0.0, h * 0.5, 0.0), MOSS_LIGHT);
@@ -418,7 +418,7 @@ fn flower(rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn mud_patch(r: f32) -> Mesh {
+pub(super) fn mud_patch(r: f32) -> Mesh {
     let mut b = MeshWeld::new();
     let mut rng = Rng::seeded((r * 977.0) as u64);
     b.add(
@@ -441,7 +441,7 @@ fn mud_patch(r: f32) -> Mesh {
     b.build()
 }
 
-fn pool(r: f32) -> Mesh {
+pub(super) fn pool(r: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &Mesh::from(Cylinder::new(r, 0.06).mesh().resolution(22)),

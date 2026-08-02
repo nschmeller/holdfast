@@ -185,7 +185,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
     s
 }
 
-fn floor(rng: &mut Rng) -> Mesh {
+pub(super) fn floor(rng: &mut Rng) -> Mesh {
     let seed = (rng.next_u64() & 0xFFFF) as u32;
     ground_grid(HALF_X, HALF_Z, 1.0, |ix, iz, c| {
         // Hex-ish plating faked with an offset brick pattern, plus glowing
@@ -213,7 +213,7 @@ fn floor(rng: &mut Rng) -> Mesh {
 }
 
 /// A glowing rail marking the drop, so the edge is unmistakable.
-fn edge_rail(s: &mut SceneData) {
+pub(super) fn edge_rail(s: &mut SceneData) {
     let mut b = MeshWeld::new();
     let t = 0.25;
     for (cx, cz, sx, sz) in [
@@ -252,7 +252,7 @@ fn edge_rail(s: &mut SceneData) {
 
 // -- props ------------------------------------------------------------------
 
-fn core_pylon() -> Mesh {
+pub(super) fn core_pylon() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder_hi(1.5, 0.5), at(0.0, 0.25, 0.0), STEEL_DARK);
     b.add(&cylinder_hi(1.1, 0.4), at(0.0, 0.6, 0.0), STEEL);
@@ -280,7 +280,7 @@ fn core_pylon() -> Mesh {
     b.build()
 }
 
-fn energy_pylon(color: Color) -> Mesh {
+pub(super) fn energy_pylon(color: Color) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder_hi(1.0, 0.4), at(0.0, 0.2, 0.0), STEEL_DARK);
     b.add(&cube(0.7, 3.4, 0.7), at(0.0, 1.9, 0.0), STEEL);
@@ -296,7 +296,7 @@ fn energy_pylon(color: Color) -> Mesh {
     b.build()
 }
 
-fn monolith() -> Mesh {
+pub(super) fn monolith() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(2.6, 3.6, 1.2), at(0.0, 1.8, 0.0), STEEL_DARK);
     b.add(&cube(2.2, 3.2, 0.1), at(0.0, 1.8, 0.62), PLATE);
@@ -318,7 +318,7 @@ fn monolith() -> Mesh {
     b.build()
 }
 
-fn holo_barrier() -> Mesh {
+pub(super) fn holo_barrier() -> Mesh {
     let mut b = MeshWeld::new();
     for x in [-3.0f32, 3.0] {
         b.add(&cylinder(0.16, 2.6), at(x, 1.3, 0.0), STEEL);
@@ -336,7 +336,7 @@ fn holo_barrier() -> Mesh {
     b.build()
 }
 
-fn float_cube(rng: &mut Rng) -> Mesh {
+pub(super) fn float_cube(rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let s = rng.range(0.4, 1.3);
     b.add(&cube(s, s, s), Transform::IDENTITY, STEEL_DARK);
@@ -344,7 +344,7 @@ fn float_cube(rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn bollard() -> Mesh {
+pub(super) fn bollard() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder(0.42, 1.0), at(0.0, 0.5, 0.0), STEEL_DARK);
     b.add(&torus(0.05, 0.44), at(0.0, 0.85, 0.0), MAGENTA);
@@ -352,7 +352,7 @@ fn bollard() -> Mesh {
     b.build()
 }
 
-fn conduit(len: f32) -> Mesh {
+pub(super) fn conduit(len: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(len, 0.06, 2.0), Transform::IDENTITY, SEAM);
     b.add(

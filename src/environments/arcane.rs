@@ -246,7 +246,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
     s
 }
 
-fn floor(rng: &mut Rng) -> Mesh {
+pub(super) fn floor(rng: &mut Rng) -> Mesh {
     let seed = (rng.next_u64() & 0xFFFF) as u32;
     ground_grid(HALF_X, HALF_Z, 1.1, |ix, iz, c| {
         let n = noise_soft(c.x * 0.3, c.y * 0.3, seed);
@@ -288,7 +288,7 @@ fn floor(rng: &mut Rng) -> Mesh {
 
 /// A crumbling border instead of a clean rim: the sanctum is falling into the
 /// void a piece at a time.
-fn broken_edge(scene: &mut SceneData) {
+pub(super) fn broken_edge(scene: &mut SceneData) {
     let mut weld = MeshWeld::new();
     let mut rng = Rng::seeded(0xA2CA4E);
     for (cx, cz, sx, sz) in [
@@ -342,7 +342,7 @@ fn broken_edge(scene: &mut SceneData) {
 
 // -- props ------------------------------------------------------------------
 
-fn obelisk() -> Mesh {
+pub(super) fn obelisk() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(4.0, 0.5, 4.0), at(0.0, 0.25, 0.0), STONE_LIGHT);
     b.add(&cube(3.0, 0.4, 3.0), at(0.0, 0.7, 0.0), STONE);
@@ -370,7 +370,7 @@ fn obelisk() -> Mesh {
     b.build()
 }
 
-fn portal_arch() -> Mesh {
+pub(super) fn portal_arch() -> Mesh {
     let mut b = MeshWeld::new();
     for side in [-1.0f32, 1.0] {
         b.add(&cube(1.0, 5.0, 1.0), at(side * 2.6, 2.5, 0.0), STONE);
@@ -394,7 +394,7 @@ fn portal_arch() -> Mesh {
     b.build()
 }
 
-fn pillar(height: f32) -> Mesh {
+pub(super) fn pillar(height: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder_hi(1.1, 0.4), at(0.0, 0.2, 0.0), STONE_LIGHT);
     b.add(&cylinder_hi(0.9, 0.3), at(0.0, 0.5, 0.0), STONE);
@@ -418,7 +418,7 @@ fn pillar(height: f32) -> Mesh {
     b.build()
 }
 
-fn broken_pillar(rng: &mut Rng) -> Mesh {
+pub(super) fn broken_pillar(rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let h = rng.range(1.0, 2.2);
     b.add(&cylinder_hi(1.1, 0.4), at(0.0, 0.2, 0.0), STONE_LIGHT);
@@ -435,7 +435,7 @@ fn broken_pillar(rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn fallen_drum() -> Mesh {
+pub(super) fn fallen_drum() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &cylinder_hi(0.75, 1.6),
@@ -455,7 +455,7 @@ fn fallen_drum() -> Mesh {
     b.build()
 }
 
-fn crystal_cluster(scale: f32, color: Color, rng: &mut Rng) -> Mesh {
+pub(super) fn crystal_cluster(scale: f32, color: Color, rng: &mut Rng) -> Mesh {
     let mut weld = MeshWeld::new();
     // A base rock the shards grow out of.
     weld.add(
@@ -480,7 +480,7 @@ fn crystal_cluster(scale: f32, color: Color, rng: &mut Rng) -> Mesh {
     weld.build()
 }
 
-fn brazier() -> Mesh {
+pub(super) fn brazier() -> Mesh {
     let mut b = MeshWeld::new();
     for i in 0..3 {
         let a = i as f32 / 3.0 * std::f32::consts::TAU;
@@ -506,7 +506,7 @@ fn brazier() -> Mesh {
     b.build()
 }
 
-fn pedestal() -> Mesh {
+pub(super) fn pedestal() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(1.2, 0.24, 1.2), at(0.0, 0.12, 0.0), STONE_LIGHT);
     b.add(&cylinder_hi(0.36, 1.1), at(0.0, 0.75, 0.0), STONE);
@@ -528,7 +528,7 @@ fn pedestal() -> Mesh {
     b.build()
 }
 
-fn rubble(rng: &mut Rng) -> Mesh {
+pub(super) fn rubble(rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let n = 2 + rng.below(3);
     for _ in 0..n {
@@ -548,7 +548,7 @@ fn rubble(rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn ley_line(len: f32) -> Mesh {
+pub(super) fn ley_line(len: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(len, 0.05, 1.5), Transform::IDENTITY, STONE_DARK);
     b.add(&cube(len, 0.07, 0.7), at(0.0, 0.02, 0.0), LEY);
@@ -561,7 +561,7 @@ fn ley_line(len: f32) -> Mesh {
     b.build()
 }
 
-fn mana_font() -> Mesh {
+pub(super) fn mana_font() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder_hi(2.4, 0.22), at(0.0, 0.11, 0.0), STONE_LIGHT);
     b.add(&torus(0.24, 1.9), at(0.0, 0.3, 0.0), STONE);
@@ -583,7 +583,7 @@ fn mana_font() -> Mesh {
     b.build()
 }
 
-fn void_rift(r: f32) -> Mesh {
+pub(super) fn void_rift(r: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &Mesh::from(Cylinder::new(r, 0.05).mesh().resolution(20)),

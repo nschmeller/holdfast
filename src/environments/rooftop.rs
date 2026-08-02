@@ -216,7 +216,7 @@ pub fn build(rng: &mut Rng) -> SceneData {
     s
 }
 
-fn floor(rng: &mut Rng) -> Mesh {
+pub(super) fn floor(rng: &mut Rng) -> Mesh {
     let seed = (rng.next_u64() & 0xFFFF) as u32;
     ground_grid(HALF_X, HALF_Z, 1.1, |ix, iz, c| {
         let n = noise_soft(c.x * 0.4, c.y * 0.4, seed);
@@ -241,7 +241,7 @@ fn floor(rng: &mut Rng) -> Mesh {
 }
 
 /// The roof edge wall. Solid, so it genuinely shapes the fight.
-fn parapet(s: &mut SceneData) {
+pub(super) fn parapet(s: &mut SceneData) {
     let mut b = MeshWeld::new();
     let t = 0.6;
     let h = 1.5;
@@ -263,7 +263,7 @@ fn parapet(s: &mut SceneData) {
 
 // -- props ------------------------------------------------------------------
 
-fn water_tower() -> Mesh {
+pub(super) fn water_tower() -> Mesh {
     let mut b = MeshWeld::new();
     // Legs.
     for i in 0..4 {
@@ -299,7 +299,7 @@ fn water_tower() -> Mesh {
     b.build()
 }
 
-fn ac_unit(w: f32, d: f32) -> Mesh {
+pub(super) fn ac_unit(w: f32, d: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(w * 2.0, 2.0, d * 2.0), at(0.0, 1.0, 0.0), DUCT);
     b.add(
@@ -328,7 +328,7 @@ fn ac_unit(w: f32, d: f32) -> Mesh {
     b.build()
 }
 
-fn duct_run(len: f32) -> Mesh {
+pub(super) fn duct_run(len: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder_hi(0.7, len), at_rot_z(0.0, 0.9, 0.0, 90.0), DUCT);
     // Segment bands.
@@ -348,7 +348,7 @@ fn duct_run(len: f32) -> Mesh {
     b.build()
 }
 
-fn roof_door() -> Mesh {
+pub(super) fn roof_door() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(3.6, 3.4, 3.0), at(0.0, 1.7, 0.0), CONCRETE);
     b.add(&cube(3.8, 0.24, 3.2), at(0.0, 3.5, 0.0), CONCRETE_DARK);
@@ -357,7 +357,7 @@ fn roof_door() -> Mesh {
     b.build()
 }
 
-fn chimney() -> Mesh {
+pub(super) fn chimney() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &cube(2.8, 5.0, 2.8),
@@ -377,7 +377,7 @@ fn chimney() -> Mesh {
     b.build()
 }
 
-fn satellite_dish() -> Mesh {
+pub(super) fn satellite_dish() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder(0.9, 0.3), at(0.0, 0.15, 0.0), CONCRETE_DARK);
     b.add(&cylinder(0.18, 2.4), at(0.0, 1.2, 0.0), DUCT);
@@ -392,7 +392,7 @@ fn satellite_dish() -> Mesh {
     b.build()
 }
 
-fn neon_sign() -> Mesh {
+pub(super) fn neon_sign() -> Mesh {
     let mut b = MeshWeld::new();
     // Scaffold.
     for x in [-3.0f32, 3.0] {
@@ -409,7 +409,7 @@ fn neon_sign() -> Mesh {
     b.build()
 }
 
-fn skylight() -> Mesh {
+pub(super) fn skylight() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cube(3.8, 0.36, 3.0), at(0.0, 0.18, 0.0), CONCRETE_DARK);
     b.add(
@@ -423,7 +423,7 @@ fn skylight() -> Mesh {
     b.build()
 }
 
-fn vent_pipe(rng: &mut Rng) -> Mesh {
+pub(super) fn vent_pipe(rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let h = rng.range(0.9, 1.6);
     b.add(&cylinder(0.34, h), at(0.0, h * 0.5, 0.0), DUCT);
@@ -437,7 +437,7 @@ fn vent_pipe(rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn crate_stack(rng: &mut Rng) -> Mesh {
+pub(super) fn crate_stack(rng: &mut Rng) -> Mesh {
     let mut b = MeshWeld::new();
     let n = 1 + rng.below(3);
     for i in 0..n {
@@ -456,7 +456,7 @@ fn crate_stack(rng: &mut Rng) -> Mesh {
     b.build()
 }
 
-fn vent_grate() -> Mesh {
+pub(super) fn vent_grate() -> Mesh {
     let mut b = MeshWeld::new();
     b.add(&cylinder(1.5, 0.12), Transform::IDENTITY, CONCRETE_DARK);
     for i in 0..6 {
@@ -469,7 +469,7 @@ fn vent_grate() -> Mesh {
     b.build()
 }
 
-fn puddle(r: f32) -> Mesh {
+pub(super) fn puddle(r: f32) -> Mesh {
     let mut b = MeshWeld::new();
     b.add(
         &Mesh::from(Cylinder::new(r, 0.04).mesh().resolution(16)),
