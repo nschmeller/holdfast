@@ -311,6 +311,29 @@ and the two things that slow them floor out at 0.58 (a crowd) and 0.15 (a
 hazard). The worst case is still three quarters of a unit a second. Zero was
 only ever reachable through the bridge.
 
+**Fixed after round 9:**
+
+- **Bodies take a fort; turrets keep it.** Round 9 captured a fort from 20 metres
+  away by placing turrets on its ground from outside its 15-unit gun range — the
+  build cursor reaches 26 — bypassing the guns, the wardens and the contest
+  urgency, which is the entire difficulty of a fort. Structures no longer count
+  towards *taking* one, only towards keeping one. **So there are exactly two ways
+  to capture: stand in the ring yourself, or send allies.**
+- **A conquered fort is remembered across chunk unloading.** Forts carry
+  `ChunkEntity` and were despawned at 120 units, then rebuilt from the world seed
+  enemy-owned — so walking away from a siege you had won silently undid it, and an
+  empire wider than 120 units was impossible by construction. Note honestly: the
+  fix is unit-tested and the mechanism was read directly, but nobody has yet
+  watched it work in play, because a fort left undefended is legitimately
+  reclaimed within a minute.
+- **`garrison` now reports whoever opposes the fort's current owner.** It counted
+  only the owner's own loyalists, so it read zero for every fort the player held
+  while the rivals pushing it back were invisible. A falling fort had no reported
+  cause.
+- **A steering verb's clock stops while the game does.** A `flee 20` issued just
+  before a level-up used to burn its twenty seconds doing nothing and report that
+  it had fled — which cost round 9 two deaths outright.
+
 **Fixed after round 8 — two of these change how the whole game plays:**
 
 - **Monsters more than 165 units away are now released.** Nothing was ever culled,
