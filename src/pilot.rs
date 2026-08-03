@@ -976,7 +976,10 @@ fn write_snapshot(
     json.count("seen", meta.coverage.count());
     json.arr("missing");
     for tag in meta.coverage.missing() {
-        json.push_text(&tag);
+        // Append what this world calls it, where that differs. The checklist
+        // is keyed on archetypes, but the player only ever sees local names,
+        // so "enemy:StainSlime" alone is not something anyone can act on.
+        json.push_text(&label_for(&tag, env));
     }
     json.end();
     json.end();
@@ -1213,6 +1216,36 @@ fn write_meta(json: &mut Json, meta: &Meta, sheet: &Sheet, env: EnvKind) {
     json.end();
 
     json.count("weapon_slots_used", sheet.loadout.slots.len());
+}
+
+/// Add the world's own name for a checklist entry, when it has one.
+fn label_for(tag: &str, env: EnvKind) -> String {
+    let Some((kind, item)) = tag.split_once(':') else {
+        return tag.to_string();
+    };
+    let local = match kind {
+        "enemy" => crate::enemy::EnemyKind::ALL
+            .iter()
+            .find(|k| format!("{k:?}") == item)
+            .map(|k| k.name(env)),
+        "weapon" => crate::weapons::WeaponKind::ALL
+            .iter()
+            .find(|k| format!("{k:?}") == item)
+            .map(|k| k.name(env)),
+        "turret" => crate::allies::TurretKind::ALL
+            .iter()
+            .find(|k| format!("{k:?}") == item)
+            .map(|k| k.name(env)),
+        "ally" => crate::allies::AllyKind::ALL
+            .iter()
+            .find(|k| format!("{k:?}") == item)
+            .map(|k| k.name(env)),
+        _ => None,
+    };
+    match local {
+        Some(name) if name != item => format!("{tag} (here: {name})"),
+        _ => tag.to_string(),
+    }
 }
 
 /// Forts, nests and who is at war with whom.
@@ -1600,5 +1633,20 @@ mod tests {
         );
         assert_eq!(key_from_name("F13"), None);
         assert_eq!(key_from_name("F0"), None);
+    }
+    #[test]
+    fn checklist_entries_carry_the_local_name() {
+        // The checklist is keyed on archetypes; the player only ever sees what
+        // this world calls a thing. Without both, "enemy:StainSlime" is not
+        // something a tester can act on.
+        let label = label_for("weapon:RulerSweep", EnvKind::Forest);
+        assert!(label.contains("RulerSweep"), "{label}");
+        assert!(label.contains("Branch Sweep"), "{label}");
+
+        let deed = label_for("deed:fort-taken", EnvKind::Forest);
+        assert_eq!(deed, "deed:fort-taken", "deeds have no local name");
+
+        let unknown = label_for("weapon:NotAThing", EnvKind::Desk);
+        assert_eq!(unknown, "weapon:NotAThing");
     }
 }

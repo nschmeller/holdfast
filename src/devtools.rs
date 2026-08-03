@@ -463,11 +463,17 @@ fn force_unlocks(
     economy.gain_cores(30.0);
 }
 
-/// Take the first card on offer and resume. Without this a scripted run stalls
-/// on the first level-up, because nothing is there to press a number key.
+/// Take a card and resume. Without this a scripted run stalls on the first
+/// level-up, because nothing is there to press a number key.
+///
+/// Prefers a card that introduces something the session has not seen. Taking
+/// the first one on offer sounds neutral and is not: the offer leads with stat
+/// upgrades, so a coverage sweep would spend an hour and finish with six of
+/// the ten weapons - which is exactly what the first sweep did.
 #[allow(clippy::too_many_arguments)]
 fn autopick_card(
     config: Res<DevConfig>,
+    coverage: Res<crate::coverage::Coverage>,
     mut offer: ResMut<crate::progress::CardOffer>,
     mut progression: ResMut<crate::progress::Progression>,
     mut stats: ResMut<crate::player::PlayerStats>,
@@ -480,7 +486,18 @@ fn autopick_card(
     if !config.autopick {
         return;
     }
-    let Some(card) = offer.cards.first().cloned() else {
+    let Some(card) = offer
+        .cards
+        .iter()
+        .find(|card| match card.kind {
+            crate::progress::CardKind::NewWeapon(kind) => {
+                !coverage.has(&format!("weapon:{kind:?}"))
+            }
+            _ => false,
+        })
+        .or_else(|| offer.cards.first())
+        .cloned()
+    else {
         return;
     };
     crate::progress::apply_card(&card, &mut stats, &mut loadout, &mut economy, &mut boosts);

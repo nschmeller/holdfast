@@ -716,6 +716,11 @@ fn build_pause(
     commands.spawn(overlay(0.86)).with_children(|root| {
         root.spawn(text("PAUSED", 46.0, pal::ACCENT));
         root.spawn(text(
+            "ESC resume        BACKSPACE abandon the run and choose a world",
+            15.0,
+            pal::XP_GREEN,
+        ));
+        root.spawn(text(
             format!(
                 "{}   Level {}   {} kills",
                 format_time(clock.elapsed),

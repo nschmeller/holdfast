@@ -74,7 +74,7 @@ def digest(s):
     blocked = {
         "LevelUp": ">>> BLOCKED: press 1, 2 or 3 to take a card. Nothing else works. <<<",
         "SkillTree": ">>> BLOCKED: research is open. ENTER buys, T or ESC closes. <<<",
-        "Paused": ">>> BLOCKED: paused. ESC resumes. <<<",
+        "Paused": ">>> BLOCKED: paused. ESC resumes, BACKSPACE abandons the run and returns to world select. <<<",
         "GameOver": ">>> RUN OVER: ENTER starts another. <<<",
         "Menu": ">>> AT THE MENU: left/right pick a world, ENTER deploys. <<<",
     }.get(s["state"])
