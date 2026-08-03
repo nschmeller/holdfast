@@ -60,14 +60,26 @@ pub const TACK_RED: Color = rgb(206, 62, 58);
 pub const SLIME_BROWN: Color = rgb(96, 58, 34);
 pub const MOTH_WING: Color = rgb(180, 168, 148);
 pub const GREMLIN_TEAL: Color = rgb(64, 196, 176);
-pub const ELITE_TRIM: Color = rgb(226, 74, 200);
-pub const BOSS_TRIM: Color = rgb(255, 96, 64);
+/// Reserved for elites, and not any faction's colour.
+///
+/// This was (226, 74, 200), which is the BLOOM faction's magenta almost exactly,
+/// so "the purple circle" meant either "an elite" or "belongs to BLOOM" with no
+/// way to tell which.
+pub const ELITE_TRIM: Color = rgb(120, 246, 255);
+/// And this was close to the RUST faction's red. Boss rings are now white-hot,
+/// which no faction is and nothing else in the game uses.
+pub const BOSS_TRIM: Color = rgb(255, 246, 214);
 
 // -- feedback and UI --------------------------------------------------------
 pub const XP_GREEN: Color = rgb(126, 232, 128);
 pub const HEAL_RED: Color = rgb(240, 86, 96);
 pub const GEAR_GOLD: Color = rgb(250, 194, 84);
 pub const DANGER: Color = rgb(232, 72, 66);
+/// The ring under anything that belongs to the player. Their faction green, but
+/// brighter, because "where are my allies" was a question the screen could not
+/// answer at all.
+pub const ALLY_TRIM: Color = rgb(120, 255, 158);
+
 pub const HUD_TEXT: Color = rgb(238, 240, 246);
 pub const HUD_DIM: Color = rgb(150, 156, 172);
 pub const HUD_PANEL: Color = Color::srgba(0.05, 0.055, 0.075, 0.88);

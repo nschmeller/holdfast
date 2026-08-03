@@ -371,6 +371,19 @@ pub struct Turret {
 pub const ZONE_RADIUS: f32 = 4.6;
 const CAPTURE_SECONDS: f32 = 8.0;
 
+/// How much space an ally takes up.
+///
+/// Was 0.42, which is smaller than a Sugar Ant. An ally is a squadmate the
+/// player spent Cores on and should be as legible as the things it fights.
+const ALLY_RADIUS: f32 = 0.55;
+
+/// And how big it draws, on top of that.
+const ALLY_VISUAL_SCALE: f32 = 1.4;
+
+/// Turrets were "really small". They are a deliberate, paid-for change to the
+/// board and should look like one.
+const TURRET_VISUAL_SCALE: f32 = 1.45;
+
 /// What one structure is worth as presence on a zone.
 ///
 /// The same weight a structure carries on a fort, for the same reason: holding
@@ -543,18 +556,28 @@ fn handle_recruit(
                 level: 1,
             },
             Health::new(hp * stats.ally_health * scale),
-            Body::new(origin + Vec2::new(1.5, 1.5), 0.42),
+            Body::new(origin + Vec2::new(1.5, 1.5), ALLY_RADIUS),
             Altitude::default(),
             Actor::default(),
             StatusEffects::default(),
-            VisualScale::new(1.0),
+            VisualScale::new(ALLY_VISUAL_SCALE),
             Damageable {
                 hostile_target: true,
             },
             Mesh3d(art.allies[req.kind as usize].clone()),
             MeshMaterial3d(art.solid.clone()),
-            Transform::from_translation(to_world(origin, 0.0)),
+            Transform::from_translation(to_world(origin, 0.0))
+                .with_scale(Vec3::splat(ALLY_VISUAL_SCALE)),
             RunEntity,
+            children![(
+                // A green ring, the same idea as an elite's halo. "I have not
+                // seen any allies" was a fair report: they were radius 0.42 in
+                // the plain untinted material, smaller than most monsters and
+                // marked as nobody's.
+                Mesh3d(art.ring.clone()),
+                MeshMaterial3d(art.glow(Glow::Friend)),
+                Transform::from_xyz(0.0, 0.06, 0.0).with_scale(Vec3::new(0.95, 1.0, 0.95)),
+            )],
         ));
 
         seen.write(crate::coverage::Seen(format!("ally:{:?}", req.kind)));
@@ -635,8 +658,16 @@ fn handle_build(
             },
             Mesh3d(art.turrets[req.kind as usize].clone()),
             MeshMaterial3d(art.solid.clone()),
-            Transform::from_translation(to_world(req.pos, 0.0)),
+            Transform::from_translation(to_world(req.pos, 0.0))
+                .with_scale(Vec3::splat(TURRET_VISUAL_SCALE)),
             RunEntity,
+            children![(
+                // Ringed in the player's green like an ally, so the board reads
+                // at a glance as mine-versus-theirs rather than as clutter.
+                Mesh3d(art.ring.clone()),
+                MeshMaterial3d(art.glow(Glow::Friend)),
+                Transform::from_xyz(0.0, 0.05, 0.0).with_scale(Vec3::new(0.9, 1.0, 0.9)),
+            )],
         ));
 
         bursts.write(BurstEvent {

@@ -41,12 +41,41 @@ pub enum Glow {
     Elite,
     Boss,
     Ally,
+    Friend,
     Zone,
     ZoneHeld,
     Warning,
 }
 
 impl Glow {
+    /// Every variant, so the material registry cannot silently miss one.
+    ///
+    /// It was a hand-written list beside the loop that fills the map, and adding
+    /// `Friend` without adding it here made every ally and turret ring panic on
+    /// `glow material registered at startup` - which broke recruiting and
+    /// building entirely, because the panic took the systems down with it. A
+    /// const plus `every_glow_is_registered` makes the omission impossible.
+    pub const ALL: [Self; 18] = [
+        Self::Xp,
+        Self::Heal,
+        Self::Scrap,
+        Self::Gear,
+        Self::PlayerShot,
+        Self::EnemyShot,
+        Self::Beam,
+        Self::Screen,
+        Self::Lamp,
+        Self::Neon,
+        Self::Plasma,
+        Self::Elite,
+        Self::Boss,
+        Self::Ally,
+        Self::Friend,
+        Self::Zone,
+        Self::ZoneHeld,
+        Self::Warning,
+    ];
+
     fn spec(self) -> (Color, f32) {
         match self {
             Self::Xp => (palette::XP_GREEN, 4.0),
@@ -63,6 +92,8 @@ impl Glow {
             Self::Elite => (palette::ELITE_TRIM, 3.5),
             Self::Boss => (palette::BOSS_TRIM, 3.5),
             Self::Ally => (Color::srgb(0.45, 0.85, 1.0), 3.0),
+            // Reserved for the ring under anything that belongs to the player.
+            Self::Friend => (palette::ALLY_TRIM, 3.4),
             Self::Zone => (Color::srgb(0.9, 0.75, 0.35), 2.0),
             Self::ZoneHeld => (Color::srgb(0.4, 1.0, 0.6), 2.6),
             Self::Warning => (Color::srgb(1.0, 0.35, 0.2), 3.0),
@@ -209,25 +240,7 @@ fn build_art(
     });
 
     let mut glows = HashMap::default();
-    for g in [
-        Glow::Xp,
-        Glow::Heal,
-        Glow::Scrap,
-        Glow::Gear,
-        Glow::PlayerShot,
-        Glow::EnemyShot,
-        Glow::Beam,
-        Glow::Screen,
-        Glow::Lamp,
-        Glow::Neon,
-        Glow::Plasma,
-        Glow::Elite,
-        Glow::Boss,
-        Glow::Ally,
-        Glow::Zone,
-        Glow::ZoneHeld,
-        Glow::Warning,
-    ] {
+    for g in Glow::ALL {
         let (color, strength) = g.spec();
         let lin = color.to_linear();
         glows.insert(
@@ -373,4 +386,37 @@ fn build_art(
         unit_cube,
         unit_sphere,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_glow_variant_is_in_all() {
+        // `ALL` drives the material registry, and a variant missing from it
+        // panics at the first use with "glow material registered at startup" -
+        // which takes the whole schedule down, so recruiting and building simply
+        // stop working. This is the guard for that.
+        let mut seen = std::collections::HashSet::new();
+        for g in Glow::ALL {
+            assert!(seen.insert(g), "{g:?} listed twice in Glow::ALL");
+        }
+        assert_eq!(
+            seen.len(),
+            Glow::ALL.len(),
+            "Glow::ALL has duplicates, so something else is missing"
+        );
+    }
+
+    #[test]
+    fn every_glow_has_a_colour() {
+        // `spec` is a match, so this cannot regress silently - but it also proves
+        // ALL is walkable without panicking, which is the failure that happened.
+        for g in Glow::ALL {
+            let (colour, strength) = g.spec();
+            assert!(strength > 0.0, "{g:?} does not glow");
+            assert!(colour.to_linear().red.is_finite(), "{g:?} has no colour");
+        }
+    }
 }

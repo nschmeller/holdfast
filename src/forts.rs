@@ -107,6 +107,25 @@ const GUN_CADENCE: f32 = 1.7;
 /// the length of a capture and an unprepared one cannot.
 const GUN_DAMAGE: f32 = 8.0;
 
+/// How long a player can loiter beside enemy holdings before it starts to hurt.
+///
+/// A nest trickles monsters forever while the player is within `ASSAULT_RANGE`,
+/// and the player out-damages the trickle, so parking next to a fort was an
+/// infinite XP faucet at no risk and the strongest thing in the game. That is
+/// backwards for a design whose rule is that every source of strength is also a
+/// source of pressure.
+///
+/// Loitering now builds pressure that multiplies how fast the holding produces.
+/// Camping still pays - it pays *more* - it simply stops being free, and the
+/// player chooses when to leave. Which is the throttle, in their hand.
+const LOITER_GRACE: f32 = 20.0;
+
+/// How long a camper has to leave for the pressure to bleed off.
+const LOITER_DECAY: f32 = 2.5;
+
+/// The most that loitering can multiply a holding's output by.
+const LOITER_MAX: f32 = 3.4;
+
 /// Seconds between wardens while a fort is contested.
 const WARDEN_INTERVAL: f32 = 9.0;
 
@@ -256,6 +275,16 @@ pub struct FortFlare;
 #[derive(Debug, Component)]
 pub struct FortBanner;
 
+/// The ring under a nest, which shrinks as the nest is shot.
+///
+/// Nests have 60 health and are a legal target for both sides, and nothing
+/// anywhere said so - no bar, no flinch, no readout. "Is it possible to disable
+/// spawners?" is the right question to end up asking, and the answer was yes all
+/// along. Rings are how this game already talks about state, so a nest says how
+/// close it is to dead the same way a fort says who owns it.
+#[derive(Debug, Component)]
+pub struct NestHealthRing;
+
 /// A nest. Trickles out monsters until killed.
 #[derive(Component, Debug)]
 pub struct Nest {
@@ -389,6 +418,26 @@ pub struct WarRoom {
 ///
 /// Keyed on the fort's position rounded to whole units. Generation is
 /// deterministic, so the same fort reappears at the same spot to the bit.
+/// How long the player has been sitting beside enemy holdings.
+#[derive(Resource, Debug, Default)]
+pub struct Loiter {
+    seconds: f32,
+}
+
+impl Loiter {
+    /// Multiplier on nest and fort output.
+    #[must_use]
+    pub fn urgency(&self) -> f32 {
+        let over = (self.seconds - LOITER_GRACE).max(0.0);
+        (1.0 + over / 26.0).min(LOITER_MAX)
+    }
+
+    #[must_use]
+    pub fn seconds(&self) -> f32 {
+        self.seconds
+    }
+}
+
 #[derive(Resource, Debug, Default)]
 pub struct Conquests {
     taken: std::collections::HashSet<IVec2>,
@@ -590,10 +639,12 @@ impl Plugin for FortPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WarRoom>()
             .init_resource::<Conquests>()
+            .init_resource::<Loiter>()
             .add_message::<SpawnFort>()
             .add_message::<SpawnNest>()
             .add_systems(OnExit(AppState::Menu), reset_war.in_set(RunSetup::Reset))
             .add_systems(Update, (place_forts, place_nests))
+            .add_systems(Update, tick_loiter.in_set(GameSet::Input))
             .add_systems(
                 Update,
                 (plan_war, assign_objectives, feud_targets, tick_seeders)
@@ -619,9 +670,37 @@ impl Plugin for FortPlugin {
     }
 }
 
-fn reset_war(mut war: ResMut<WarRoom>, mut conquests: ResMut<Conquests>) {
+fn reset_war(
+    mut war: ResMut<WarRoom>,
+    mut conquests: ResMut<Conquests>,
+    mut loiter: ResMut<Loiter>,
+) {
     war.reset();
     conquests.reset();
+    loiter.seconds = 0.0;
+}
+
+/// Track how long the player has been parked beside somebody else's holdings.
+fn tick_loiter(
+    time: Res<Time>,
+    mut loiter: ResMut<Loiter>,
+    player: Query<&Body, With<Player>>,
+    holdings: Query<(&Body, &Allegiance), Or<(With<Fort>, With<Nest>)>>,
+) {
+    let dt = time.delta_secs();
+    let Some(hero) = player.iter().next().map(|b| b.pos) else {
+        return;
+    };
+    let beside = holdings.iter().any(|(body, owner)| {
+        owner.0 != Faction::Player && body.pos.distance(hero) <= ASSAULT_RANGE
+    });
+    if beside {
+        loiter.seconds += dt;
+    } else {
+        // Leaving clears it quickly, so this is a nudge to move rather than a
+        // punishment that follows you.
+        loiter.seconds = (loiter.seconds - dt * LOITER_DECAY).max(0.0);
+    }
 }
 
 // -- placement --------------------------------------------------------------
@@ -723,6 +802,12 @@ fn place_nests(mut commands: Commands, art: Res<GameArt>, mut requests: MessageR
             Transform::from_translation(to_world(req.pos, 0.0)),
             crate::fog::FogOccluded::default(),
             RunEntity,
+            children![(
+                NestHealthRing,
+                Mesh3d(art.ring.clone()),
+                MeshMaterial3d(art.glow(crate::art::Glow::Warning)),
+                Transform::from_xyz(0.0, 0.05, 0.0).with_scale(Vec3::new(2.4, 1.0, 2.4)),
+            )],
         ));
         if let Some(coord) = req.chunk {
             nest.insert(crate::world::ChunkEntity(coord));
@@ -1081,6 +1166,7 @@ fn tick_forts(
     progression: Res<crate::progress::Progression>,
     mut rng: ResMut<Rng>,
     mut forts: Query<(Entity, &mut Fort, &Allegiance, &Body)>,
+    loiter: Res<Loiter>,
     player: Query<&Body, With<Player>>,
 ) {
     let dt = time.delta_secs();
@@ -1102,7 +1188,9 @@ fn tick_forts(
         // Being stood on is what calls the garrison home. A fort under contest
         // does not wait out its timer: the assault it would have thrown in
         // twenty seconds arrives in three, and keeps arriving.
-        let urgency = if fort.contested { CONTEST_URGENCY } else { 1.0 };
+        // Contest is the sharp version of the same idea; loitering is the slow
+        // one. Both mean "you are standing where you should not be".
+        let urgency = if fort.contested { CONTEST_URGENCY } else { 1.0 } * loiter.urgency();
 
         // Wardens: elite monsters sent for the specific job of driving the
         // player off the ring. Only while contested, so they are a consequence
@@ -1254,6 +1342,7 @@ fn tick_nests(
     progression: Res<crate::progress::Progression>,
     mut rng: ResMut<Rng>,
     mut nests: Query<(&mut Nest, &Allegiance, &Body)>,
+    loiter: Res<Loiter>,
     player: Query<&Body, With<Player>>,
 ) {
     let dt = time.delta_secs();
@@ -1270,7 +1359,8 @@ fn tick_nests(
         if nest.timer > 0.0 {
             continue;
         }
-        nest.timer = rng.range(12.0, 19.0) / owner.0.temperament().expansion.max(0.3);
+        nest.timer =
+            rng.range(12.0, 19.0) / owner.0.temperament().expansion.max(0.3) / loiter.urgency();
         let kind = assault_kind(&mut rng, clock.elapsed / 60.0);
         let offset = rng.in_disc(2.0).truncate();
         let spawned = spawn_enemy(
@@ -1619,10 +1709,22 @@ fn holding_visuals(
             Without<FortFlare>,
         ),
     >,
+    mut nest_rings: Query<
+        (&ChildOf, &mut Transform),
+        (
+            With<NestHealthRing>,
+            Without<Fort>,
+            Without<FortRing>,
+            Without<FortFlare>,
+            Without<FortBanner>,
+        ),
+    >,
+    nest_health: Query<&Health, With<Nest>>,
     mut nests: Query<
         (&Allegiance, &mut MeshMaterial3d<StandardMaterial>),
         (
             With<Nest>,
+            Without<NestHealthRing>,
             Without<FortBanner>,
             Changed<Allegiance>,
             Without<Fort>,
@@ -1718,11 +1820,40 @@ fn holding_visuals(
     for (owner, mut material) in &mut nests {
         material.0 = art.banner(owner.0);
     }
+
+    // A nest's ring shrinks as it is shot, so "can I kill this" has a visible
+    // answer and progress towards it is legible.
+    for (parent, mut transform) in &mut nest_rings {
+        let Ok(health) = nest_health.get(parent.parent()) else {
+            continue;
+        };
+        let left = (health.current / health.max.max(1.0)).clamp(0.0, 1.0);
+        let scale = 0.6 + left * 1.8;
+        transform.scale = Vec3::new(scale, 1.0, scale);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camping_beside_a_nest_stops_being_free() {
+        // Parking next to a fort was an infinite XP faucet at no risk, because a
+        // nest trickles forever inside ASSAULT_RANGE and the player out-damages
+        // the trickle. Camping should pay more and cost more, not pay for free.
+        let mut loiter = Loiter::default();
+        assert!((loiter.urgency() - 1.0).abs() < 1e-6, "taxed on arrival");
+        loiter.seconds = LOITER_GRACE;
+        assert!((loiter.urgency() - 1.0).abs() < 1e-6, "no grace period");
+        loiter.seconds = LOITER_GRACE + 60.0;
+        assert!(loiter.urgency() > 1.5, "camping still free after a minute");
+        loiter.seconds = 10_000.0;
+        assert!(
+            (loiter.urgency() - LOITER_MAX).abs() < 1e-4,
+            "runs away without a ceiling"
+        );
+    }
 
     #[test]
     fn a_far_fort_is_weaker_ground_than_a_near_one() {

@@ -1399,6 +1399,7 @@ struct Meta<'w> {
     war: Res<'w, crate::forts::WarRoom>,
     diplomacy: Res<'w, crate::factions::Diplomacy>,
     powers: Res<'w, crate::factions::NearbyPowers>,
+    loiter: Res<'w, crate::forts::Loiter>,
     pools: Res<'w, crate::world::LightPools>,
     chasms: Res<'w, crate::world::Chasms>,
     unlocks: Res<'w, Unlocks>,
@@ -1567,6 +1568,10 @@ fn write_snapshot(
     // holdings were costing it.
     json.num("from_forts", pacing.threat.holdings);
     json.num("from_light", pacing.threat.light);
+    // How long the player has been parked beside enemy holdings, and what that
+    // is currently multiplying their output by.
+    json.num("loitering_for", meta.loiter.seconds());
+    json.num("loiter_urgency", meta.loiter.urgency());
     json.flag("surging", pacing.threat.surging());
     json.flag("surge_ready", pacing.threat.can_surge());
     json.end();
