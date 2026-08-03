@@ -32,7 +32,7 @@ echo "==> building $PROFILE for $TARGET"
 # the target itself.
 cargo build --profile "$PROFILE" --target "$TARGET"
 
-WASM="target/$TARGET/$PROFILE/holdfast.wasm"
+WASM="target/$TARGET/$PROFILE/holdfast-app.wasm"
 echo "==> binding ($(du -h "$WASM" | cut -f1) raw)"
 rm -rf "$OUT"
 mkdir -p "$OUT"

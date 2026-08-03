@@ -18,8 +18,14 @@ path = "src/lib.rs"
 # load, `rlib` so the binary and the tests keep using it as an ordinary crate.
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Deliberately not "holdfast": the lib is `holdfast` and its `cdylib` - which
+# the Android activity loads - emits `holdfast.wasm` on the web target, exactly
+# the filename a bin called `holdfast` also wants. Cargo warns about the
+# collision and says it may become a hard error. The wasm-bindgen step still
+# publishes `holdfast.js` and `holdfast_bg.wasm`, so nothing downstream of the
+# build changes.
 [[bin]]
-name = "holdfast"
+name = "holdfast-app"
 path = "src/main.rs"
 
 [features]
