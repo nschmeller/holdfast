@@ -141,6 +141,16 @@ reported in every single round, was a `press w` left down fighting the `kite`
 that wanted the opposite key. Check what the harness can do to produce a symptom
 before believing a gameplay explanation of it.
 
+**The most important open question, and it is a design one.** Round 11
+established that every player capability unlocks on a timer and there are only
+five, the last at 230 seconds - after which nothing new ever arrives - while the
+wave-assault budget `(18 + wave*6) * spawn_mult * time_power.sqrt()` is linear in
+wave number and uncapped, running from t=0. Difficulty having no ceiling is
+deliberate; the player's toolkit having one is not. See the top of
+`docs/PLAYBOOK.md`. Nothing has been changed for it yet, on purpose: it wants a
+feature, not a tuning pass, and guessing at it would be worse than leaving it
+described.
+
 What is left:
 
 1. **Touch controls.** iOS and Android build, but a keyboard-only game does not

@@ -10,6 +10,45 @@ what to try next. Numbers beat adjectives.
 
 ---
 
+## The open design question, found in round 11
+
+**The player's toolkit stops growing at 230 seconds. The opposition's never stops.**
+
+Every system unlocks strictly on `clock.elapsed` and there are only five:
+build@45s, threat dial@75s, territory@110s, allies@165s, research@230s. **After
+three minutes and fifty seconds, no new capability ever arrives.** Meanwhile two
+escalators run forever, and round 11 separated them cleanly:
+
+- **Position-independent**: `threat.floor`, `clock.time_power()` =
+  `(1+minutes*0.42)^1.18`, and above all the wave-assault budget
+  `(18 + wave*6) * spawn_mult * time_power.sqrt()` - linear in wave number,
+  uncapped, and running from t=0.
+- **Position-dependent**: `tick_nests` firing within `ASSAULT_RANGE` (66 units) of
+  a nest, which is why travelling through a fort cluster spikes density to 60-260
+  while a motionless character stays at 0-70.
+
+That resolves the paradox between "sitting still keeps density at 5-30" and
+"travel pushes it to 60-260" - **both were right.** They are additive and
+independently timed. Standing still does not avoid the wall, it delays contact
+with it: a stationary, fort-free life held near-100% HP to t=338s and then went
+62 to 112 total enemies and 8 to 37 within 12m in fifty-seven seconds, once wave
+7's budget opened, with zero net displacement.
+
+Two other findings from the same pass:
+
+- **Fleeing during a large active assault can make density worse.** New spawns
+  anchor to the player's live position and old pursuers are not shed until 165
+  units of separation, so two `flee` calls covering a real 89 units drove
+  within-12m from 25 to 33 to 37.
+- **Bosses accumulate if not killed** - `forget_the_left_behind` exempts
+  `Rank::Boss` unconditionally, by design. One run ended with boss 2 still alive
+  and boss 3 three seconds from landing.
+
+**Nothing has been changed in response to this yet.** The design intent is
+explicitly that difficulty has no ceiling, so an unbounded escalator is not
+itself the bug - the asymmetry is. Whatever answers it belongs on the player's
+side of the ledger, and it is a feature rather than a tuning pass.
+
 ## What is known
 
 **The longest a character has been kept alive is ~498 seconds** (castellan,
@@ -2491,3 +2530,213 @@ holds indefinitely or only long enough that no test has yet outlasted it;
 and the fort-siege pilot deadlock above should get an actual fix rather than
 a workaround, since `HOLDFAST_AUTOPICK` won't be available to a round trying
 to test genuine card-selection strategy under a live siege.
+
+### coroner — what actually ends a run: two fully-instrumented deaths, the wave-budget wall, and a boss-accumulation near-miss (round 11)
+
+Assignment: stop guessing at "ambient density plus bosses converging on a
+held spot" and pin it down — characterise the last thirty seconds of several
+long lives in numbers, resolve the direct contradiction between "levelling
+in one place kept density flat 5-30" and "wide travel pushed it to 60-260",
+find out whether the player's toolkit ever stops growing while pressure does
+not, and settle whether bosses accumulate. Three lives (one cut short by a
+pilot crash, discussed at the end), two of them died cleanly with a complete
+log of the last quarter of their life. **Answer: both density findings are
+correct and are not in tension — they are two separate, additive, and fully
+sourced escalators, one tied to elapsed time/wave-number and one tied to
+distance from an enemy fort's nests — and a run standing still eventually
+recreates the "wide travel" spike anyway, once wave number and time-power
+climb far enough. The toolkit stops growing at a fixed, unconditional
+4-minute mark; the opposition never does. Bosses are confirmed, by source and
+by a three-second near-miss, to accumulate indefinitely if not killed.**
+
+**Method.** Built a plain weapons+cards+research character with zero
+turrets and zero allies (deliberately, to isolate the ambient/wave/boss
+escalators from the turret-ring and fort mechanics prior rounds already
+measured), played `defend` in a tight radius around wherever the previous
+`defend` call ended (near-zero net displacement across whole lives), and
+sampled `raw` every card pick and every 15-60 game-seconds for
+`enemies.{total,within_12m,elites,bosses}`, `player.hp`, and `threat.effective`.
+One card-pick plus one steering verb per `do` call throughout, exactly as
+instructed — this alone kept both long lives free of the LevelUp-swallows-
+the-batch failure that ate most of rounds 9-10's attempts.
+
+**Q4 first, because it is the cleanest: bosses accumulate by design, and
+this session nearly produced the double-boss stack directly.** Read
+`forget_the_left_behind` in `src/enemy.rs`: it despawns any enemy beyond
+`FORGET_DISTANCE=165` **except** `Rank::Boss`, unconditionally — a boss is
+never released by distance, only by dying. `FIRST_BOSS=168s`,
+`BOSS_INTERVAL=115s`, and `EnemyKind::BOSSES` cycles exactly 3 kinds
+(`BossStapler`/`BossHolePunch`/`BossLamp`), with `cycle_scale = 1 +
+boss_cycle*0.85` once all three have appeared once. Life B's log shows THE
+STAPLER (boss 1) arriving on schedule (~t=182s in-run) and dying cleanly
+before boss 2 (`bosses: 0` confirmed in `raw` at t=245s) — no accumulation
+that cycle. But THE HOLE PUNCH (boss 2, arrived t≈283s, matching
+168+115=283 exactly) was **never killed** — it was still alive (`bosses: 1`)
+at the moment of death, t=395.1s, and the log shows `hint: SOMETHING IS
+COMING - THE DESK LAMP is on its way` at t≈394 in-run, boss 3 scheduled to
+land at 168+2·115=398s. **The run ended 3 seconds before what would have
+been a live two-boss stack on the field.** This was not a contrived test —
+it fell out of an ordinary, careful, defend-in-place life. The mechanism the
+assignment worried about is real and was one `defend` call away from
+happening here.
+
+**Q1/Q2 together: the two deaths, in numbers.**
+
+*Death A (`coroner`, 180.4s, level 8, 77 kills, peak threat 1.50, dossier row
+in `holdfast-runs.tsv`).* Played near a BLOOM/RUST fort-and-nest cluster
+(5 forts, 6 nests, all within 25-107m, several inside `ASSAULT_RANGE=66`) —
+density climbed from 15 (t=100s) to 62 (t=180s) purely from standing near
+that cluster, confirming `tick_nests`'s well-established mechanism
+(`src/forts.rs`: any nest within 66 units of the player's *current* position
+keeps feeding, regardless of the fort's own distance). THE STAPLER (boss 1)
+landed at t≈171s. The death itself, read straight from `log.txt`: HP
+115→82→46→39→30→20→12→(-0) across five real/game-seconds (t=405.2-410.1
+wall), two ~36-damage hits bracketed by six 7-19-damage hits — a mixed
+boss-nuke-plus-crowd-chip collapse. A `kite 25` issued at the crisis moved
+the character **less than 1 unit** in 9 seconds (pos essentially frozen at
+(-104,29)→(-103.5,29.5) while 21 enemies sat within 12m) — pinned, not
+merely slow.
+
+*Death B (`coroner`, 395.1s, level 25, 264 kills, peak threat 3.14, zero
+structures, zero allies for the entire life).* Played in a genuinely
+fort-free pocket (nearest nest 120-131m at spawn) with near-zero net
+displacement. Density here stayed **exactly as flat as `marshal`'s round-8
+finding predicts** for the whole first 5.5 minutes: 0 (t=58s) → 5 (77s) → 12
+(99s) → 17 (131s) → 44 (245s, right after boss 1 died clean) → 55 (257s) →
+70 (307s, boss 2 up) → 53 (324s) → 62 (338s), **HP at or near 100% almost
+continuously through all of it** (full HP was recorded at 9 of the 14
+samples taken through t=338s). Then, in the space of 57 game-seconds
+(t=338→395), it went 62→82→112 total and 8→25→37 within 12m, and HP
+collapsed 80%→dead. The proximate, sourced trigger: **`WaveCycle`'s assault
+budget formula** (`src/threat.rs:392-393`, `budget = (18.0 + wave*6.0) *
+threat.spawn_mult() * clock.time_power().sqrt()`) is wave-number-driven and
+uncapped — wave 1-3's budgets were single/low-double-digit negative numbers
+in the digest (already spent down); by wave 7 the freshly-opened budget read
+**+180** (a look at `raw` mid-assault), an order of magnitude bigger than
+anything the first hour of waves ever produced, while `prep_length` (the
+recovery window between assaults) **shrinks** every wave
+(`34.0 - wave*0.9`, floor 12s). The last-thirty-seconds HP curve, from
+`log.txt` (wall-clock, game mostly unpaused in this stretch): 294→285→259→
+242→228→213→196→171→147→125→108→83→69 across t=1177.8-1199.1 (21.3s, -225
+HP, every hit 15-28 damage, no single blow over 28 — many attackers, not
+one strong one), a partial regen recovery to 117 during a LevelUp pause,
+then 117→91→81→56→45→34→8 across t=1281.6-1287.2 (5.6s, -109 HP), then a
+final 6→(-7) after one more interrupting LevelUp. **No single hit in the
+entire death exceeded 36 damage** (life A) or 28 damage (life B) — both
+deaths were death-by-aggregate, exactly the "density, not a boss combo"
+shape the assignment's hypothesis described, with the boss present but not
+the proximate single cause either time.
+
+**The single most important new finding: fleeing during this wave-7-scale
+assault made density worse, not better, and the mechanism is sourced.**
+At t=354s (HP 229/391, 82 total/25 within 12m) two `flee` calls totalling
+55 budgeted seconds were issued. Result: t=363s, 80 total/**33** within 12m,
+HP 69/391; t=394s, **112** total/**37** within 12m, HP 9/399 — density went
+*up* on both counts while the character travelled a genuine, confirmed 89
+units (`pos` (-18,6)→(-90,58), well past chunk-sized distances). `raw` at
+t=394s showed, for the first time all life, `FORTS BLOOM@63m, SWARM@64m,
+BLOOM@67m, BLOOM@72m, RUST@80m` and 6 nests at 52-69m — the flight had run
+*into* previously-unencountered hostile territory. `direct_spawns` anchors
+every new spawn (`anchor = player.iter().next()...pos`) to the player's
+*live, continuously-updating* position, and `FORGET_DISTANCE=165` only
+sheds the *old* pursuing crowd once 165 units of separation is achieved — a
+distance this flee never reached before density had already compounded from
+the fresh spawns at the new location plus the fort cluster just entered.
+Fleeing is not free insurance against a large active assault; it relocates
+the fight, and if the path runs through unmapped ground it can make things
+strictly worse. This is a different failure from the (already-fixed, this
+round's task brief confirms) "encirclement freezes movement" bug — position
+*did* change by a full 89 units — and different again from Death A's
+"pinned, near-zero displacement" case. Three distinct movement-failure
+shapes now exist in the dossier and should not be conflated.
+
+**Q2 resolved: reconciling "flat 5-30" and "60-260".** They are two
+additive, independently-timed mechanisms, not competing explanations:
+1. A **time/wave-number escalator**, position-independent:
+   `threat.floor` (`0.5 + elapsed/45*0.25`, capped `7.0`), `clock.time_power()`
+   (`(1+minutes*0.42)^1.18`, explicitly documented as compounding), and
+   above all the wave-budget formula. This is gentle for the first 5-6 waves
+   (~300-340s) — exactly where `marshal`'s flat-5-30 measurement and this
+   round's Death-B baseline both sit — and turns sharply once wave number
+   and `time_power` have both climbed, as Death B's wave-7 wall shows
+   happening even from a near-motionless character.
+2. A **fort/nest-proximity escalator**, purely position-dependent:
+   `tick_nests`'s `ASSAULT_RANGE=66`, which is what made `viceroy`/`legate`'s
+   wide travel through fort clusters spike so much faster and harder than
+   time alone predicts, and what made Death A collapse at 180s instead of
+   395s despite a nearly identical build.
+A player standing still far from any fort only pays escalator 1, and it is
+genuinely survivable for a long opening stretch (confirmed here to ~340s,
+comfortably past `marshal`'s window). A player near a fort/nest pays both at
+once and hits the same wall in under 200s. **Standing still is not a
+strategy that avoids the wall, it only delays contact with it** — Death B is
+direct proof that "sitting still" and "the wave-driven wall" are not
+mutually exclusive; the wall found the stationary character anyway, on
+schedule, at wave 7.
+
+**Q3: yes, unambiguously, and it is a hard schedule, not a skill gate.**
+`src/onboarding.rs`'s five `UNLOCK_*` constants gate strictly on
+`clock.elapsed`, never on level or kills: `UNLOCK_BUILD=45s`,
+`UNLOCK_THREAT=75s`, `UNLOCK_TERRITORY=110s`, `UNLOCK_ALLIES=165s`,
+`UNLOCK_RESEARCH=230s` — all five confirmed live, within a few seconds of
+these values, across two separate lives this round. At minute 2 (t=120s) a
+player has weapons/cards, the threat dial, and turrets — nothing else. Ally
+recruitment, territory capture (and its reward-multiplier stack), and the
+**entire research tree — including Whisper Campaign/Blood Feud, the only
+tool in the game that redirects ambient pressure rather than just tanking
+it — do not exist until t=230s.** By minute 6 (t=360s), all five systems
+have been live for 2+ minutes; this round's own research spend (Hard Shell
++22 max HP for 3 Cores, Recovery +0.6 regen/s for 4 Cores, bought at t=234s
+the instant research unlocked) is a real, permanent example of the toolkit
+genuinely growing. **But no *sixth* system ever unlocks after t=230s** —
+everything past that point is more of the same currencies (cards, Cores
+into an already-open tree, up to 4 allies, forts) competing against
+escalators (`time_power`, wave budget, `threat.floor`) that are exponential/
+compounding and have no unlock schedule of their own, no cap in their
+formulas, and started ticking from t=0. The toolkit's growth is front-loaded
+and finite; the opposition's is not. This is the design problem the
+assignment asked about, and it is real: a player who has already recruited,
+captured, warred and researched everything on offer by minute 4 has nothing
+structurally new to reach for at minute 10 except playing the same systems
+better or bigger (more turrets, a second fort) — which is exactly what
+rounds 8-9 already found runs into "the number of things one player can be
+near at once," not a toolkit ceiling.
+
+**Operational: a pilot crash distinct from the documented deadlock, worth a
+look.** A third life, played identically (defend-in-place, one card plus one
+steer per batch), froze at t=98s in-run with `raw` reporting a static
+`seq`/`wall` (both genuinely frozen, unlike a normal LevelUp pause where
+`wall_clock` keeps climbing) and `"steering": "Hold(Vec2(-8.0,-8.0))"` stuck
+non-null with `queued:0, busy:true`. Sending more `tap`s (per round 10's
+"send one more tap, it self-resolves" finding) did not help, nor did `quit`
+— `seq` never advanced again. `ps aux` confirmed the process had actually
+**exited entirely** (not hung, not zombied — simply absent from the process
+table minutes later, alongside `stdout.log`'s last line being an ordinary
+`fog: overlay created` with no panic, no error, nothing after it). This is
+not "still alive after quit" (the coordinator's specific question this
+round) — it is the opposite: the process disappeared silently without ever
+processing the `quit` that was sent to it, mid-`LevelUp`, with a `defend`
+steer active. Distinct enough from the known "steer dequeued behind a modal
+deadlocks the queue" bug (that one leaves the game process running; this one
+did not) that it may be a second, separate issue in the same area of
+`src/pilot.rs`. No dossier row was lost of consequence (98s in, 38 kills),
+but whoever next needs a from-scratch card-selection life through an early
+LevelUp chain should know this can happen and budget a restart for it.
+
+**Numbers.** `holdfast-runs.tsv`: `coroner` 180.4s/L8/77k/peak-threat 1.50
+(Death A, fort cluster + boss); `coroner` 395.1s/L25/264k/peak-threat 3.14,
+0 structures/0 allies for the entire life (Death B, wave-7 wall + failed
+flee). Third life unrecorded (pilot crash at t=98s, level 6, 38 kills).
+
+**Next.** The wave-budget formula is now the clearest single lever to test
+deliberately: a build that reaches t≈300s with a turret ring and/or allies
+already in place (unlike this round's deliberately bare build) should be
+tried against the same wave-6→7 transition to see whether structures/allies
+push the collapse point later, the way `auditor`/`viceroy`'s turret rings
+did against fort sieges specifically. Also open: does Whisper Campaign's
+45-second war measurably blunt an *ambient* wave-budget spike (as opposed to
+a fort siege, the only context it's been checked in so far) if bought right
+before a wave-7-scale assault lands — nobody has bought it with that timing
+in mind. And the pilot-crash-vs-pilot-deadlock distinction above deserves a
+source read of `src/pilot.rs` by someone not mid-assignment, to confirm
+whether they really are two different failure paths.
