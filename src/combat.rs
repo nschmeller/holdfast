@@ -938,8 +938,19 @@ fn sync_transforms(
         if let Some(f) = facing {
             transform.rotation = Quat::from_rotation_y(f.yaw);
         } else if body.vel.length_squared() > 0.5 {
-            // Everything else just faces where it is going.
-            transform.rotation = Quat::from_rotation_y(yaw_towards(body.vel));
+            // Everything else faces where it is going - but *turns* there rather
+            // than snapping. This read the instantaneous velocity every frame,
+            // and an ally's steering re-decides every frame, so a squadmate
+            // walking in a straight line spun on the spot: the visible symptom
+            // was allies stuttering and flipping orientation while moving
+            // normally. The player never had it because `Facing` damps.
+            //
+            // Stateless on purpose: the previous frame's rotation is already in
+            // the transform, so there is nothing to store or reset.
+            const TURN_RATE: f32 = 12.0;
+            let want = Quat::from_rotation_y(yaw_towards(body.vel));
+            let t = 1.0 - (-TURN_RATE * dt).exp();
+            transform.rotation = transform.rotation.slerp(want, t.clamp(0.0, 1.0));
         }
 
         if let Some(mut vs) = visual {
