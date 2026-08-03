@@ -311,6 +311,22 @@ and the two things that slow them floor out at 0.58 (a crowd) and 0.15 (a
 hazard). The worst case is still three quarters of a unit a second. Zero was
 only ever reachable through the bridge.
 
+**Confirmed in round 10:** the chunk-persistence fix works. A fort at
+`(129.143,-31.306)` with a 6-turret ring and 4 allies survived a ~200-unit round
+trip - well past the 120-unit unload radius - and came back `owner: YOU,
+capture: 1.0` with **zero `FORT LOST` lines** in the log. The contrast case, the
+same fort on a harsher board, was lost *with* a proper `FORT LOST - THE VOID took
+it back` line. Silently correct one way, loudly honest the other, which is exactly
+the distinction that was needed. New record on the way: **746.0s, level 76, 1006
+kills, coverage 0.698.**
+
+**Fixed after round 10:** freezing a steering verb's clock during a modal
+deadlocked the bridge - the queue only advances when the active command finishes,
+so a frozen steer sat at the head while the `tap 1` that would close the screen
+waited behind it. `HOLDFAST_AUTOPICK=1` hides it. The steer is set aside now
+rather than frozen. **If a queue ever appears wedged, that was the cause and it is
+gone.**
+
 **Fixed after round 9:**
 
 - **Bodies take a fort; turrets keep it.** Round 9 captured a fort from 20 metres
