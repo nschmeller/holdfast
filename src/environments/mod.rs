@@ -38,10 +38,14 @@ use crate::{AppState, GameSet, RunSetup};
 /// coffee mug, or twenty feet from a fort.
 pub const SPAWN_CLEARANCE: f32 = 7.0;
 
-/// Radius around the origin in which no fort or nest is ever generated. Larger
-/// than the prop clearance: the opening minute should be quiet, not merely
-/// unobstructed.
-pub const HOME_PEACE: f32 = 46.0;
+/// Radius around the origin in which no fort or nest is ever generated.
+///
+/// Much larger than the prop clearance, and deliberately larger than a fort's
+/// assault range: a player who stays near where they landed fights waves and
+/// nothing else. Walking out is what finds the war. At 46 units the nearest
+/// stronghold was shelling the starting position inside half a minute, which
+/// is not an opening, it is an ambush.
+pub const HOME_PEACE: f32 = 130.0;
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum EnvKind {

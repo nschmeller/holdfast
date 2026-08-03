@@ -115,12 +115,23 @@ pub struct GameArt {
     pub disc: Handle<Mesh>,
     pub shadow: Handle<Mesh>,
     pub zone_pillar: Handle<Mesh>,
+    pub fort: Handle<Mesh>,
+    pub nest: Handle<Mesh>,
+    banners: HashMap<u8, Handle<StandardMaterial>>,
     pub arrow: Handle<Mesh>,
     pub unit_cube: Handle<Mesh>,
     pub unit_sphere: Handle<Mesh>,
 }
 
 impl GameArt {
+    /// The material a holding of `faction` renders with.
+    pub fn banner(&self, faction: crate::factions::Faction) -> Handle<StandardMaterial> {
+        self.banners
+            .get(&(faction.index() as u8))
+            .cloned()
+            .unwrap_or_else(|| self.solid.clone())
+    }
+
     pub fn glow(&self, g: Glow) -> Handle<StandardMaterial> {
         // Every variant is inserted during setup, so a miss is a programming
         // error rather than a runtime condition worth handling gracefully.
@@ -297,6 +308,24 @@ fn build_art(
     let disc = meshes.add(Mesh::from(Cylinder::new(1.0, 0.04).mesh().resolution(40)));
     let shadow = meshes.add(Mesh::from(Cylinder::new(1.0, 0.01).mesh().resolution(14)));
     let zone_pillar = meshes.add(models::zone_pillar());
+    let fort = meshes.add(models::fort_keep());
+    let nest = meshes.add(models::nest_mound());
+
+    // One emissive material per faction, built once. Every holding on the map
+    // wears its owner's colour, which is the whole navigational read.
+    let mut banners = HashMap::new();
+    for faction in crate::factions::Faction::ALL {
+        let colour = faction.color();
+        banners.insert(
+            faction.index() as u8,
+            materials.add(StandardMaterial {
+                base_color: colour,
+                emissive: colour.to_linear() * 2.4,
+                perceptual_roughness: 0.6,
+                ..default()
+            }),
+        );
+    }
     let arrow = meshes.add(models::arrow());
     let unit_cube = meshes.add(cube(1.0, 1.0, 1.0));
     let unit_sphere = meshes.add(sphere_hi(0.5));
@@ -333,6 +362,9 @@ fn build_art(
         disc,
         shadow,
         zone_pillar,
+        fort,
+        nest,
+        banners,
         arrow,
         unit_cube,
         unit_sphere,

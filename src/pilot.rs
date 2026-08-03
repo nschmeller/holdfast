@@ -873,10 +873,34 @@ struct Sheet<'w> {
 #[derive(SystemParam)]
 struct Meta<'w> {
     fog: Res<'w, crate::fog::FogMap>,
+    war: Res<'w, crate::forts::WarRoom>,
+    diplomacy: Res<'w, crate::factions::Diplomacy>,
     unlocks: Res<'w, Unlocks>,
     plan: Res<'w, crate::command::PlanMode>,
     offer: Res<'w, CardOffer>,
     hints: Res<'w, HintQueue>,
+}
+
+#[derive(SystemParam)]
+struct Holdings<'w, 's> {
+    forts: Query<
+        'w,
+        's,
+        (
+            &'static crate::forts::Fort,
+            &'static crate::factions::Allegiance,
+            &'static Body,
+        ),
+    >,
+    nests: Query<
+        'w,
+        's,
+        (
+            &'static crate::forts::Nest,
+            &'static crate::factions::Allegiance,
+            &'static Body,
+        ),
+    >,
 }
 
 #[derive(SystemParam)]
@@ -895,6 +919,7 @@ fn write_snapshot(
     sheet: Sheet,
     meta: Meta,
     field: Field,
+    holdings: Holdings,
 ) {
     pilot.since_snapshot += time.delta_secs();
     if pilot.since_snapshot < SNAPSHOT_PERIOD {
@@ -976,6 +1001,7 @@ fn write_snapshot(
     write_forces(&mut json, &sheet, &field, hero_pos, env);
     write_field(&mut json, &field, hero_pos);
     write_meta(&mut json, &meta, &sheet, env);
+    write_war(&mut json, &meta, &holdings, hero_pos);
 
     json.arr("events");
     for event in std::mem::take(&mut pilot.events) {
@@ -1148,6 +1174,61 @@ fn write_meta(json: &mut Json, meta: &Meta, sheet: &Sheet, env: EnvKind) {
     json.end();
 
     json.count("weapon_slots_used", sheet.loadout.slots.len());
+}
+
+/// Forts, nests and who is at war with whom.
+fn write_war(json: &mut Json, meta: &Meta, holdings: &Holdings, hero: Vec2) {
+    let mut forts: Vec<_> = holdings
+        .forts
+        .iter()
+        .map(|(fort, owner, body)| (body.pos.distance(hero), fort, owner.0, body.pos))
+        .collect();
+    forts.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+
+    json.arr("forts");
+    for (dist, fort, owner, pos) in forts.iter().take(8) {
+        json.item();
+        json.text("owner", owner.tag());
+        json.num("dist", *dist);
+        json.vec2("pos", *pos);
+        json.num("capture", fort.progress);
+        json.flag("contested", fort.contested);
+        json.count("nests_planted", fort.planted);
+        json.end();
+    }
+    json.end();
+
+    let mut nests: Vec<_> = holdings
+        .nests
+        .iter()
+        .map(|(_, owner, body)| (body.pos.distance(hero), owner.0))
+        .collect();
+    nests.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    json.arr("nests");
+    for (dist, owner) in nests.iter().take(10) {
+        json.item();
+        json.text("owner", owner.tag());
+        json.num("dist", *dist);
+        json.end();
+    }
+    json.end();
+
+    json.arr("factions");
+    for faction in crate::factions::Faction::MONSTERS {
+        let plan = meta.war.plan(faction);
+        json.item();
+        json.text("faction", faction.tag());
+        json.text("posture", &format!("{:?}", plan.posture));
+        json.num("commitment", plan.commitment);
+        json.end();
+    }
+    json.end();
+
+    json.arr("wars");
+    for (a, b, left) in meta.diplomacy.active_wars() {
+        json.push_text(&format!("{} vs {} ({left:.0}s)", a.tag(), b.tag()));
+    }
+    json.end();
 }
 
 /// Diff against the previous snapshot and record anything a player would have

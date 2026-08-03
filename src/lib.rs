@@ -16,6 +16,7 @@ pub mod enemy;
 pub mod environments;
 pub mod factions;
 pub mod fog;
+pub mod forts;
 pub mod fx;
 pub mod hud;
 pub mod meshgen;
@@ -169,6 +170,7 @@ pub fn run() {
         camera::CameraPlugin,
         environments::ArenaPlugin,
         factions::FactionPlugin,
+        forts::FortPlugin,
         world::WorldPlugin,
         fog::FogPlugin,
         player::PlayerPlugin,

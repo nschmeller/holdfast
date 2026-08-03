@@ -256,6 +256,8 @@ fn stream_chunks(
     mut pools: ResMut<LightPools>,
     mut chasms: ResMut<Chasms>,
     mut zone_spawns: MessageWriter<crate::allies::SpawnZone>,
+    mut fort_spawns: MessageWriter<crate::forts::SpawnFort>,
+    mut nest_spawns: MessageWriter<crate::forts::SpawnNest>,
     player: Query<&Body, With<crate::player::Player>>,
 ) {
     let Some(body) = player.iter().next() else {
@@ -314,6 +316,8 @@ fn stream_chunks(
             *seed,
             coord,
             &mut zone_spawns,
+            &mut fort_spawns,
+            &mut nest_spawns,
         );
         manager.loaded.insert(coord, chunk);
     }
@@ -336,6 +340,7 @@ fn stream_chunks(
 }
 
 /// Generate and spawn one chunk.
+#[allow(clippy::too_many_arguments)]
 fn build_chunk(
     commands: &mut Commands,
     art: &GameArt,
@@ -344,6 +349,8 @@ fn build_chunk(
     seed: WorldSeed,
     coord: IVec2,
     zone_spawns: &mut MessageWriter<crate::allies::SpawnZone>,
+    fort_spawns: &mut MessageWriter<crate::forts::SpawnFort>,
+    nest_spawns: &mut MessageWriter<crate::forts::SpawnNest>,
 ) -> LoadedChunk {
     let mut rng = chunk_rng(seed, coord, 1);
     let content: ChunkContent = env.generate_chunk(coord, &mut rng);
@@ -459,6 +466,23 @@ fn build_chunk(
     // Territory markers.
     for pos in content.zones {
         zone_spawns.write(crate::allies::SpawnZone { pos });
+    }
+
+    // Holdings. Which faction owns a given piece of ground is a property of
+    // the ground, not of the chunk, so neighbouring forts belong to the same
+    // faction and a region reads as one power's territory.
+    for pos in content.forts {
+        fort_spawns.write(crate::forts::SpawnFort {
+            pos,
+            faction: crate::factions::faction_at(pos, seed.0),
+        });
+    }
+    for pos in content.spawners {
+        nest_spawns.write(crate::forts::SpawnNest {
+            pos,
+            faction: crate::factions::faction_at(pos, seed.0),
+            home: None,
+        });
     }
 
     LoadedChunk {

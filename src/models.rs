@@ -757,3 +757,41 @@ pub fn arrow() -> Mesh {
     );
     b.build()
 }
+
+/// A fort: a squat keep with a banner mast. Read at a glance from above, which
+/// is the only angle anyone ever sees it from.
+pub fn fort_keep() -> Mesh {
+    let mut b = MeshWeld::new();
+    // Rampart ring.
+    b.add(&torus(0.5, 2.6), at(0.0, 0.5, 0.0), Color::WHITE);
+    // Keep.
+    b.add(&cube(2.2, 2.4, 2.2), at(0.0, 1.2, 0.0), Color::WHITE);
+    b.add(&cube(2.6, 0.4, 2.6), at(0.0, 2.5, 0.0), Color::WHITE);
+    // Corner posts, so the silhouette is not a plain box.
+    for (x, z) in [(-1.5, -1.5), (1.5, -1.5), (-1.5, 1.5), (1.5, 1.5)] {
+        b.add(&cube(0.5, 1.8, 0.5), at(x, 0.9, z), Color::WHITE);
+    }
+    // Mast and banner: the part that carries the faction colour.
+    b.add(&cylinder(0.09, 3.4), at(0.0, 4.2, 0.0), Color::WHITE);
+    b.add(&cube(1.5, 0.9, 0.08), at(0.75, 5.2, 0.0), Color::WHITE);
+    b.build()
+}
+
+/// A nest: a low knot of spines. Deliberately unlike the fort - one is a place
+/// you take, the other is a thing you clear.
+pub fn nest_mound() -> Mesh {
+    let mut b = MeshWeld::new();
+    b.add(&sphere(0.85), at(0.0, 0.35, 0.0), Color::WHITE);
+    let mut rng = Rng::seeded(0x_4E57);
+    for i in 0..9 {
+        let a = i as f32 / 9.0 * std::f32::consts::TAU;
+        let lean = rng.range(30.0, 60.0);
+        b.add(
+            &cone(0.16, rng.range(0.8, 1.5)),
+            at_rot_z(a.cos() * 0.5, 0.7, a.sin() * 0.5, lean * a.cos().signum()),
+            Color::WHITE,
+        );
+    }
+    b.add(&torus(0.09, 1.0), at(0.0, 0.06, 0.0), Color::WHITE);
+    b.build()
+}

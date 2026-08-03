@@ -134,6 +134,28 @@ def digest(s):
     )
     out.append(f"ZONES {zones}")
 
+    forts = s.get("forts") or []
+    if forts:
+        out.append(
+            "FORTS "
+            + ", ".join(
+                f"{f['owner']}@{f['dist']:.0f}m"
+                + (f" [taking {(f['capture'] + 1) / 2 * 100:.0f}%]" if f["contested"] else "")
+                for f in forts[:5]
+            )
+        )
+    nests = s.get("nests") or []
+    if nests:
+        out.append("NESTS " + ", ".join(f"{n['owner']}@{n['dist']:.0f}m" for n in nests[:6]))
+    factions = s.get("factions") or []
+    if factions:
+        out.append(
+            "FACTIONS "
+            + ", ".join(f"{f['faction']}:{f['posture']}({f['commitment']:.0%})" for f in factions)
+        )
+    if s.get("wars"):
+        out.append("WARS " + "; ".join(s["wars"]))
+
     u = s["unlocks"]
     online = ", ".join(k for k, v in u.items() if v) or "nothing yet"
     locked = ", ".join(k for k, v in u.items() if not v)

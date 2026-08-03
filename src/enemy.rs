@@ -387,6 +387,18 @@ impl Plugin for EnemyPlugin {
     }
 }
 
+/// How much of its own trickle the director should still contribute.
+///
+/// Falls away smoothly as the field fills, rather than switching off at a
+/// threshold: a hard cap produces a wave that stops dead the instant a nest
+/// pushes the count over the line.
+#[must_use]
+pub fn crowding(alive: u32) -> f32 {
+    const COMFORTABLE: f32 = 45.0;
+    (COMFORTABLE / (COMFORTABLE + f32::from(u16::try_from(alive).unwrap_or(u16::MAX))))
+        .clamp(0.05, 1.0)
+}
+
 fn reset_director(mut director: ResMut<Director>) {
     *director = Director::default();
 }
@@ -473,7 +485,13 @@ fn direct_spawns(
     if director.alive < director.cap {
         // Base rate ramps with time, then the dial multiplies it.
         let base_rate = 1.5 + minutes * 0.75;
-        director.spawn_accum += dt * base_rate * threat.spawn_mult();
+        // ...and then the crowd already present divides it. Forts and nests
+        // put monsters on the field that the director never asked for, and
+        // without this the two sources stack into an unreadable soup: a first
+        // test run reached 114 enemies inside thirty seconds. Pressure should
+        // come from the map when the player is deep in hostile territory, and
+        // from the director when they are not.
+        director.spawn_accum += dt * base_rate * threat.spawn_mult() * crowding(director.alive);
 
         let mut budget = 0;
         while director.spawn_accum >= 1.0 && budget < 24 && director.alive < director.cap {
@@ -704,7 +722,13 @@ fn enemy_think(
     obstacles: Res<ObstacleField>,
     mut rng: ResMut<Rng>,
     player: Query<(&Body, Entity), (With<Player>, Without<Enemy>)>,
-    mut enemies: Query<(&mut Enemy, &mut Body, &mut Altitude, &StatusEffects)>,
+    mut enemies: Query<(
+        &mut Enemy,
+        &mut Body,
+        &mut Altitude,
+        &StatusEffects,
+        Option<&crate::forts::Objective>,
+    )>,
     mut shots: MessageWriter<crate::combat::SpawnShot>,
     mut hazards: MessageWriter<crate::combat::SpawnHazard>,
 ) {
@@ -712,9 +736,13 @@ fn enemy_think(
     let Some((player_body, _)) = player.iter().next() else {
         return;
     };
-    let target = player_body.pos;
+    let player_pos = player_body.pos;
 
-    for (mut enemy, mut body, mut alt, status) in &mut enemies {
+    for (mut enemy, mut body, mut alt, status, objective) in &mut enemies {
+        // Where this one is actually going. Most of the time that is the
+        // player; when its faction has committed it to a fort, it is the fort,
+        // and every behaviour below reads correctly against either.
+        let target = objective.map_or(player_pos, |o| o.pos);
         if enemy.falling {
             continue;
         }
@@ -1249,5 +1277,26 @@ mod tests {
             .filter(|_| pick_kind(&mut rng, 30.0) == Some(EnemyKind::DustBunny))
             .count();
         assert!(bunnies > 60, "dust bunnies vanished entirely ({bunnies})");
+    }
+    #[test]
+    fn the_director_yields_as_the_field_fills() {
+        // Forts and nests add monsters the director never asked for; if it
+        // keeps its own rate regardless, the two sources stack into soup.
+        assert!(crowding(0) > 0.9, "an empty field should not be throttled");
+        assert!(crowding(45) < 0.6);
+        assert!(crowding(200) < 0.2);
+        assert!(crowding(u32::MAX) > 0.0, "it must never stop entirely");
+    }
+
+    #[test]
+    fn crowding_falls_smoothly_rather_than_switching_off() {
+        // A threshold makes a wave stop dead the instant a nest tips it over.
+        let mut last = crowding(0);
+        for alive in 1..400 {
+            let now = crowding(alive);
+            assert!(now <= last, "crowding rose at {alive}");
+            assert!(last - now < 0.05, "a cliff at {alive}");
+            last = now;
+        }
     }
 }
