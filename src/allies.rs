@@ -357,6 +357,13 @@ pub struct Turret {
 pub const ZONE_RADIUS: f32 = 4.6;
 const CAPTURE_SECONDS: f32 = 8.0;
 
+/// What one structure is worth as presence on a zone.
+///
+/// The same weight a structure carries on a fort, for the same reason: holding
+/// ground is what a turret is for. Less than a body, because it cannot chase
+/// anybody off.
+const ZONE_STRUCTURE_WEIGHT: f32 = 0.5;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ZoneOwner {
     Neutral,
@@ -844,6 +851,7 @@ fn zone_capture(
     mut zones: Query<(&mut Zone, &Body)>,
     player: Query<&Body, With<Player>>,
     allies: Query<&Body, (With<Ally>, Without<Zone>)>,
+    structures: Query<&Body, (With<Turret>, Without<Zone>)>,
     enemies: Query<&Body, (With<Enemy>, Without<Zone>)>,
     mut economy: ResMut<Economy>,
     mut hints: ResMut<crate::onboarding::HintQueue>,
@@ -868,6 +876,17 @@ fn zone_capture(
             .filter(|b| b.pos.distance_squared(zbody.pos) <= r_sq)
             .count() as f32
             * 0.6;
+        // Structures hold ground. Without this the only way to keep a zone was
+        // to stand on it or park allies on it, so a second zone cost the first
+        // one and "hold territory" could never be more than one flag at a time.
+        // A garrison of scrap and turrets is a better ongoing cost than an
+        // ongoing cost in attention, and it is the same idea as fortifying a
+        // captured fort.
+        friendly += structures
+            .iter()
+            .filter(|b| b.pos.distance_squared(zbody.pos) <= r_sq)
+            .count() as f32
+            * ZONE_STRUCTURE_WEIGHT;
 
         let hostile = enemies
             .iter()
@@ -885,8 +904,9 @@ fn zone_capture(
                 * stats.zone_capture_rate;
             zone.progress = zone.progress.clamp(-1.0, 1.0);
         } else if friendly == 0.0 && hostile == 0.0 {
-            // Uncontested zones decay slowly back towards neutral, so holding
-            // ground has an ongoing cost in attention.
+            // Ungarrisoned zones decay slowly back towards neutral. A flag in
+            // open ground is not a place; unlike a fort, it does not hold
+            // itself.
             zone.progress = damp(zone.progress, 0.0, 0.06, dt);
         }
 
@@ -1038,6 +1058,35 @@ fn zone_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The net presence on a zone, as `zone_capture` computes it.
+    fn zone_net(standing_there: bool, allies: u32, turrets: u32, monsters: u32) -> f32 {
+        let mut friendly = if standing_there { 1.0 } else { 0.0 };
+        friendly += allies as f32 * 0.6;
+        friendly += turrets as f32 * ZONE_STRUCTURE_WEIGHT;
+        let hostile = monsters as f32 * 0.22;
+        friendly - hostile
+    }
+
+    #[test]
+    fn a_zone_can_be_held_without_standing_on_it() {
+        // Otherwise a second zone costs you the first, and territory is one
+        // flag at a time forever.
+        assert!(
+            zone_net(false, 0, 0, 0) <= 0.0,
+            "held itself with nothing on it"
+        );
+        assert!(
+            zone_net(false, 0, 2, 0) > 0.0,
+            "two turrets should hold a zone"
+        );
+    }
+
+    #[test]
+    fn a_garrisoned_zone_still_falls_to_a_real_push() {
+        // Sticky, not invulnerable.
+        assert!(zone_net(false, 0, 2, 12) < 0.0, "twelve monsters is a push");
+    }
 
     #[test]
     fn a_reset_economy_can_afford_something_immediately() {
