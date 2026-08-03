@@ -169,6 +169,66 @@ held with the player at full HP for the entire climb). Up from 337.7s
 
 ---
 
+## Fixed after round 3 — read this before planning anything
+
+**The reason nobody has ever reached a fort was `goto`.** It had a flat
+thirty-second safety net. Real travel is around five units a second once
+crowds, scenery and level-up screens are counted, so the verb covered about
+150 units and then quietly released the keys. Forts start at 130 units and
+cluster past 200. Every run that was told to walk out to the war stopped dead
+in the empty middle, and *nothing in the report said so* — the command drained
+from the queue and the position simply stopped changing. Three rounds of
+`zones=0 forts=0 wars=0` came from that one line.
+
+`goto` now budgets from the distance, says how far short it stopped if it runs
+out, and sidesteps when it stops making ground. **Walking to (200,30) from the
+landing site now works and takes about 35 seconds.** Eight forts sit inside 95
+units of there.
+
+**The fort chain has been verified end to end by hand** — travel out, clear the
+ring, hold it, meter reaches +1, fort flips to YOU, and the losing faction
+comes back for it. It is now the most valuable untried strategy in the game and
+nobody has done it in a real run.
+
+What a fort is now, since all of this is new:
+
+- **Three emplaced guns**, firing in rotation round the wall, reaching 15 units
+  — twice the 7.5-unit capture ring, so there is no standing at the edge and
+  waiting it out. About 14 damage a second. They are the fort; there is nothing
+  to snipe off first. **Bring armour, regen and health, or do not go.**
+- **Wardens** while contested: elites sent specifically to drive you off.
+- **Contest speeds the assault timer up**, so eleven seconds in a ring is a
+  siege.
+- **Forts get tougher the further from home they stand**, up to a ceiling near
+  double. The first one you meet is the lesson.
+- **Garrison monsters stall a capture rather than reverse it** while you are
+  standing there. Three of them stop a lone player outright; a squad or a
+  cleared ring makes it quick. So: kill the nests, thin the ring, then hold.
+- **A fort you take is a much weaker thing**: one gun at a third the damage, no
+  wardens, no assaults. It pays Cores and Scrap and raises the threat floor.
+- **Turrets count as presence at half a body.** This is the interaction that
+  makes holding one possible — four turrets in the ring turn an eight-monster
+  reclaim into a hold. Nobody has tried building on a captured fort.
+- The pilot reports `garrison` per fort, so a meter that will not move tells you
+  why.
+
+Other operational fixes:
+
+- **Arrow keys answer to any spelling** — `UP`, `ArrowUp`, `arrow_up` all work.
+- **A command the game refused is now sticky** in the report, under
+  `!! REFUSED THIS RUN`. It used to appear for one snapshot, 200ms, and vanish —
+  so a mistyped key was indistinguishable from a dead key.
+- **The dossier's `furthest` column is now this run's travel**, not a lifetime
+  personal best. Every row before this one printed the same 312.
+- **`best streak` counts kills** with under three seconds between them. It used
+  to be unassigned, so it read 0 after thousands of kills.
+- **Card offers are weighted**, not a uniform shuffle: levelling a weapon is
+  worth four times a stat point. `Refinement` was unreachable and now appears.
+- **The threat dial unlocks at 75s**, not 300s.
+- **Research costs skill points as well as Cores** on the repeatable nodes (1)
+  and on Whisper Campaign and Blood Feud (2). Skill points arrive every third
+  level and previously bought nothing at all.
+
 ## Fixed since round 2, so old measurements are stale
 
 - **Distant kills now send their loot home.** A strategist measured that a

@@ -42,9 +42,18 @@ The levers, and what they connect to:
 - **Overclock** (`O`) spikes threat hard for 22s on an 80s cooldown.
 - **Territory** pays income *and* raises the threat floor. Holding ground is
   itself an escalation.
-- **Forts** are captured by presence, not damage — allies count, so a squad can
-  take one while you are elsewhere. A held fort works for you: it sends out your
-  assaults and plants your nests.
+- **Forts** are captured by presence, not damage. A fort is a *siege*: three
+  emplaced guns reaching twice the capture ring at ~14 damage a second, wardens
+  sent to drive you off while you contest it, and an assault timer that speeds
+  up because you are standing there. Its garrison stalls the meter rather than
+  reversing it, so the order is: kill the nests, thin the ring, then hold for
+  eleven seconds. Bring health, armour and regen. Forts are tougher the further
+  from home they are, and they start at 130 units.
+  A fort you take is deliberately a *weaker* thing than the one you took — one
+  gun, no wardens, no assaults — but it pays Cores and Scrap, and the faction
+  that lost it comes back for it hard. **Turrets count as presence at half a
+  body**, so building on a captured fort is how you keep it. Allies count too,
+  so a squad can take one while you are elsewhere.
 - **Nests** trickle enemies forever until destroyed. Clearing them is the only
   way to reduce ambient pressure.
 - **Factions** hold regions and ignore each other until you make them fight.
@@ -58,11 +67,15 @@ The levers, and what they connect to:
   think inside it as long as you like. A good player spends most of a fight
   there.
 
-**The strategies worth inventing live in the interactions.** For instance: a
-fort you hold plants nests that fight a faction you have set at war with its
-neighbour, while you sit in a light pool beside a chasm with the dial at
-maximum. Nobody has tried anything like that. Whether it works is exactly what
-this is for.
+**The strategies worth inventing live in the interactions.** For instance: take
+a fort, ring it with turrets so it holds itself, set its former owner at war
+with the neighbouring faction, and farm the middle at maximum dial from inside a
+light pool beside a chasm. Nobody has tried anything like that. Whether it works
+is exactly what this is for.
+
+The single most valuable thing anyone can do right now is **take a fort in a
+real run.** It has been verified possible by hand but never done in play. The
+whole territory, ally, fort and faction-war half of the game hangs off it.
 
 ## Driving
 
@@ -76,11 +89,17 @@ From `/Users/nschmeller/desk-free-for-all`:
 The digest's **first line** tells you when the game is waiting on you. If it
 says BLOCKED, nothing else works until you answer it.
 
+A line reading `!! REFUSED THIS RUN` lists every command the game rejected.
+Check it whenever something appears not to have happened - a mistyped key looks
+exactly like a dead one.
+
 Movement verbs, which run unattended so you are not scheduling keystrokes:
 
     kite 20            keep the nearest enemy at arm's length while fighting
     defend 30 -8 25    hold a position, giving ground to a crowd
-    goto 220 0         travel somewhere, stopping on arrival
+    goto 220 0         travel somewhere, stopping on arrival. Budgets its own
+                       time from the distance and says so in the log if it gives
+                       up short - check for that before assuming you arrived
     chase 10 / flee 8 / roam 25
 
 `kite` is the single most valuable verb. Weapons fire themselves, so the entire
