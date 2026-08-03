@@ -11,9 +11,19 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
 }
 
 // -- the desk itself --------------------------------------------------------
-pub const DESK_WOOD: Color = rgb(122, 80, 48);
-pub const DESK_WOOD_DARK: Color = rgb(92, 58, 33);
-pub const DESK_EDGE: Color = rgb(70, 44, 26);
+/// The desk floor, and the reason it is this dark.
+///
+/// It was (122, 80, 48), against which a UX pass measured the monsters at 1.06:1
+/// to 1.29:1 - where 3:1 is the floor for a graphic that carries meaning, and
+/// where Grid Zero already manages 2.39:1, proving this is a palette choice
+/// rather than a renderer limit. A player cannot fight what they cannot see.
+///
+/// Darkening the ground rather than brightening twelve monsters fixes every one
+/// of them at once, and it serves the art direction the file opens with - one
+/// warm desk lamp in a dark office - which a bright floor was contradicting.
+pub const DESK_WOOD: Color = rgb(70, 46, 28);
+pub const DESK_WOOD_DARK: Color = rgb(54, 34, 20);
+pub const DESK_EDGE: Color = rgb(40, 25, 15);
 pub const MOUSEPAD: Color = rgb(34, 38, 48);
 pub const MOUSEPAD_TRIM: Color = rgb(58, 66, 84);
 pub const PAPER: Color = rgb(238, 236, 228);
