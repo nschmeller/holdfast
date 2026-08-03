@@ -37,19 +37,30 @@ impl Seen {
     }
 }
 
-/// Everything exercised so far, this session.
+/// Everything exercised so far.
 ///
-/// Session rather than run: a coverage sweep spans several runs and several
-/// worlds by necessity, and resetting on death would make the goal impossible
-/// rather than merely long.
+/// Not per-run: a coverage sweep spans several runs and several worlds by
+/// necessity, and resetting on death would make the goal impossible rather than
+/// merely long.
+///
+/// And not per-session either, any more. It used to live only in memory, so
+/// every restart threw the sweep away - a tester that had visited three worlds
+/// and then relaunched was back at zero, which it could only find out by
+/// noticing the number had moved backwards. One tour worked around it by
+/// abandoning runs to the menu rather than restarting the process. The file is
+/// one tag per line beside the save, deliberately trivial to read and to delete.
 #[derive(Resource, Debug, Default)]
 pub struct Coverage {
     seen: BTreeSet<String>,
+    /// Set when something new landed and the file is behind.
+    dirty: bool,
 }
 
 impl Coverage {
     pub fn mark(&mut self, tag: impl Into<String>) -> bool {
-        self.seen.insert(tag.into())
+        let fresh = self.seen.insert(tag.into());
+        self.dirty |= fresh;
+        fresh
     }
 
     #[must_use]
@@ -157,9 +168,9 @@ pub struct CoveragePlugin;
 
 impl Plugin for CoveragePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Coverage>()
+        app.insert_resource(load())
             .add_message::<Seen>()
-            .add_systems(Update, absorb)
+            .add_systems(Update, (absorb, persist).chain())
             .add_systems(Update, note_milestones.run_if(in_state(AppState::Playing)))
             .add_systems(OnExit(AppState::Menu), note_world.in_set(RunSetup::Reset));
     }
@@ -169,6 +180,62 @@ fn absorb(mut coverage: ResMut<Coverage>, mut seen: MessageReader<Seen>) {
     for item in seen.read() {
         coverage.mark(item.0.clone());
     }
+}
+
+/// Write the sweep out whenever it grows.
+///
+/// Only on a change, so this is a no-op on almost every frame - and the file is
+/// small enough that rewriting it whole is cheaper than tracking appends.
+fn persist(mut coverage: ResMut<Coverage>) {
+    if !coverage.dirty {
+        return;
+    }
+    coverage.dirty = false;
+    let body = coverage.seen.iter().cloned().collect::<Vec<_>>().join("\n");
+    store(&body);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn path() -> std::path::PathBuf {
+    crate::save::save_path()
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default()
+        .join("holdfast-coverage.txt")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn store(body: &str) {
+    let _ = std::fs::write(path(), body);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load() -> Coverage {
+    let Ok(body) = std::fs::read_to_string(path()) else {
+        return Coverage::default();
+    };
+    let known: BTreeSet<String> = expected().into_iter().collect();
+    Coverage {
+        // Filtered against the checklist on the way in, so a renamed weapon
+        // leaves behind a stale tag rather than an inflated score.
+        seen: body
+            .lines()
+            .map(str::trim)
+            .filter(|line| known.contains(*line))
+            .map(String::from)
+            .collect(),
+        dirty: false,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn store(_body: &str) {
+    // Nobody is running a content sweep in a browser tab.
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load() -> Coverage {
+    Coverage::default()
 }
 
 fn note_world(env: Res<EnvKind>, mut seen: MessageWriter<Seen>) {
@@ -312,6 +379,39 @@ mod tests {
         for tag in expected().iter().filter(|t| t.starts_with("hazard:")) {
             assert!(placed.contains(tag), "{tag} is on the list but unplaceable");
         }
+    }
+
+    #[test]
+    fn a_reload_keeps_what_was_seen_and_drops_what_is_gone() {
+        // A restart used to throw the whole sweep away, and the only sign was
+        // the number having moved backwards.
+        let known = expected();
+        let body = format!("{}\n{}\nweapon:SomethingRenamed", known[0], known[1]);
+        let restored: BTreeSet<String> = {
+            let allowed: BTreeSet<String> = known.iter().cloned().collect();
+            body.lines()
+                .map(str::trim)
+                .filter(|l| allowed.contains(*l))
+                .map(String::from)
+                .collect()
+        };
+        assert!(restored.contains(&known[0]));
+        assert_eq!(
+            restored.len(),
+            2,
+            "a stale tag was let back in: {restored:?}"
+        );
+    }
+
+    #[test]
+    fn marking_something_new_asks_for_a_write_and_marking_it_twice_does_not() {
+        let mut coverage = Coverage::default();
+        assert!(!coverage.dirty, "wants a write before anything happened");
+        coverage.mark("weapon:PencilDart");
+        assert!(coverage.dirty);
+        coverage.dirty = false;
+        coverage.mark("weapon:PencilDart");
+        assert!(!coverage.dirty, "rewrote the file for a duplicate");
     }
 
     #[test]
