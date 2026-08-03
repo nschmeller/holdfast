@@ -1334,6 +1334,8 @@ struct Meta<'w> {
     war: Res<'w, crate::forts::WarRoom>,
     diplomacy: Res<'w, crate::factions::Diplomacy>,
     powers: Res<'w, crate::factions::NearbyPowers>,
+    pools: Res<'w, crate::world::LightPools>,
+    chasms: Res<'w, crate::world::Chasms>,
     unlocks: Res<'w, Unlocks>,
     plan: Res<'w, crate::command::PlanMode>,
     offer: Res<'w, CardOffer>,
@@ -1756,6 +1758,49 @@ fn write_war(json: &mut Json, meta: &Meta, holdings: &Holdings, hero: Vec2) {
         Some((a, b)) => json.text("war_available", &format!("{} vs {}", a.tag(), b.tag())),
         None => json.maybe("war_available", None),
     }
+
+    // Light pools and chasms have gone untested across five rounds, not for
+    // lack of trying: they existed in the world and in the source and were
+    // never once reported here, so nobody could find one deliberately. The two
+    // most interesting pieces of terrain in the game were invisible.
+    json.arr("light_pools");
+    let mut pools: Vec<_> = meta
+        .pools
+        .pools
+        .iter()
+        .map(|p| (p.center.distance(hero), p))
+        .collect();
+    pools.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    for (dist, pool) in pools.iter().take(4) {
+        json.item();
+        json.num("dist", *dist);
+        json.vec2("pos", pool.center);
+        json.num("radius", pool.radius);
+        json.num("damage_mult_inside", 1.0 + pool.damage_bonus);
+        json.flag("standing_in_it", *dist <= pool.radius);
+        json.end();
+    }
+    json.end();
+
+    json.arr("chasms");
+    let mut holes: Vec<_> = meta
+        .chasms
+        .holes
+        .iter()
+        .map(|c| (c.center.distance(hero), c))
+        .collect();
+    holes.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    for (dist, hole) in holes.iter().take(4) {
+        json.item();
+        json.num("dist", *dist);
+        json.vec2("pos", hole.center);
+        json.num("radius", hole.radius);
+        // Knockback beside a hole is worth far more than knockback in the open,
+        // so what a reader needs is the gap between them and the edge.
+        json.num("to_edge", (*dist - hole.radius).max(0.0));
+        json.end();
+    }
+    json.end();
 
     json.arr("wars");
     for (a, b, left) in meta.diplomacy.active_wars() {

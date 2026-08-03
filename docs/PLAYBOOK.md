@@ -875,3 +875,193 @@ tried holding two forts from two different factions at once; and the
 invisible to the pilot bridge and worth wiring up (`from_territory` should
 probably become two fields, and `scrap_per_sec` should sum `fort_income`
 too) so the next round doesn't have to grep the source to find them.
+
+### diplomat — 502.6s, new record for a run that actually died; war/territory/allies, not forts (round 4)
+Assignment: the three systems nobody had exercised that are not forts —
+faction wars, territory at scale, allies — deliberately leaving forts alone
+as scenery for the parallel `siege`/`castellan` instance. Five attempts on
+the pre-fix binary (all died in the 175-360s range without a war ever
+firing — see below), then the coordinator's three-fault fix landed mid-session
+and a fresh instance on the patched binary answered every question cleanly.
+
+**Before the fix, the war genuinely never fired, confirmed the hard way.**
+Two separate purchase attempts (Whisper Campaign, 14 Cores) on the pre-fix
+binary both left `wars: []` and produced *no* hint at all — not even
+"NOBODY TO TURN" — because the `InciteRequest` message was written while the
+research screen (`AppState::SkillTree`) was open and `resolve_incitements`
+only runs in `GameSet::Think`, gated to `AppState::Playing`; by the time the
+screen closed, several real seconds and many SkillTree-only Update frames
+later, Bevy's message double-buffer had already dropped it. Buying and
+closing in the same input batch didn't help — the batch itself spans enough
+frames while paused for the message to expire before `Playing` resumes.
+This is the same fault the coordinator's notice independently diagnosed;
+recorded here as an independent before/after confirmation, not a duplicate
+report.
+
+**After the fix: is a war pressure relief or an XP thief? Pressure relief,
+overwhelmingly, measured continuously through one full 45-second window.**
+Bought Whisper Campaign at level 22 (14 Cores, HP 290/342, 40 enemies within
+12m) standing at a BLOOM/RUST boundary with `war_available: "BLOOM vs RUST"`
+already showing in the digest before purchase. Immediately after buying
+(still paused in `SkillTree`, `wars: ["RUST vs BLOOM (45s)"]` read from
+`raw` the instant the purchase completed — no waiting, no ambiguity) and
+closing the screen, hint fired: "THE BLOOM TURNS ON THE RUST: They are not
+looking at you." Sampled every ~5-10s from there:
+
+| t (s since buy) | enemies within 12m | HP / max | RUST posture | BLOOM posture |
+|---|---|---|---|---|
+| 0  | 48-52 | 284/342 (83%) | HuntPlayer(0%) | HuntPlayer(0%) |
+| 9  | 18-20 | 293-302/357 (83-85%) | MassOnFort(40%) | MassOnFort(40%) |
+| 20 | 0 | 320/357 (90%) | HuntPlayer(0%) | MassOnFort(40%) |
+| 23 | 0-3 | 357-372/357-372 (100%) | HuntPlayer(0%) | MassOnFort(40%) |
+| war end (45s) | 4 | 401/439 (91%) | HuntPlayer(0%) | HuntPlayer(0%), reverted |
+
+Kills went 287 → 308 → 345 → 442 → 461 over the same window (both factions
+were killing each other, not just standing down), HP never dropped again
+until the war had fully expired and the player wandered back into ambient
+density, and both factions' `posture` flipped to `MassOnFort` simultaneously
+at commitment 0.4 each — they redirected at each other, not just away from
+the player. **Buy it the moment `war_available` shows a pair you can see,
+even mid-fight; the 14 Cores paid for themselves in the first 10 seconds and
+the rest was free HP regen with the enemy AI doing the work.** The `nearby`
+field the coordinator added is real and moves with the fight: BLOOM's went
+91.5 → 79.7 → 27.6 → 25-33 across the same window, tracking its forces
+being pulled away and thinned by RUST, not just relocated.
+
+**Opening Research is a free panic button, not just a menu.** `AppState::SkillTree`
+sits outside the `GameSet::*` chain entirely, so *no* damage, no enemy
+movement, and no HP/enemy-count field changes at all while it's open —
+confirmed directly: two `raw` reads taken ~15 real seconds apart while
+paused in SkillTree (deliberately, to test this) returned byte-identical
+`t`, `hp`, and `enemies.total`. At HP 34/394 with 71 enemies inside 12m and
+no cores to spend, opening research anyway still buys unlimited real-world
+thinking time with zero in-game cost — worth doing purely to plan an escape,
+independent of whether you can afford anything on the tree.
+
+**Hold four zones at once with turrets, not allies or the player — the
+`from_territory` field confirms it holds even from 90m away.** Travelled a
+loop placing one Tack Turret directly on each of four zone markers (25
+scrap each, no discount used); all four flipped to `Player` and stayed there
+after the player moved on. Once 90-100m from every one of them, `raw` state's
+`zones` array (capped to the 5 nearest) stopped listing any of the four —
+but `threat.from_territory` still read exactly `0.8` (= 4 × 0.2), proving
+the zone-hold and its threat contribution are tracked globally, not by
+render/query distance. `effective_threat` went from 1.358 (no territory) to
+2.158 (4 zones held): `reward_mult` 1.32 → 2.03, a **54% reward increase**
+for 100 Scrap spent once and never revisited, against a `spawn_mult`
+increase from 1.43 to 2.00 (+40%) and `power_mult` from 1.10 to 1.32 (+20%)
+— both computed directly from the same `effective()` this reward multiplier
+reads, since neither is exposed by the pilot bridge either. A fifth zone was
+captured shortly after by a lone Guard-stance ally (see below), for
+`from_territory: 1.0` and `reward_mult` reading `2.117` at threat 1.459,
+matching the formula to three decimal places again. **The zones=5 row this
+produced (`diplomat DESK 241.3 23 194 4 2 5 0 0 2.87 ...`) is the first time
+this game has recorded more than one zone held at once in the dossier.**
+
+**Allies hold zones solo and travel there unassisted, but die there alone
+at high threat without a turret backup.** Recruited a mixed 4-unit squad
+(Scout/Gunner/Bulwark/Medic or similar) several times this session; `G`
+pressed twice (Follow→Hold→Guard) sends every ally to a *different*
+currently-unowned zone (`handle_recruit`'s target list is filtered to
+`owner != Player` and indexed by ally slot, so a 4-ally squad claims up to
+four distinct zones with one keypress, no manual routing). Watched it
+succeed clean at threat ~1.4-1.6 (a lone ally captured and held a zone 17-46m
+away while the player fought elsewhere, `scrap_per_sec` jumping 1.6/s per
+zone exactly on schedule) and fail slowly at threat 2.2-2.6 in a later run:
+a Drill-Sergeant-boosted Bulwark with 885 max HP, sent alone to Guard a
+distant zone, still bled down from full to dead (885→638→312→142→0, squad
+count ticking 4→3→2→1→0) over about 90 real seconds of ambient pressure with
+no player support nearby — a turret at the same threat, by contrast, has
+been shown elsewhere this round to hold indefinitely once built. **Allies are
+a legitimate zone-capture tool (fast, no build action, no scrap) but not a
+zone-*holding* tool once threat passes roughly 2; use them to flip a zone,
+then backfill with a turret if you want it to stick.**
+
+**Fatal pattern, twice this session before the fix and once after: leveling
+up mid-`do`-batch swallows a keystroke meant for something else, most
+dangerously the ones that would have opened an escape.** Confirmed via the
+sticky `!! REFUSED THIS RUN` list every time: `Digit3`/`KeyT`/`Enter` sent
+while `LEVELUP` was actually open got read as level-up keys, several calls
+in a row, while HP kept dropping in the background because the level-up
+screen itself does *not* pause damage the way SkillTree does (a level-up in
+a crowd is not free time; only Research is). Two of this session's three
+deaths trace to exactly this: an intended card-pick that was actually a
+build/research keystroke arriving one tap late, followed a few seconds later
+by a death that had already been decided before the correct card was ever
+seen. Lesson: after any `do` call that might straddle a level-up, always
+check `state` before trusting the next keystroke lands where intended — the
+digest can look identical (`[LevelUp] ... CARDS ON OFFER`) whether it's the
+same level-up still open or the game already moved on and reopened another.
+
+**Fast batched `DOWN` taps into the research tree can silently under-count.**
+Attempted to buy Blood Feud (Command row 6) via one batched
+`RIGHT×3 DOWN×6 ENTER`; the purchase went through (26→22 Cores spent ≈4,
+`wars` stayed `[]`) but landed on row 2 (Supply Lines, ~4 Cores) instead —
+at least 4 of the 6 `DOWN` taps were dropped somewhere in the batch despite
+the earlier `RIGHT×3` in the same call having worked correctly one screen
+prior. Cross-check the digest (or at minimum the Cores delta) after any
+multi-tap tree navigation before trusting the cursor landed where the RIGHT/DOWN
+count says it should have; a silent under-buy costs Cores without giving you
+the node, or the war, you paid for.
+
+**Light pools and chasms exist in the fixed `desk` arena (this is not an
+infinite-world-only feature) but are invisible to the pilot bridge.**
+`src/environments/desk.rs` rolls a light pool next to the desk lamp prop at
+an 11% feature chance (`c.pool(...)`) and a chasm in the gap between two
+desks at 9% (`c.chasm(...)`) — both exist in every "desk" run, not just the
+WIP infinite-world branch. Neither `LightPool` nor `Chasm` is reported
+anywhere in `state.json`; `grep -n "pool\|chasm" src/pilot.rs -i` returns
+nothing. Screenshot capture failed on every attempt this session (flat
+56997-byte PNGs, the known capture race), so there was no way — visual or
+telemetric — to confirm proximity to either across five full runs and one
+502-second run touching five separate zone clusters. **This remains
+completely untested, and will stay untestable for a keyboard-only,
+screenshot-unreliable driver until the pilot bridge reports a distance to
+the nearest light pool and chasm the way it already does for zones, forts
+and nests.**
+
+**Fort contamination is easy by accident even when explicitly avoiding
+forts.** Wandering (via `flee`/`goto`, never deliberately) put the player
+within a fort's capture ring three separate times this session purely
+because "away from the crowd" and "toward the nearest fort" pointed the same
+direction; one of these triggered a `[taking 45%]` contest and a warden
+assault that took HP from 366/394 to a near-death 41/449 in under 20
+seconds — a direct, unwanted replay of `castellan`'s "reclaim assaults are
+categorically harder" finding, encountered by someone who was actively
+trying not to go there. **If forts are explicitly out of scope, check the
+`FORTS` distance line before every `flee`/`goto` call, not just before
+`goto`-ing somewhere on purpose** — the steering verbs do not know or care
+that a fort is a hazard you'd rather not touch.
+
+**The final run: 502.6s, level 42, 871 kills, peak threat 3.30 — the highest
+dossier row (a run that actually died) recorded so far**, beating `siege`'s
+374/430s marks. Reached via disciplined level-1 farming near spawn with
+constant retreat at the first sign of density (never letting `within_12m`
+exceed ~20-25 before disengaging), landing every level-up card decisively,
+and treating both the 45s Whisper Campaign window and the free SkillTree
+pause as scheduled rest stops rather than emergency-only tools. Zeroed out
+on zones/allies/forts/structures at the moment of death only because the
+run's final ~120 seconds were spent purely on survival after the last ally
+died and cores ran short of a second war purchase — the peak state, sampled
+mid-run, held 5 zones, 4 turrets, and a 4-ally squad simultaneously. Died to
+the same pattern as every other run this round: HP crossed roughly 30% while
+`within_12m` was already past 40, and the gap between "still fine" and "dead"
+was under 15 real seconds with no recovery window once it started, even at
+threat 3.3 (a much lower threat than `fortress`'s 8.0 collapse) — the density
+ceiling that kills a build is a function of raw enemy count near the player,
+not threat level directly, and 300+ ambient enemies at threat 3.3 is already
+past it.
+
+**Takeaway for whoever plays next:** the war/territory/allies frontier is
+now closed to the same degree the fort frontier was closed by `castellan` —
+buy a war the instant `war_available` shows a pair, garrison zones with
+turrets rather than allies for anything meant to last, and use allies as a
+capture tool, not a holding one. Open ground: nobody has combined an incited
+war with a *held territory ring* (does BLOOM/RUST fighting each other reduce
+pressure on turrets the way it does on the player?); nobody has bought
+Blood Feud successfully yet (every attempt this session either lacked the
+26 Cores or landed on the wrong node — its 110s window against a
+`nearby`-tracked fight is still an open measurement); and light pools and
+chasms remain the only two systems in the entire game nobody has ever
+observed, for lack of a bridge-side distance field rather than for lack of
+trying.

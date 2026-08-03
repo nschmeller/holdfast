@@ -214,6 +214,18 @@ def digest(s):
         out.append("SINCE LAST LOOK: " + " | ".join(s["events"]))
     # Sticky, and above everything else in importance: a command the game
     # refused looks exactly like a key that did nothing.
+    for pool in (s.get("light_pools") or [])[:2]:
+        where = "STANDING IN IT" if pool.get("standing_in_it") else f"{pool['dist']:.0f}m away"
+        out.append(
+            f"LIGHT POOL {where}, radius {pool['radius']:.0f}, "
+            f"x{pool['damage_mult_inside']:.2f} damage inside"
+        )
+    for hole in (s.get("chasms") or [])[:2]:
+        out.append(
+            f"CHASM {hole['dist']:.0f}m away, radius {hole['radius']:.0f} "
+            f"({hole['to_edge']:.0f}m to the edge) - knockback here kills outright"
+        )
+
     war = s.get("war_available")
     if war:
         out.append(f"A WAR CAN BE INCITED NOW: {war} (Research, Command branch)")
