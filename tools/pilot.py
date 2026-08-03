@@ -65,6 +65,21 @@ def digest(s):
         return "no report yet - is the game running?"
 
     out = []
+
+    # A blocked state first, and loudly. The game pauses on a level-up until a
+    # card is taken, and a reader that misses that will sit there sending
+    # movement commands into a paused game and conclude the game is broken -
+    # which is exactly what happened the first time this ran.
+    blocked = {
+        "LevelUp": ">>> BLOCKED: press 1, 2 or 3 to take a card. Nothing else works. <<<",
+        "SkillTree": ">>> BLOCKED: research is open. ENTER buys, T or ESC closes. <<<",
+        "Paused": ">>> BLOCKED: paused. ESC resumes. <<<",
+        "GameOver": ">>> RUN OVER: ENTER starts another. <<<",
+        "Menu": ">>> AT THE MENU: left/right pick a world, ENTER deploys. <<<",
+    }.get(s["state"])
+    if blocked:
+        out.append(blocked)
+
     head = f"[{s['state']}] {s['world']}  t={s['run']['elapsed']:.0f}s  kills={s['run']['kills']}"
     out.append(head)
 
@@ -184,6 +199,31 @@ def digest(s):
     return "\n".join(out)
 
 
+def is_blank(path):
+    """True when a PNG decodes to a single flat colour.
+
+    Enough PNG to answer one question, which is cheaper than a dependency and
+    is the only image inspection this tool ever needs to do.
+    """
+    import struct
+    import zlib
+
+    try:
+        raw = open(path, "rb").read()
+        pos, idat = 8, b""
+        while pos < len(raw):
+            length = struct.unpack(">I", raw[pos : pos + 4])[0]
+            kind = raw[pos + 4 : pos + 8]
+            if kind == b"IDAT":
+                idat += raw[pos + 8 : pos + 8 + length]
+            pos += 12 + length
+        # A few hundred kilobytes is plenty to tell flat from not.
+        sample = zlib.decompressobj().decompress(idat, 400_000)
+        return len(set(sample)) <= 2
+    except Exception:
+        return False
+
+
 def duration_of(lines):
     """How long the queued commands will take, so `do` can wait them out."""
     total = 0.0
@@ -269,6 +309,14 @@ def main():
             if os.path.exists(out) and os.path.getsize(out) > 0:
                 time.sleep(0.3)
                 print(out)
+                if is_blank(out):
+                    print(
+                        "WARNING: that capture is a single flat colour, which means the\n"
+                        "capture failed - not that the game renders blank. It happens on\n"
+                        "windows that were resized after creation: the screenshot reads a\n"
+                        "stale surface at the original size. Judge this frame by the `see`\n"
+                        "digest instead, and do not report it as a rendering bug."
+                    )
                 return 0
             time.sleep(0.1)
         print("screenshot never appeared")

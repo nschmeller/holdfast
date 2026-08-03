@@ -76,12 +76,21 @@ research ~240s, threat dial ~300s.
 
 ## How to play well as a tester
 
-- **Never leave a level-up hanging.** At state `LevelUp` the game is blocked
-  until you press 1, 2 or 3. Check `see` after every fight.
+- **Never leave a level-up hanging.** At state `LevelUp` the game is *paused*
+  until you press 1, 2 or 3. Movement, roaming and every other key do nothing
+  until you pick a card, and the digest says so in a banner across the top.
+  A tester once spent twenty minutes sending movement into a paused game and
+  reported it as a critical input bug. Read the first line of `see` before
+  every action.
 - **Look at the screen.** Take a screenshot every few minutes and actually
   `Read` the png. You are judging whether the game is legible: can you tell
   what is happening, is the HUD readable, does anything render wrong or
   invisible or ugly? The digest cannot tell you that.
+
+  If `shot` prints a WARNING that the capture is a flat colour, the *capture*
+  failed - the game is rendering fine. That is a known limitation of grabbing
+  a window that was resized after it opened. Do not report it as a rendering
+  bug; fall back to the digest for that stretch.
 - **Play in character.** Your persona is not a garnish; it decides what you
   find. A cautious first-timer and a min-maxer break different things.
 - **Follow your curiosity into corners.** Walk to the edge. Stand in the fire.
