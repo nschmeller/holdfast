@@ -206,7 +206,15 @@ fn path() -> std::path::PathBuf {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn store(body: &str) {
-    let _ = std::fs::write(path(), body);
+    // Merge, never clobber. Several agent instances share this file and a plain
+    // write is last-one-wins, so two concurrent sessions silently discarded each
+    // other's sweep - which is how a tour's worth of coverage vanished.
+    let mut merged: BTreeSet<String> = body.lines().map(str::trim).map(String::from).collect();
+    if let Ok(existing) = std::fs::read_to_string(path()) {
+        merged.extend(existing.lines().map(str::trim).map(String::from));
+    }
+    merged.remove("");
+    let _ = std::fs::write(path(), merged.into_iter().collect::<Vec<_>>().join("\n"));
 }
 
 #[cfg(not(target_arch = "wasm32"))]

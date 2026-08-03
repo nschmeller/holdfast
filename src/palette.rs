@@ -75,6 +75,17 @@ pub const XP_GREEN: Color = rgb(126, 232, 128);
 pub const HEAL_RED: Color = rgb(240, 86, 96);
 pub const GEAR_GOLD: Color = rgb(250, 194, 84);
 pub const DANGER: Color = rgb(232, 72, 66);
+/// The ring under the player themselves.
+///
+/// Its own colour, and not `ALLY_TRIM`: a UX pass established that the player was
+/// the only gameplay entity in the game with no floor marker at all - allies,
+/// turrets, elites, bosses, nests, forts and zones every one had one - and that
+/// the duck's own gold is the same gold as its shots, its gear pickups, the
+/// neutral zone ring and the HUD accent. Measured 2.25:1 against the desk floor,
+/// where 3:1 is the floor for a graphic that means something. On the rooftop it
+/// could not be found at all.
+pub const HERO_TRIM: Color = rgb(255, 255, 255);
+
 /// The ring under anything that belongs to the player. Their faction green, but
 /// brighter, because "where are my allies" was a question the screen could not
 /// answer at all.

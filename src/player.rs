@@ -183,6 +183,15 @@ pub fn spawn_player(
         MeshMaterial3d(art.solid.clone()),
         Transform::from_translation(Vec3::ZERO),
         RunEntity,
+        children![(
+            // The player was the only gameplay entity with no floor marker.
+            // Everything else on the board had one, including the things they
+            // built, which made their own character the hardest thing on screen
+            // to find.
+            Mesh3d(art.ring.clone()),
+            MeshMaterial3d(art.glow(crate::art::Glow::Hero)),
+            Transform::from_xyz(0.0, 0.07, 0.0).with_scale(Vec3::new(1.35, 1.0, 1.35)),
+        )],
     ));
 }
 
@@ -375,6 +384,7 @@ fn apply_hazards_to_player(
     time: Res<Time>,
     hazards: Query<(&Hazard, &Body), Without<Player>>,
     mut players: Query<(Entity, &Body, &mut StatusEffects), With<Player>>,
+    mut healths: Query<&mut Health, With<Player>>,
     mut damage: MessageWriter<DamageEvent>,
     mut seen: MessageWriter<crate::coverage::Seen>,
 ) {
@@ -405,6 +415,14 @@ fn apply_hazards_to_player(
                     knockback_force: 0.0,
                     source: DamageSource::Hazard,
                 });
+            } else if hazard.dps < 0.0 {
+                // A ley font heals whoever stands in it. The enemy side had this
+                // and the player did not, so "friend or foe" - the phrase in the
+                // source comment and the whole reason contesting one is a
+                // decision - was only ever true for the monsters.
+                if let Ok(mut health) = healths.get_mut(entity) {
+                    health.heal(-hazard.dps * dt);
+                }
             }
             if hazard.slow < 1.0 {
                 status.apply_slow(1.0 - hazard.slow, 0.25);

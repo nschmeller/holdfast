@@ -42,6 +42,7 @@ pub enum Glow {
     Boss,
     Ally,
     Friend,
+    Hero,
     Zone,
     ZoneHeld,
     Warning,
@@ -55,7 +56,7 @@ impl Glow {
     /// `glow material registered at startup` - which broke recruiting and
     /// building entirely, because the panic took the systems down with it. A
     /// const plus `every_glow_is_registered` makes the omission impossible.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Xp,
         Self::Heal,
         Self::Scrap,
@@ -71,6 +72,7 @@ impl Glow {
         Self::Boss,
         Self::Ally,
         Self::Friend,
+        Self::Hero,
         Self::Zone,
         Self::ZoneHeld,
         Self::Warning,
@@ -94,6 +96,8 @@ impl Glow {
             Self::Ally => (Color::srgb(0.45, 0.85, 1.0), 3.0),
             // Reserved for the ring under anything that belongs to the player.
             Self::Friend => (palette::ALLY_TRIM, 3.4),
+            // The player's own marker, brighter than anything else on the floor.
+            Self::Hero => (palette::HERO_TRIM, 4.2),
             Self::Zone => (Color::srgb(0.9, 0.75, 0.35), 2.0),
             Self::ZoneHeld => (Color::srgb(0.4, 1.0, 0.6), 2.6),
             Self::Warning => (Color::srgb(1.0, 0.35, 0.2), 3.0),
@@ -424,6 +428,7 @@ mod tests {
                 Glow::Boss => "Boss",
                 Glow::Ally => "Ally",
                 Glow::Friend => "Friend",
+                Glow::Hero => "Hero",
                 Glow::Zone => "Zone",
                 Glow::ZoneHeld => "ZoneHeld",
                 Glow::Warning => "Warning",
@@ -437,8 +442,8 @@ mod tests {
         }
         assert_eq!(
             listed.len(),
-            18,
-            "the match enumerates 18 variants; ALL holds {} of them",
+            19,
+            "the match enumerates 19 variants; ALL holds {} of them",
             listed.len()
         );
     }
