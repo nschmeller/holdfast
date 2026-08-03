@@ -13,6 +13,7 @@ pub mod command;
 pub mod common;
 pub mod coverage;
 pub mod devtools;
+pub mod dossier;
 pub mod enemy;
 pub mod environments;
 pub mod factions;
@@ -242,6 +243,7 @@ pub fn run() {
     app.add_plugins((
         save::SavePlugin,
         coverage::CoveragePlugin,
+        dossier::DossierPlugin,
         stats::StatsPlugin,
         tactician::TacticianPlugin,
         devtools::DevToolsPlugin,

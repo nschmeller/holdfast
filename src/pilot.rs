@@ -32,6 +32,8 @@
 //! | `roam 20` | Wander unaided for twenty seconds |
 //! | `chase 8` / `flee 8` | Close on, or run from, the nearest enemy |
 //! | `goto -12 6 [limit]` | Walk to a point, ending early on arrival |
+//! | `defend 20 -8 [secs]` | Defend a point: stay near it, give ground to a crowd |
+//! | `kite 20` | Keep the nearest enemy at arm's length without disengaging |
 //!
 //! The last four exist because the far side of this channel is usually a
 //! language model, which thinks in whole turns of several seconds. Without
@@ -76,6 +78,16 @@ const SNAPSHOT_PERIOD: f32 = 0.2;
 /// Cap on the queue. A runaway writer should not be able to grow the game's
 /// memory without bound.
 const MAX_QUEUED: usize = 4096;
+
+/// The gap a kiting player tries to keep. Inside most weapon ranges, outside
+/// contact range - which is the band where the game is actually winnable.
+const KITE_RANGE: f32 = 9.0;
+
+/// How close something has to be before a holding player gives ground.
+const HOLD_SPACING: f32 = 5.0;
+
+/// How far from the post a holding player will drift before coming back.
+const HOLD_LEASH: f32 = 12.0;
 
 // -- json -------------------------------------------------------------------
 
@@ -268,6 +280,15 @@ enum Steer {
     Flee,
     /// Walk to a point, finishing early on arrival.
     Goto(Vec2),
+    /// Hold a point: stay near it, but give ground to the crowd rather than
+    /// standing in it. What defending a position actually looks like.
+    Hold(Vec2),
+    /// Keep the nearest enemy at arm's length without disengaging.
+    ///
+    /// The single most important skill in the game and the hardest to express
+    /// as keystrokes: weapons fire themselves, so the whole craft of fighting
+    /// is standing at the range where you are hitting and they are not.
+    Kite,
 }
 
 impl Cmd {
@@ -464,6 +485,18 @@ fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
             seconds(&verb, rest.first())?,
         ))),
         "flee" => Ok(Some(Cmd::Steer(Steer::Flee, seconds(&verb, rest.first())?))),
+        // `defend`, not `hold`: `hold` already means holding a key down, and
+        // a verb that means two things is a verb that gets used wrongly.
+        "defend" => {
+            let x = number(&verb, rest.first())?;
+            let z = number(&verb, rest.get(1))?;
+            let secs = rest.get(2).map_or(Ok(20.0), |v| number(&verb, Some(v)))?;
+            Ok(Some(Cmd::Steer(
+                Steer::Hold(Vec2::new(x, z)),
+                secs.clamp(0.0, 600.0),
+            )))
+        }
+        "kite" => Ok(Some(Cmd::Steer(Steer::Kite, seconds(&verb, rest.first())?))),
         "goto" => {
             let x = number(&verb, rest.first())?;
             let z = number(&verb, rest.get(1))?;
@@ -584,6 +617,8 @@ struct Pilot {
     wander: Wander,
     /// Name for this instance, so a report says which window it came from.
     label: String,
+    /// Set by `note strategy=...`, forwarded to the run dossier.
+    strategy: Option<String>,
     /// Notable changes since the last snapshot.
     events: Vec<String>,
     seq: u64,
@@ -611,6 +646,7 @@ impl Pilot {
             steering: Vec::new(),
             wander: Wander::default(),
             label,
+            strategy: None,
             events: Vec::new(),
             seq: 0,
             since_snapshot: SNAPSHOT_PERIOD,
@@ -810,6 +846,8 @@ fn run_queue(
                     Steer::Chase => format!("chasing for {secs:.0}s"),
                     Steer::Flee => format!("fleeing for {secs:.0}s"),
                     Steer::Goto(t) => format!("walking to ({:.0},{:.0})", t.x, t.y),
+                    Steer::Hold(t) => format!("holding ({:.0},{:.0})", t.x, t.y),
+                    Steer::Kite => format!("kiting for {secs:.0}s"),
                 });
                 pilot.active = Some(Active {
                     remaining: secs,
@@ -823,7 +861,16 @@ fn run_queue(
                     .spawn(Screenshot::primary_window())
                     .observe(save_to_disk(path));
             }
-            Cmd::Note(text) => pilot.record(format!("note: {text}")),
+            Cmd::Note(text) => {
+                // `note strategy=turtle` labels the run in the dossier. A
+                // tester saying what it is attempting is worth more than
+                // inferring it from the numbers, because the gap between the
+                // two is exactly what a balance pass wants to see.
+                if let Some(label) = text.strip_prefix("strategy=") {
+                    pilot.strategy = Some(label.trim().to_ascii_lowercase());
+                }
+                pilot.record(format!("note: {text}"));
+            }
             Cmd::Quit => {
                 pilot.record("quit requested");
                 exit.write(AppExit::Success);
@@ -840,6 +887,46 @@ fn run_queue(
         let dir = match steer {
             Steer::Roam => pilot.wander.step(pos, dt),
             Steer::Goto(target) => (target - pos).normalize_or_zero(),
+            Steer::Hold(anchor) => {
+                // Drift back towards the post, but step away from whatever is
+                // closest. Holding ground is not standing still.
+                let home = (anchor - pos).normalize_or_zero();
+                let nearest = foes
+                    .iter()
+                    .map(|body| body.pos)
+                    .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+                let leash = pos.distance(anchor);
+                match nearest {
+                    Some(foe) if foe.distance(pos) < HOLD_SPACING && leash < HOLD_LEASH => {
+                        ((pos - foe).normalize_or_zero() + home * 0.4).normalize_or_zero()
+                    }
+                    _ if leash > 2.0 => home,
+                    _ => Vec2::ZERO,
+                }
+            }
+            Steer::Kite => {
+                let nearest = foes
+                    .iter()
+                    .map(|body| body.pos)
+                    .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+                match nearest {
+                    None => pilot.wander.step(pos, dt),
+                    Some(foe) => {
+                        let gap = foe.distance(pos);
+                        let away = (pos - foe).normalize_or_zero();
+                        if gap < KITE_RANGE * 0.8 {
+                            // Too close: back off, but circle rather than run
+                            // in a straight line, which walks into the next one.
+                            (away + Vec2::new(-away.y, away.x) * 0.7).normalize_or_zero()
+                        } else if gap > KITE_RANGE * 1.6 {
+                            -away
+                        } else {
+                            // At range: strafe, so the crowd never converges.
+                            Vec2::new(-away.y, away.x)
+                        }
+                    }
+                }
+            }
             Steer::Chase | Steer::Flee => {
                 let nearest = foes
                     .iter()
@@ -940,6 +1027,7 @@ struct Field<'w, 's> {
 
 fn write_snapshot(
     mut pilot: ResMut<Pilot>,
+    mut declared: ResMut<crate::dossier::DeclaredStrategy>,
     time: Res<Time<Real>>,
     pacing: Pacing,
     sheet: Sheet,
@@ -953,6 +1041,9 @@ fn write_snapshot(
     }
     pilot.since_snapshot = 0.0;
     pilot.seq += 1;
+    if let Some(label) = pilot.strategy.take() {
+        declared.0 = label;
+    }
 
     let env = *pacing.env;
     let player = field.player.iter().next();
@@ -1648,5 +1739,22 @@ mod tests {
 
         let unknown = label_for("weapon:NotAThing", EnvKind::Desk);
         assert_eq!(unknown, "weapon:NotAThing");
+    }
+    #[test]
+    fn defending_and_kiting_parse_and_do_not_shadow_holding_a_key() {
+        assert_eq!(
+            parse_line("defend 20 -8 30"),
+            Ok(Some(Cmd::Steer(Steer::Hold(Vec2::new(20.0, -8.0)), 30.0)))
+        );
+        assert_eq!(
+            parse_line("kite 12"),
+            Ok(Some(Cmd::Steer(Steer::Kite, 12.0)))
+        );
+        // `hold` still means the key, which is what it has always meant.
+        assert_eq!(
+            parse_line("hold W 1.5"),
+            Ok(Some(Cmd::Hold(vec![KeyCode::KeyW], 1.5)))
+        );
+        assert!(parse_line("defend 20").is_err());
     }
 }
