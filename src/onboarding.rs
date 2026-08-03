@@ -148,7 +148,13 @@ impl Plugin for OnboardingPlugin {
             .init_resource::<HintQueue>()
             .add_systems(
                 Update,
-                (tick_unlocks, tick_hints, notice_new_enemies).in_set(GameSet::Present),
+                (
+                    tick_unlocks,
+                    announce_skill_points,
+                    tick_hints,
+                    notice_new_enemies,
+                )
+                    .in_set(GameSet::Present),
             )
             .add_systems(
                 OnExit(AppState::Menu),
@@ -199,7 +205,7 @@ fn tick_unlocks(clock: Res<RunClock>, mut unlocks: ResMut<Unlocks>, mut hints: R
         unlocks.allies = true;
         hints.push(
             "SQUAD AVAILABLE",
-            "Press R near a beacon to recruit. F rallies them, G cycles stance.",
+            "Press R to recruit, it costs Cores. F rallies them, G cycles stance.",
             HintTone::Unlock,
         );
     }
@@ -207,7 +213,7 @@ fn tick_unlocks(clock: Res<RunClock>, mut unlocks: ResMut<Unlocks>, mut hints: R
         unlocks.research = true;
         hints.push(
             "RESEARCH UNLOCKED",
-            "Press T to spend Cores on permanent upgrades.",
+            "Press T to spend Cores - and your Skill Points - on permanent upgrades.",
             HintTone::Unlock,
         );
     }
@@ -219,6 +225,27 @@ fn tick_unlocks(clock: Res<RunClock>, mut unlocks: ResMut<Unlocks>, mut hints: R
             HintTone::Unlock,
         );
     }
+}
+
+/// Say what a Skill Point is for, the first time one arrives.
+///
+/// They land at level three, which is usually inside the first minute, and
+/// research does not open until 230 seconds - so a newcomer carried an unexplained
+/// counter for three minutes with nothing anywhere telling them what it was or
+/// what would ever take it. They reported exactly that.
+fn announce_skill_points(
+    progression: Res<crate::progress::Progression>,
+    mut hints: ResMut<HintQueue>,
+) {
+    if progression.skill_points == 0 {
+        return;
+    }
+    hints.push_once(
+        "skill-points",
+        "SKILL POINT EARNED",
+        "One every third level. The deepest research nodes cost these as well as Cores.",
+        HintTone::Unlock,
+    );
 }
 
 fn tick_hints(time: Res<Time>, mut hints: ResMut<HintQueue>) {

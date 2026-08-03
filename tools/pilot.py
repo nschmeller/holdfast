@@ -196,13 +196,38 @@ def digest(s):
     out.append(f"UNLOCKED {online}" + (f"   (still locked: {locked})" if locked else ""))
 
     pm = s["plan_mode"]
+    # ENTER means two different things and the game never said which. A
+    # newcomer pressed it meaning "place the turret" and called a wave early
+    # instead, then could not work out why. So say what it does right now.
+    can_build = s["unlocks"]["build"]
     if pm["active"]:
         out.append(
-            f"PLAN MODE cursor ({pm['cursor'][0]:.0f},{pm['cursor'][1]:.0f}) "
-            f"placing {pm['selected']} "
-            f"{'OK' if pm['valid_site'] else 'BLOCKED'}"
-            + (f"  msg: {pm['message']}" if pm["message"] else "")
+            f"PLAN MODE IS ON - cursor ({pm['cursor'][0]:.0f},{pm['cursor'][1]:.0f}), "
+            f"placing {pm['selected']}, site is "
+            f"{'clear' if pm['valid_site'] else 'BLOCKED - move the cursor'}"
         )
+        if not can_build:
+            # `valid_site` is about geometry, not permission - a newcomer read
+            # "site is clear", pressed ENTER, got nothing, and had no way to
+            # learn that building was not unlocked yet.
+            out.append("     BUT BUILDING IS NOT UNLOCKED YET - ENTER will do nothing.")
+        else:
+            out.append("     ENTER places it here. SPACE leaves plan mode.")
+        # The game's own refusal, if it gave one. This is the only place it says
+        # why a placement failed, so it gets its own line.
+        if pm["message"]:
+            out.append(f"     the game says: {pm['message']}")
+    else:
+        out.append(
+            "PLAN MODE IS OFF - SPACE turns it on"
+            + (" to build." if can_build else ", but building is not unlocked yet.")
+        )
+        if s["wave"]["phase"].lower().startswith("prep"):
+            out.append(
+                "     ENTER right now CALLS THE WAVE EARLY "
+                f"(+{s['wave']['bonus_if_called_now'] * 100:.0f}% rewards), "
+                "it does not build."
+            )
 
     if s["card_offer"]:
         out.append("CARDS ON OFFER (press 1/2/3):")
@@ -233,7 +258,11 @@ def digest(s):
     if war:
         out.append(f"A WAR CAN BE INCITED NOW: {war} (Research, Command branch)")
     if s.get("problems"):
-        out.append("!! REFUSED THIS RUN: " + " | ".join(s["problems"]))
+        # Timestamped, and labelled as a history, because an unstamped list gets
+        # read as a reaction to whatever was typed most recently.
+        out.append("!! REFUSED EARLIER IN THIS RUN (with the time it happened):")
+        for problem in s["problems"]:
+            out.append("     " + problem)
 
     return "\n".join(out)
 

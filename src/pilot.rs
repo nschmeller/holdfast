@@ -649,6 +649,9 @@ struct Travel {
     /// Time left sidestepping, and which way.
     detour: f32,
     side: f32,
+    /// Whether this journey ever had to work round something. Reported when a
+    /// journey gives up, so "why" is answerable.
+    detoured: bool,
 }
 
 impl Default for Travel {
@@ -658,6 +661,7 @@ impl Default for Travel {
             since_check: 0.0,
             detour: 0.0,
             side: 1.0,
+            detoured: false,
         }
     }
 }
@@ -686,6 +690,7 @@ impl Travel {
         if self.since_check >= Self::PATIENCE {
             if self.last.distance(pos) < Self::PROGRESS {
                 self.detour = Self::DETOUR;
+                self.detoured = true;
                 // The other way next time: one side of an obstacle is a
                 // detour, both sides is a search.
                 self.side = -self.side;
@@ -702,6 +707,7 @@ impl Travel {
         self.last = pos;
         self.since_check = 0.0;
         self.detour = 0.0;
+        self.detoured = false;
     }
 }
 
@@ -806,14 +812,15 @@ struct Pilot {
     last_escape: Vec2,
     /// Notable changes since the last snapshot.
     events: Vec<String>,
-    /// Things that went wrong, kept for the whole run.
+    /// Things that went wrong, kept for the whole run, each with the time it
+    /// happened.
     ///
     /// `events` is cleared into every snapshot, so it lives about two hundred
     /// milliseconds - a rejected command was reported once, into a file nobody
     /// was reading at that instant, and was then gone. A tester therefore could
     /// not distinguish "the key did nothing" from "the key was never accepted",
     /// and reported the former. These stay.
-    problems: Vec<String>,
+    problems: Vec<(f32, String)>,
     seq: u64,
     since_snapshot: f32,
     wall: f32,
@@ -856,15 +863,21 @@ impl Pilot {
     }
 
     /// Record something that went wrong, where it will still be visible later.
+    ///
+    /// Stamped with the time, because an unstamped sticky list gets read as a
+    /// reaction to whatever was just typed. A newcomer concluded that `roam 20`
+    /// was rejected for containing a digit, having seen a hundred-second-old
+    /// refusal sitting beside it in the digest.
     fn problem(&mut self, line: impl Into<String>) {
         const KEEP: usize = 8;
         let line = line.into();
         self.record(line.clone());
-        if !self.problems.contains(&line) {
+        if !self.problems.iter().any(|(_, seen)| *seen == line) {
             if self.problems.len() >= KEEP {
                 self.problems.remove(0);
             }
-            self.problems.push(line);
+            let at = self.wall;
+            self.problems.push((at, line));
         }
     }
 
@@ -1046,6 +1059,8 @@ fn run_queue(
     // (answering the modal is also a `tap 3`), so it is reported instead.
     let modal = modal_screen(*state.get());
 
+    // Read before the mutable borrow of `active` below.
+    let obstructed = pilot.travel.detoured;
     if let Some(active) = pilot.active.as_mut() {
         active.remaining -= dt;
         // A `goto` ends on arrival; its duration is only a safety net against
@@ -1069,8 +1084,14 @@ fn run_queue(
             pilot.active = None;
             if let Some((target, pos)) = abandoned {
                 let short = pos.distance(target);
-                pilot.record(format!(
-                    "gave up walking to ({:.0},{:.0}) - stopped {short:.0} units short",
+                let why = if obstructed {
+                    "ran out of time working round something in the way"
+                } else {
+                    "ran out of time - slowed by a crowd, or the trip was long"
+                };
+                pilot.problem(format!(
+                    "gave up walking to ({:.0},{:.0}) {short:.0} units short: {why}. \
+                     Issue it again, or pass a third argument for more seconds",
                     target.x, target.y
                 ));
             }
@@ -1511,8 +1532,8 @@ fn write_snapshot(
     // Not taken: these persist, so a command the game refused is still visible
     // the next time anyone looks.
     json.arr("problems");
-    for problem in &pilot.problems {
-        json.push_text(problem);
+    for (at, problem) in &pilot.problems {
+        json.push_text(&format!("t={at:.0}s  {problem}"));
     }
     json.end();
 
@@ -2130,6 +2151,27 @@ mod tests {
     }
 
     #[test]
+    fn a_problem_carries_the_time_it_happened() {
+        // Unstamped, the sticky list reads as a reaction to whatever was typed
+        // most recently: a newcomer concluded `roam 20` was rejected for
+        // containing a digit, having seen a hundred-second-old refusal sitting
+        // next to it.
+        let mut pilot = Pilot::new(PathBuf::from("/dev/null"));
+        pilot.wall = 42.5;
+        pilot.problem("something went wrong");
+        assert!((pilot.problems[0].0 - 42.5).abs() < 1e-3);
+        pilot.wall = 160.0;
+        pilot.problem("something else");
+        assert!((pilot.problems[1].0 - 160.0).abs() < 1e-3);
+        // And the same complaint twice keeps its first sighting rather than
+        // shuffling to the front and looking fresh.
+        pilot.wall = 300.0;
+        pilot.problem("something went wrong");
+        assert_eq!(pilot.problems.len(), 2);
+        assert!((pilot.problems[0].0 - 42.5).abs() < 1e-3);
+    }
+
+    #[test]
     fn only_the_modal_screens_steal_keys() {
         assert!(modal_screen(AppState::Playing).is_none());
         for state in [
@@ -2153,6 +2195,11 @@ mod tests {
         assert!(pilot.problems.is_empty(), "warned about a harmless key");
         warn_modal(&mut pilot, Some("LEVELUP"), &[KeyCode::Digit3]);
         assert_eq!(pilot.problems.len(), 1, "{:?}", pilot.problems);
+        assert!(
+            pilot.problems[0].1.contains("Digit3"),
+            "{:?}",
+            pilot.problems
+        );
         warn_modal(&mut pilot, None, &[KeyCode::Digit3]);
         assert_eq!(pilot.problems.len(), 1, "warned with no modal open");
     }
