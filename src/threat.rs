@@ -155,6 +155,14 @@ pub struct RunClock {
     pub elapsed: f32,
     pub kills: u64,
     pub best_streak: u32,
+    /// Furthest from the landing site *this run*.
+    ///
+    /// The dossier used to read this off the lifetime ledger, which is a
+    /// personal best across every run ever played. So every row after the
+    /// first reported the same number and the column - meant to answer "did
+    /// this strategy leave home?" - could not distinguish a tester who
+    /// travelled 900 units from one who never moved.
+    pub furthest: f32,
 }
 
 impl RunClock {
@@ -163,6 +171,11 @@ impl RunClock {
     /// `best_streak` was saved, loaded, reported by the pilot and shown on the
     /// results screen while nothing ever assigned it - every dump read zero
     /// after thousands of kills.
+    /// Widen the run's travel record.
+    pub fn note_distance(&mut self, from_origin: f32) {
+        self.furthest = self.furthest.max(from_origin);
+    }
+
     pub fn note_streak(&mut self, streak: f32) {
         let peak = u32::try_from(streak.max(0.0) as u64).unwrap_or(u32::MAX);
         self.best_streak = self.best_streak.max(peak);

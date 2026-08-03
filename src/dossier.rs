@@ -118,7 +118,6 @@ fn record_run(
     economy: Res<Economy>,
     fog: Res<FogMap>,
     coverage: Res<Coverage>,
-    ledger: Res<crate::stats::Ledger>,
     zones: Query<&Zone>,
     forts: Query<&crate::factions::Allegiance, With<Fort>>,
     turrets: Query<(), With<crate::allies::Turret>>,
@@ -143,7 +142,7 @@ fn record_run(
             .unwrap_or(u32::MAX),
         wars: u32::try_from(diplomacy.active_wars().len()).unwrap_or(u32::MAX),
         peak_threat: threat.effective(),
-        furthest: ledger.get(crate::stats::stat::FURTHEST) as f32,
+        furthest: clock.furthest,
         explored: fog.explored_area(),
         scrap_unspent: economy.scrap,
         cores_unspent: economy.cores,
@@ -226,6 +225,18 @@ mod tests {
         // shape we actually produce so a future sanitiser has a test to make
         // pass.
         assert!(row.line().contains("turtle"));
+    }
+
+    #[test]
+    fn travel_is_a_property_of_the_run_not_of_the_player() {
+        // Read off the lifetime ledger, this column printed the same personal
+        // best on every row and could not tell a tester who crossed 900 units
+        // from one who never left the landing site.
+        let mut clock = crate::threat::RunClock::default();
+        clock.note_distance(420.0);
+        clock.note_distance(90.0);
+        assert!((clock.furthest - 420.0).abs() < 1e-3);
+        assert!((crate::threat::RunClock::default().furthest - 0.0).abs() < 1e-3);
     }
 
     #[test]

@@ -1188,6 +1188,7 @@ fn write_snapshot(
     json.num("elapsed", pacing.clock.elapsed);
     json.count("kills", pacing.clock.kills);
     json.int("best_streak", pacing.clock.best_streak);
+    json.num("furthest", pacing.clock.furthest);
     json.end();
 
     json.obj("player");

@@ -499,11 +499,14 @@ fn check_achievements(
 /// and no single moment raises an event about them.
 fn watch_run(
     threat: Res<crate::threat::Threat>,
+    mut clock: ResMut<crate::threat::RunClock>,
     player: Query<&crate::common::Body, With<crate::player::Player>>,
     mut records: MessageWriter<Record>,
 ) {
     if let Some(body) = player.iter().next() {
-        records.write(Record::best(stat::FURTHEST, f64::from(body.pos.length())));
+        let distance = body.pos.length();
+        clock.note_distance(distance);
+        records.write(Record::best(stat::FURTHEST, f64::from(distance)));
     }
     records.write(Record::best(stat::HIGHEST_THREAT, f64::from(threat.intent)));
 }
