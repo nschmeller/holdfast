@@ -304,6 +304,30 @@ impl ResearchNode {
         self.cost * (1.0 + self.rank as f32 * if self.endless { 0.65 } else { 0.4 })
     }
 
+    /// Skill points this rank costs on top of the Cores.
+    ///
+    /// Skill points arrive every third level and, until now, were counted,
+    /// saved, reported and displayed while nothing on earth could spend them.
+    /// They are the depth currency: Cores buy the flat percentages, which you
+    /// can farm for, but the repeatable nodes and the two that reach out into
+    /// the world are bought with levels. That makes them genuinely late without
+    /// needing a clock check, and it gives levelling a second reward beyond the
+    /// card.
+    ///
+    /// A rule rather than eighteen hand-authored numbers, so a new node lands
+    /// in the right tier by being the kind of node it is.
+    pub fn skill_cost(&self) -> u32 {
+        if self.discord > 0.0 {
+            return 2;
+        }
+        u32::from(self.endless)
+    }
+
+    /// Whether this rank is affordable right now.
+    pub fn affordable(&self, cores: f32, skill_points: u32) -> bool {
+        !self.maxed() && cores >= self.current_cost() && skill_points >= self.skill_cost()
+    }
+
     pub fn maxed(&self) -> bool {
         !self.endless && self.rank >= self.max_rank
     }
@@ -1028,6 +1052,8 @@ pub fn recruit_hint(economy: &Economy, env: EnvKind) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Not as _;
+
     use super::*;
 
     /// Every system online, which is what a card-pool test wants unless it is
@@ -1077,6 +1103,67 @@ mod tests {
             assert!(p.to_next > previous, "curve flattened at level {}", p.level);
             previous = p.to_next;
         }
+    }
+
+    #[test]
+    fn skill_points_have_something_to_buy() {
+        // They accumulated, saved, loaded and displayed while nothing in the
+        // game could spend them.
+        let nodes = default_nodes();
+        assert!(
+            nodes.iter().any(|n| n.skill_cost() > 0),
+            "no node costs a skill point, so they are still unspendable"
+        );
+    }
+
+    #[test]
+    fn the_flat_percentages_cost_only_cores() {
+        // Skill points are the depth currency. Gating the entry-level nodes
+        // behind them would stall the tree for the first nine levels.
+        let nodes = default_nodes();
+        let flat = nodes
+            .iter()
+            .filter(|n| !n.endless && n.discord == 0.0)
+            .count();
+        assert!(flat >= 10, "only {flat} flat nodes");
+        for node in nodes.iter().filter(|n| !n.endless && n.discord == 0.0) {
+            assert_eq!(node.skill_cost(), 0, "{} is gated", node.title);
+        }
+    }
+
+    #[test]
+    fn reaching_out_into_the_world_costs_more_than_repeating_yourself() {
+        let nodes = default_nodes();
+        let discord = nodes.iter().find(|n| n.discord > 0.0).expect("no discord");
+        let endless = nodes
+            .iter()
+            .find(|n| n.endless && n.discord == 0.0)
+            .expect("no endless");
+        assert!(discord.skill_cost() > endless.skill_cost());
+    }
+
+    #[test]
+    fn a_node_needs_both_currencies() {
+        let node = default_nodes()
+            .into_iter()
+            .find(|n| n.discord > 0.0)
+            .expect("no discord node");
+        let cost = node.current_cost();
+        assert!(!node.affordable(cost - 1.0, 99), "bought without the cores");
+        assert!(!node.affordable(9999.0, 1), "bought without the points");
+        assert!(node.affordable(cost, node.skill_cost()));
+    }
+
+    #[test]
+    fn a_maxed_node_is_never_affordable() {
+        // The purchase path checks affordability instead of maxed-ness, so a
+        // maxed node reporting affordable would sell infinite ranks.
+        let mut node = default_nodes()
+            .into_iter()
+            .find(|n| !n.endless)
+            .expect("no capped node");
+        node.rank = node.max_rank;
+        assert!(node.affordable(9999.0, 99).not());
     }
 
     #[test]

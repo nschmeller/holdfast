@@ -46,7 +46,7 @@ Three further levers stack on top:
 
 `Space` drops time to 12%. Everything tactical happens here, at leisure:
 
-- Move the build cursor (`arrows` / `WASD`), place structures (`1`–`5`, `Enter`)
+- Aim the build cursor (`arrows`; `WASD` still walks), place structures (`1`–`5`, `Enter`)
 - Set squad stances, assign allies to zones (`Tab` cycles, `F` rallies)
 - Read enemy composition and incoming wave contents
 
@@ -110,7 +110,8 @@ All structures have HP, can be repaired, and are legitimate enemy targets.
 
 | Key | Action |
 | --- | --- |
-| `WASD` / `arrows` | Move (or move build cursor in plan mode) |
+| `WASD` | Move — including inside plan mode |
+| `arrows` | Move; aims the build cursor in plan mode |
 | `Space` | **PLAN mode** (time to 12%) |
 | `-` / `=` | Threat down / up |
 | `Enter` | Call wave early / confirm placement |

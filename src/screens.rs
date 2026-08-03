@@ -13,8 +13,8 @@ use crate::onboarding::{HintQueue, Unlocks};
 use crate::palette as pal;
 use crate::player::PlayerStats;
 use crate::progress::{
-    AppliedBoosts, Branch, CardOffer, Equipped, GearSlot, Progression, RecomputeStats, Research,
-    apply_card, build_offer, card_color,
+    AppliedBoosts, Branch, Card, CardOffer, Equipped, GearSlot, Progression, RecomputeStats,
+    Research, apply_card, build_offer, card_color,
 };
 use crate::rng::Rng;
 use crate::threat::{RunClock, Threat, WaveCycle};
@@ -398,7 +398,16 @@ fn start_run(
 
 fn build_levelup(mut commands: Commands, offer: Res<CardOffer>, mut sfx: MessageWriter<SfxEvent>) {
     sfx.write(SfxEvent::new(crate::audio::Sfx::LevelUp));
+    spawn_levelup(&mut commands, &offer.cards, offer.reroll_available);
+}
 
+/// The whole level-up screen, in one place.
+///
+/// Rerolling has to redraw it, and when this was inlined at both call sites the
+/// two copies drifted: the rerolled screen lost the reroll hint line, so the
+/// player could not tell whether their reroll had been spent.
+fn spawn_levelup(commands: &mut Commands, cards: &[Card], reroll_available: bool) {
+    let cards = cards.to_vec();
     commands.spawn(overlay(0.72)).with_children(|root| {
         root.spawn(text("LEVEL UP", 44.0, pal::ACCENT));
         root.spawn(text("Pick one. Press the number.", 15.0, pal::HUD_DIM));
@@ -409,7 +418,7 @@ fn build_levelup(mut commands: Commands, offer: Res<CardOffer>, mut sfx: Message
             ..default()
         },))
             .with_children(|row| {
-                for (i, card) in offer.cards.iter().enumerate() {
+                for (i, card) in cards.iter().enumerate() {
                     let accent = card_color(card.rarity);
                     row.spawn(card_panel(accent)).with_children(|p| {
                         p.spawn(text(format!("{}", i + 1), 26.0, accent));
@@ -433,12 +442,17 @@ fn build_levelup(mut commands: Commands, offer: Res<CardOffer>, mut sfx: Message
                 }
             });
 
+        let (hint, tint) = if reroll_available {
+            ("R to reroll (once per level)", pal::SCREEN_GLOW)
+        } else {
+            ("Reroll spent", pal::HUD_DIM)
+        };
         root.spawn((
             Node {
                 margin: UiRect::top(Val::Px(12.0)),
                 ..default()
             },
-            text("R to reroll (once per level)", 14.0, pal::SCREEN_GLOW),
+            text(hint, 14.0, tint),
         ));
     });
 }
@@ -466,37 +480,10 @@ fn levelup_input(
         offer.cards = build_offer(&mut rng, &loadout, &boosts, *env, &unlocks);
         offer.reroll_available = false;
         sfx.write(SfxEvent::at(crate::audio::Sfx::Tick, 1.0));
-        // Rebuild the screen with the new offer.
         for e in &roots {
             commands.entity(e).despawn();
         }
-        let cards = offer.cards.clone();
-        commands.spawn(overlay(0.72)).with_children(|root| {
-            root.spawn(text("LEVEL UP", 44.0, pal::ACCENT));
-            root.spawn(text("Pick one. Press the number.", 15.0, pal::HUD_DIM));
-            root.spawn((Node {
-                margin: UiRect::top(Val::Px(10.0)),
-                column_gap: Val::Px(18.0),
-                ..default()
-            },))
-                .with_children(|row| {
-                    for (i, card) in cards.iter().enumerate() {
-                        let accent = card_color(card.rarity);
-                        row.spawn(card_panel(accent)).with_children(|p| {
-                            p.spawn(text(format!("{}", i + 1), 26.0, accent));
-                            p.spawn(text(card.title.clone(), 21.0, pal::HUD_TEXT));
-                            p.spawn(text(pal::rarity_name(card.rarity), 11.0, accent));
-                            p.spawn((
-                                Node {
-                                    max_width: Val::Px(228.0),
-                                    ..default()
-                                },
-                                text(card.detail.clone(), 14.0, pal::HUD_DIM),
-                            ));
-                        });
-                    }
-                });
-        });
+        spawn_levelup(&mut commands, &offer.cards, false);
         return;
     }
 
@@ -521,6 +508,19 @@ fn levelup_input(
 }
 
 // -- research ---------------------------------------------------------------
+
+/// What a rank costs, in both currencies.
+fn price(node: &crate::progress::ResearchNode) -> String {
+    if node.maxed() {
+        return "MAXED".to_string();
+    }
+    let cores = node.current_cost().ceil() as u32;
+    match node.skill_cost() {
+        0 => format!("{cores} cores"),
+        1 => format!("{cores} cores + 1 skill point"),
+        n => format!("{cores} cores + {n} skill points"),
+    }
+}
 
 fn build_research(
     mut commands: Commands,
@@ -601,13 +601,14 @@ fn build_research(
                                     ),
                                     text(node.detail, 12.0, pal::HUD_DIM),
                                     text(
-                                        if maxed {
-                                            "MAXED".to_string()
-                                        } else {
-                                            format!("{} cores", node.current_cost().ceil() as u32)
-                                        },
+                                        price(node),
                                         12.0,
-                                        if maxed { pal::HUD_DIM } else { branch.color() }
+                                        if node.affordable(economy.cores, progression.skill_points)
+                                        {
+                                            branch.color()
+                                        } else {
+                                            pal::HUD_DIM
+                                        }
                                     ),
                                 ],
                             ));
@@ -628,7 +629,7 @@ fn research_input(
     mut cursor: ResMut<ResearchCursor>,
     mut research: ResMut<Research>,
     mut economy: ResMut<Economy>,
-    progression: Res<Progression>,
+    mut progression: ResMut<Progression>,
     mut next: ResMut<NextState<AppState>>,
     mut recompute: MessageWriter<RecomputeStats>,
     mut sfx: MessageWriter<SfxEvent>,
@@ -663,8 +664,12 @@ fn research_input(
         let indices = research.in_branch(Branch::ALL[cursor.branch]);
         if let Some(&ni) = indices.get(cursor.row) {
             let cost = research.nodes[ni].current_cost();
-            let maxed = research.nodes[ni].maxed();
-            if !maxed && economy.spend_cores(cost) {
+            let skill = research.nodes[ni].skill_cost();
+            // Check both currencies before spending either, or a node you
+            // cannot afford in skill points still takes your Cores.
+            let affordable = research.nodes[ni].affordable(economy.cores, progression.skill_points);
+            if affordable && economy.spend_cores(cost) {
+                progression.skill_points -= skill;
                 research.nodes[ni].rank += 1;
                 let discord = research.nodes[ni].discord;
                 if discord > 0.0 {
@@ -699,7 +704,7 @@ fn research_input(
         build_research(
             commands,
             research.into(),
-            progression,
+            progression.into(),
             economy.into(),
             cursor.into(),
         );

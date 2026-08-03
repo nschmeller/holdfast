@@ -118,7 +118,7 @@ fn toggle_plan_mode(
         hints.push_once(
             "plan-keys",
             "PLANNING",
-            "Arrows move the cursor. 1-5 pick a structure. Enter builds. Space resumes.",
+            "Arrows aim the cursor, WASD still walks. 1-5 pick, ENTER builds, SPACE resumes.",
             HintTone::Tip,
         );
     }
@@ -157,21 +157,9 @@ fn plan_cursor(
     let dt = time.delta_secs();
     let anchor = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
 
-    let mut dir = Vec2::ZERO;
-    if keys.pressed(KeyCode::ArrowUp) {
-        dir.y -= 1.0;
-    }
-    if keys.pressed(KeyCode::ArrowDown) {
-        dir.y += 1.0;
-    }
-    if keys.pressed(KeyCode::ArrowLeft) {
-        dir.x -= 1.0;
-    }
-    if keys.pressed(KeyCode::ArrowRight) {
-        dir.x += 1.0;
-    }
+    let dir = cursor_direction(&keys);
 
-    let moved = plan.cursor + dir.normalize_or_zero() * CURSOR_SPEED * dt;
+    let moved = plan.cursor + dir * CURSOR_SPEED * dt;
     // The cursor is leashed to the player rather than to an arena: you plan
     // where you are standing, not anywhere on an unbounded map.
     let leash = moved - anchor;
@@ -195,6 +183,29 @@ fn plan_cursor(
             plan.message = None;
         }
     }
+}
+
+/// Which way the build cursor is being pushed.
+///
+/// Arrows only, on purpose: WASD keeps driving the player while you plan, so
+/// you can walk out of a crowd and place a turret in the same breath. The two
+/// key sets do different jobs here, which the manual used to get wrong.
+fn cursor_direction(keys: &ButtonInput<KeyCode>) -> Vec2 {
+    let mut dir = Vec2::ZERO;
+    // Screen-space, so up is negative y.
+    if keys.pressed(KeyCode::ArrowUp) {
+        dir.y -= 1.0;
+    }
+    if keys.pressed(KeyCode::ArrowDown) {
+        dir.y += 1.0;
+    }
+    if keys.pressed(KeyCode::ArrowLeft) {
+        dir.x -= 1.0;
+    }
+    if keys.pressed(KeyCode::ArrowRight) {
+        dir.x += 1.0;
+    }
+    dir.normalize_or_zero()
 }
 
 #[allow(clippy::too_many_arguments)]
