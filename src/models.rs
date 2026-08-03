@@ -761,18 +761,40 @@ pub fn arrow() -> Mesh {
 /// A fort: a squat keep with a banner mast. Read at a glance from above, which
 /// is the only angle anyone ever sees it from.
 pub fn fort_keep() -> Mesh {
+    // The whole model used to be `Color::WHITE`, so the faction material tinted
+    // every part of it identically and a fort with a rampart, a keep, four corner
+    // posts and a banner read as one pale lump from the distance you meet it at.
+    // Vertex colour multiplies the material, so shading the stonework down leaves
+    // the mast and banner as the only parts at full faction colour - which is
+    // what the original comment said was intended.
+    const STONE: Color = Color::srgb(0.42, 0.44, 0.5);
+    const STONE_DARK: Color = Color::srgb(0.3, 0.31, 0.36);
+    const TRIM: Color = Color::srgb(0.66, 0.68, 0.74);
+
     let mut b = MeshWeld::new();
     // Rampart ring.
-    b.add(&torus(0.5, 2.6), at(0.0, 0.5, 0.0), Color::WHITE);
+    b.add(&torus(0.5, 2.6), at(0.0, 0.5, 0.0), STONE_DARK);
     // Keep.
-    b.add(&cube(2.2, 2.4, 2.2), at(0.0, 1.2, 0.0), Color::WHITE);
-    b.add(&cube(2.6, 0.4, 2.6), at(0.0, 2.5, 0.0), Color::WHITE);
-    // Corner posts, so the silhouette is not a plain box.
+    b.add(&cube(2.2, 2.4, 2.2), at(0.0, 1.2, 0.0), STONE);
+    b.add(&cube(2.6, 0.4, 2.6), at(0.0, 2.5, 0.0), TRIM);
+    // Corner posts, so the silhouette is not a plain box. These are the gun
+    // emplacements the player is being shot from, so they are the lighter stone.
     for (x, z) in [(-1.5, -1.5), (1.5, -1.5), (-1.5, 1.5), (1.5, 1.5)] {
-        b.add(&cube(0.5, 1.8, 0.5), at(x, 0.9, z), Color::WHITE);
+        b.add(&cube(0.5, 1.8, 0.5), at(x, 0.9, z), TRIM);
     }
-    // Mast and banner: the part that carries the faction colour.
-    b.add(&cylinder(0.09, 3.4), at(0.0, 4.2, 0.0), Color::WHITE);
+    b.add(&cylinder(0.09, 3.4), at(0.0, 4.2, 0.0), STONE_DARK);
+    b.build()
+}
+
+/// Just the flag, so it can carry the faction's emissive colour while the
+/// stonework it flies over does not.
+///
+/// The banner material is `emissive * 2.4`, which is exactly right for a flag
+/// and washes out everything else: applied to the whole keep it made a rampart,
+/// a tower and four corner posts render as one flat pale blob, and no amount of
+/// vertex colour survives an emissive surface. So the flag is its own mesh.
+pub fn fort_banner() -> Mesh {
+    let mut b = MeshWeld::new();
     b.add(&cube(1.5, 0.9, 0.08), at(0.75, 5.2, 0.0), Color::WHITE);
     b.build()
 }

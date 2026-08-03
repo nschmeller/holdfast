@@ -59,7 +59,10 @@ use crate::threat::{RunClock, Threat, enemy_power};
 use crate::{AppState, GameSet, RunSetup};
 
 /// Footprint of a fort.
-pub const FORT_RADIUS: f32 = 3.2;
+///
+/// A fort is the most consequential thing in the world and it read as a slightly
+/// large nest. Bigger, so it is legible from the distance you first see it.
+pub const FORT_RADIUS: f32 = 4.2;
 /// Stand inside this to contest a fort.
 pub const FORT_CAPTURE_RADIUS: f32 = 7.5;
 /// Seconds of uncontested presence to flip a fort.
@@ -139,6 +142,25 @@ const FORT_THREAT: f32 = 0.35;
 /// - which is a perfectly sensible war and a broken promise.
 const GRUDGE: f32 = 2.4;
 
+/// Where the action flare sits, in model units.
+///
+/// Level with the top of the mast. At 1.9 it was inside the keep, whose roof is
+/// at 2.5, so the one thing meant to announce that a fort was shooting was hidden
+/// by the fort. At 6.6 it floated so far above the building that it read as a
+/// separate object hanging in the air rather than as the fort doing something.
+const FLARE_HEIGHT: f32 = 4.6;
+
+/// How much to scale the fort model by.
+///
+/// `models::fort_keep` authors its rampart at radius 2.6 and nothing scaled it,
+/// so raising `FORT_RADIUS` moved the footprint a player contests and fights
+/// against while the thing they can see stayed the same size. The visual has to
+/// match the body or the ring is a lie.
+const FORT_MODEL_SCALE: f32 = FORT_RADIUS / 2.6;
+
+/// How long before a wave lands that a fort starts visibly winding up.
+const WINDUP_TELL: f32 = 2.4;
+
 /// Where a fort stops getting tougher with distance.
 const STRENGTH_CEILING: f32 = 1.9;
 
@@ -180,6 +202,11 @@ pub struct Fort {
     pub gun: f32,
     /// Which emplacement fires next, so they rotate round the wall.
     pub next_gun: u16,
+    /// Flares when a gun fires. Decays fast; this is a muzzle flash.
+    pub muzzle: f32,
+    /// Flares when a wave or a seeder is thrown. Decays slower - it is a bigger
+    /// event and deserves to be readable from further away.
+    pub launch: f32,
     /// Countdown on the next warden. Only runs while contested.
     pub warden: f32,
     /// How hard this particular fort fights, from the ground it stands on.
@@ -199,6 +226,8 @@ impl Default for Fort {
             garrison: 0,
             gun: 0.0,
             next_gun: 0,
+            muzzle: 0.0,
+            launch: 0.0,
             warden: WARDEN_INTERVAL,
             strength: 1.0,
             // Staggered so a cluster of forts does not fire in lockstep.
@@ -209,6 +238,23 @@ impl Default for Fort {
         }
     }
 }
+
+/// The ring on the ground marking a fort's capture radius.
+///
+/// Where you have to stand was invisible: the radius is 7.5 units and the fort
+/// itself is 4.2, so a player had no way to know whether they were contesting it
+/// short of watching a number in a debug report. It scales with capture progress
+/// and changes colour with the owner.
+#[derive(Debug, Component)]
+pub struct FortRing;
+
+/// The glow that flares when a fort fires a gun or throws a wave.
+#[derive(Debug, Component)]
+pub struct FortFlare;
+
+/// The faction flag above a fort.
+#[derive(Debug, Component)]
+pub struct FortBanner;
 
 /// A nest. Trickles out monsters until killed.
 #[derive(Component, Debug)]
@@ -604,14 +650,54 @@ fn place_forts(
             Body::new(req.pos, FORT_RADIUS),
             Health::new(1.0),
             Mesh3d(art.fort.clone()),
-            MeshMaterial3d(art.banner(req.faction)),
-            Transform::from_translation(to_world(req.pos, 0.0)),
+            // Stone, not the faction's emissive banner material: that washed the
+            // whole keep out to a flat pale blob. The flag below carries the
+            // colour instead.
+            MeshMaterial3d(art.matte.clone()),
+            Transform::from_translation(to_world(req.pos, 0.0))
+                .with_scale(Vec3::splat(FORT_MODEL_SCALE)),
             crate::fog::FogOccluded::default(),
             RunEntity,
         ));
         if let Some(coord) = req.chunk {
             fort.insert(crate::world::ChunkEntity(coord));
         }
+        let owner = if player_owned {
+            Faction::Player
+        } else {
+            req.faction
+        };
+        fort.with_children(|kids| {
+            // The flag: the one part that is the faction's colour, and the one
+            // part that should glow.
+            kids.spawn((
+                FortBanner,
+                Mesh3d(art.fort_banner.clone()),
+                MeshMaterial3d(art.banner(owner)),
+                Transform::IDENTITY,
+            ));
+            // The ground ring: where you have to stand to contest it.
+            kids.spawn((
+                FortRing,
+                Mesh3d(art.ring.clone()),
+                MeshMaterial3d(art.banner(owner)),
+                // Children inherit the parent's scale, so the ring works in
+                // units of the model rather than the world.
+                Transform::from_translation(Vec3::new(0.0, 0.04, 0.0)).with_scale(Vec3::new(
+                    FORT_CAPTURE_RADIUS / FORT_MODEL_SCALE,
+                    1.0,
+                    FORT_CAPTURE_RADIUS / FORT_MODEL_SCALE,
+                )),
+            ));
+            // The flare: a disc above the fort that lights when it acts.
+            kids.spawn((
+                FortFlare,
+                Mesh3d(art.disc.clone()),
+                MeshMaterial3d(art.glow(crate::art::Glow::Warning)),
+                Transform::from_translation(Vec3::new(0.0, FLARE_HEIGHT, 0.0))
+                    .with_scale(Vec3::splat(0.001)),
+            ));
+        });
     }
 }
 
@@ -880,6 +966,7 @@ fn fort_guns(
     player: Query<&Body, With<Player>>,
     friends: Query<&Body, (With<crate::allies::Ally>, Without<Fort>)>,
     mut shots: MessageWriter<crate::combat::SpawnShot>,
+    mut bursts: MessageWriter<BurstEvent>,
 ) {
     let dt = time.delta_secs();
     let hero = player.iter().next().map(|b| b.pos);
@@ -938,6 +1025,7 @@ fn fort_guns(
         // One muzzle at a time, round the wall.
         fort.gun = GUN_CADENCE / f32::from(guns);
         fort.next_gun = fort.next_gun.wrapping_add(1);
+        fort.muzzle = 1.0;
         let power = fort.strength * if ours { PLAYER_FORT_POWER } else { 1.0 };
         let angle = std::f32::consts::TAU * f32::from(emplacement) / f32::from(guns);
         let muzzle = body.pos + Vec2::new(angle.cos(), angle.sin()) * FORT_RADIUS;
@@ -962,6 +1050,20 @@ fn fort_guns(
         shot.height = 0.7;
         shot.scale = 1.3;
         shots.write(shot);
+        // A puff at the emplacement itself. The shot alone told you something was
+        // incoming but not where from, and a fort has three positions on it.
+        bursts.write(BurstEvent {
+            pos: muzzle,
+            height: 0.7,
+            color: if ours {
+                crate::palette::SCREEN_GLOW
+            } else {
+                crate::palette::LAMP_GLOW
+            },
+            count: 4,
+            speed: 5.0,
+            size: 9.0,
+        });
     }
 }
 
@@ -1009,6 +1111,7 @@ fn tick_forts(
             fort.warden -= dt;
             if fort.warden <= 0.0 {
                 fort.warden = WARDEN_INTERVAL / temperament.garrison.max(0.3);
+                fort.launch = 1.0;
                 let offset = rng.in_disc(FORT_RADIUS + 1.5).truncate();
                 let kind = assault_kind(&mut rng, clock.elapsed / 60.0);
                 let warden = spawn_enemy(
@@ -1039,6 +1142,7 @@ fn tick_forts(
         fort.assault -= dt * urgency;
         if fort.assault <= 0.0 {
             fort.assault = rng.range(16.0, 26.0) / temperament.garrison.max(0.3);
+            fort.launch = 1.0;
             let count = 2 + rng.below(3);
             for _ in 0..count {
                 let offset = rng.in_disc(FORT_RADIUS + 2.0).truncate();
@@ -1061,6 +1165,7 @@ fn tick_forts(
         if fort.seeding <= 0.0 {
             fort.seeding = rng.range(22.0, 38.0) / temperament.expansion.max(0.25);
             // A fort will not carpet the world; past a few nests it stops.
+            fort.launch = 1.0;
             if fort.planted < 4 {
                 let angle = rng.range(0.0, std::f32::consts::TAU);
                 let target =
@@ -1440,20 +1545,178 @@ fn feud_targets(
 }
 
 /// Banner colours and the capture pulse.
+/// Everything a fort says about itself without words.
+///
+/// A fort was a coloured lump: you could not tell when it was shooting at you,
+/// when it was throwing a wave, or where its capture ring lay. All three are
+/// things the player has to react to, so all three are now visible.
+///
+/// - the **ring** on the ground is the capture radius, tinted by owner and
+///   scaled by how far the meter has moved
+/// - the **flare** above it snaps bright when a gun fires and flares wider and
+///   longer when a wave or a seeder goes out
+/// - the fort itself **swells** while it is winding up to throw something, so
+///   the wave has a tell before it lands rather than after
+/// What one fort is currently saying, gathered so the children can be updated
+/// without two queries fighting over `Transform`.
+struct FortLook {
+    owner: Faction,
+    progress: f32,
+    contested: bool,
+    muzzle: f32,
+    launch: f32,
+}
+
+#[allow(clippy::type_complexity)]
 fn holding_visuals(
+    time: Res<Time>,
     art: Res<GameArt>,
     mut forts: Query<
-        (&Fort, &Allegiance, &mut MeshMaterial3d<StandardMaterial>),
-        Changed<Allegiance>,
+        (
+            Entity,
+            &mut Fort,
+            &Allegiance,
+            &mut Transform,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        (
+            Without<Nest>,
+            Without<FortRing>,
+            Without<FortFlare>,
+            Without<FortBanner>,
+        ),
+    >,
+    mut rings: Query<
+        (
+            &ChildOf,
+            &mut Transform,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        (
+            With<FortRing>,
+            Without<Fort>,
+            Without<FortFlare>,
+            Without<FortBanner>,
+        ),
+    >,
+    mut flares: Query<
+        (
+            &ChildOf,
+            &mut Transform,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        (
+            With<FortFlare>,
+            Without<Fort>,
+            Without<FortRing>,
+            Without<FortBanner>,
+        ),
+    >,
+    mut banners: Query<
+        (&ChildOf, &mut MeshMaterial3d<StandardMaterial>),
+        (
+            With<FortBanner>,
+            Without<Fort>,
+            Without<FortRing>,
+            Without<FortFlare>,
+        ),
     >,
     mut nests: Query<
         (&Allegiance, &mut MeshMaterial3d<StandardMaterial>),
-        (With<Nest>, Changed<Allegiance>, Without<Fort>),
+        (
+            With<Nest>,
+            Without<FortBanner>,
+            Changed<Allegiance>,
+            Without<Fort>,
+            Without<FortRing>,
+            Without<FortFlare>,
+        ),
     >,
 ) {
-    for (_fort, owner, mut material) in &mut forts {
-        material.0 = art.banner(owner.0);
+    let dt = time.delta_secs();
+    let t = time.elapsed_secs();
+
+    // Gathered rather than looked up per child, because a second query asking
+    // for `Transform` while this one holds it is a runtime panic in Bevy, not a
+    // compile error - which is how this first shipped and immediately crashed.
+    let mut looks: Vec<(Entity, FortLook)> = Vec::new();
+
+    for (entity, mut fort, owner, mut transform, _material) in &mut forts {
+        fort.muzzle = (fort.muzzle - dt * 6.0).max(0.0);
+        fort.launch = (fort.launch - dt * 1.6).max(0.0);
+
+        // Winding up to throw a wave. The last couple of seconds of the timer
+        // are the tell, so a wave is something you see coming rather than
+        // something you notice having arrived.
+        let winding = if owner.0 == Faction::Player {
+            0.0
+        } else {
+            1.0 - (fort.assault / WINDUP_TELL).clamp(0.0, 1.0)
+        };
+        transform.scale =
+            Vec3::splat(1.0 + fort.pulse * 0.35 + fort.launch * 0.18 + winding * 0.12);
+        // A slow turn while contested, fast while winding up. Motion is the
+        // cheapest way to say "look here" without adding any UI.
+        let spin = if fort.contested { 1.4 } else { 0.25 } + winding * 3.0;
+        transform.rotation = Quat::from_rotation_y(t * spin);
+
+        looks.push((
+            entity,
+            FortLook {
+                owner: owner.0,
+                progress: fort.progress,
+                contested: fort.contested,
+                muzzle: fort.muzzle,
+                launch: fort.launch,
+            },
+        ));
     }
+
+    let look_of = |parent: Entity| looks.iter().find(|(e, _)| *e == parent).map(|(_, l)| l);
+
+    for (parent, mut transform, mut material) in &mut rings {
+        let Some(look) = look_of(parent.parent()) else {
+            continue;
+        };
+        material.0 = art.banner(look.owner);
+        // Always the true capture radius, so it can be aimed at. The meter shows
+        // in how high the ring floats and a shimmer while contested.
+        let shimmer = if look.contested {
+            0.06 * (t * 7.0).sin()
+        } else {
+            0.0
+        };
+        let scale = FORT_CAPTURE_RADIUS / FORT_MODEL_SCALE * (1.0 + shimmer);
+        transform.scale = Vec3::new(scale, 1.0, scale);
+        transform.translation.y = 0.04 + (look.progress + 1.0) * 0.5 * 0.06;
+    }
+
+    for (parent, mut transform, mut material) in &mut flares {
+        let Some(look) = look_of(parent.parent()) else {
+            continue;
+        };
+        // A muzzle flash is small and hot; a launch is wide and slower to fade.
+        // Whichever is brighter owns the frame.
+        let (glow, size) = if look.muzzle >= look.launch {
+            (crate::art::Glow::Lamp, look.muzzle * 2.0)
+        } else {
+            (crate::art::Glow::Boss, look.launch * 2.6)
+        };
+        material.0 = art.glow(if look.owner == Faction::Player {
+            crate::art::Glow::Ally
+        } else {
+            glow
+        });
+        transform.scale = Vec3::splat(size.max(0.001));
+        transform.translation.y = FLARE_HEIGHT + look.launch * 0.5;
+    }
+
+    for (parent, mut material) in &mut banners {
+        if let Some(look) = look_of(parent.parent()) {
+            material.0 = art.banner(look.owner);
+        }
+    }
+
     for (owner, mut material) in &mut nests {
         material.0 = art.banner(owner.0);
     }

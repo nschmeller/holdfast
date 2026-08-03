@@ -116,6 +116,8 @@ pub struct GameArt {
     pub shadow: Handle<Mesh>,
     pub zone_pillar: Handle<Mesh>,
     pub fort: Handle<Mesh>,
+    /// The flag alone, so the stonework need not be emissive.
+    pub fort_banner: Handle<Mesh>,
     pub nest: Handle<Mesh>,
     banners: HashMap<u8, Handle<StandardMaterial>>,
     pub arrow: Handle<Mesh>,
@@ -309,6 +311,7 @@ fn build_art(
     let shadow = meshes.add(Mesh::from(Cylinder::new(1.0, 0.01).mesh().resolution(14)));
     let zone_pillar = meshes.add(models::zone_pillar());
     let fort = meshes.add(models::fort_keep());
+    let fort_banner = meshes.add(models::fort_banner());
     let nest = meshes.add(models::nest_mound());
 
     // One emissive material per faction, built once. Every holding on the map
@@ -331,6 +334,7 @@ fn build_art(
     let unit_sphere = meshes.add(sphere_hi(0.5));
 
     commands.insert_resource(GameArt {
+        fort_banner,
         solid,
         matte,
         metal,
