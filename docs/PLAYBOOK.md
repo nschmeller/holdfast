@@ -12,8 +12,10 @@ what to try next. Numbers beat adjectives.
 
 ## What is known
 
-**The record, as of the last round played, is 337.7 seconds** (turtle,
-level 14, 220 kills) — up from a starting baseline of 148s. See below.
+**The record, as of the last round played, is 374.4 seconds** (fortress,
+level 34, 331 kills, peak threat 8.00 — the dial's hard ceiling, reached and
+held with the player at full HP for the entire climb). Up from 337.7s
+(turtle, round 2), up from a starting baseline of 148s. See `fortress` below.
 
 ### Confirmed by measurement
 
@@ -72,35 +74,98 @@ level 14, 220 kills) — up from a starting baseline of 148s. See below.
   next movement command into the same batch of inputs; do not resolve the
   card in isolation and issue movement afterward, the gap between is where
   the damage lands.
+- **The threat-dial reward formula is exactly `reward_mult = effective_threat
+  ^ 0.92`**, where `effective_threat = threat.level + 0.2 * zones_held` (each
+  held zone adds a flat 0.2 to the exponent's base, on top of raising the
+  floor). Verified numerically at four separate points this round: threat
+  2.194 + 1 zone (eff. 2.394) → reward 2.245 (calc: 2.394^0.92 = 2.24); threat
+  8.0 + 1 zone (eff. 8.2) → reward 6.93 (calc: 8.2^0.92 = 6.93); threat 8.0 +
+  0 zones (eff. 8.0) → reward 6.774 (calc: 8.0^0.92 = 6.77). This is the
+  game's central paid-for-danger claim and it had never been checked against
+  the actual numbers before this round — it holds exactly.
+- **The threat dial has a hard ceiling: 8.00.** Pressing `=` repeatedly stops
+  raising it there and the game fires a "Redline: hold the threat dial at
+  maximum" achievement hint. Nobody had reached it before this round (prior
+  best was 2.38, reached by organic floor drift, not the dial).
+- **A turret/generator ring genuinely funds itself and then some, once
+  Generators are in the mix.** `structure_income` pays a flat 2.4 scrap/s per
+  live Generator (not scaled by threat, unlike Generator HP/damage which do
+  scale via `defence_scale`), and it stacks linearly — four Generators plus
+  one held zone plus the Logistics/Supply-Lines-style income cards pushed
+  income from 0 to 27.9 scrap/s over the course of one run. Past a certain
+  ring size, income growth outpaces the *player's own throughput* for
+  spending it (see `fortress` below): the bottleneck stops being "do you have
+  scrap" and becomes "can you physically place structures fast enough".
+- **Research works and is cheap relative to what it buys.** Whisper Campaign
+  cost 14 Cores (out of a pool that regenerates from elite/zone kills) and
+  its `boost` field grants a permanent income multiplier *in addition to*
+  triggering the 45-second war side-effect — income jumped 16.1→19.4 scrap/s
+  the instant it was bought, before any war could have taken effect. Whether
+  the war itself actually started could not be confirmed this round: the
+  dossier's `wars` field reads active wars *at the moment the run ends*, and
+  a 45s (or even a rank-scaled 110s Blood Feud) war will have long expired by
+  the time a fortress run ends 130+ seconds later. A zero in that column is
+  not evidence the war never happened.
+- **The `defend`/`kite` encirclement-freeze failure reproduces at far higher
+  scale and is fatal, fast.** At threat 8.0 with a worn-down ring (down to
+  2-3 structures) and roughly 80-90 enemies within 12m, the death spiral from
+  full HP to 0 took about 14 real seconds once it started, in a near-metronomic
+  ~20-35 damage tick every 0.4-0.5s that no `defend` radius or threat-dial
+  pull-down could interrupt in time. The `-` key presses issued the moment
+  the drop started did not register before death (see `fortress` below) —
+  either they were swallowed by a `LevelUp` state opening mid-batch, or the
+  reaction window is simply narrower than one `pilot.py do` round-trip.
+  Whatever the fortress build, the moment ~90 enemies are inside 12m at max
+  threat is already too late to save the run by de-escalating.
 
 ### Open questions nobody has answered
 
-- Does holding territory pay for the threat floor it raises? Territory
-  unlocked in every run played so far, but zone markers were never actually
-  stood on to test capture — `zones` reads 0 in every dossier row to date.
-- Can allies take a fort without the player present? The mechanic says yes;
-  nobody has tried it. Allies unlocked this round (turtle run) but were never
-  recruited — squad stayed 0/4 the whole session.
+- Does holding territory pay for the threat floor it raises? Partially
+  answered: standing near a zone marker for ~8s captures it automatically
+  (no deliberate "hold still" action needed beyond `defend`-ing nearby) and
+  it does pay — 1.6 scrap/s plus a flat +0.2 to the reward exponent's base,
+  confirmed this round. What is still unknown is whether the *floor* it
+  raises (`threat.territory = held * 0.2`) is worth it at scale — with one
+  zone the answer was clearly yes; nobody has held two or more at once.
+- Can allies take a fort without the player present? Still completely
+  untested — no run has gone near a fort yet (see below). The recruit
+  mechanic itself is now understood, though: despite the HUD hint reading
+  "Press R near a beacon to recruit", `handle_recruit` in `src/allies.rs` has
+  *no proximity check at all* — `R` recruits from anywhere in the world the
+  instant `allies` is unlocked and Cores/squad-cap allow it. The "near a
+  beacon" text appears to be vestigial or forward-looking, not a real gate.
 - Is a faction war actually pressure relief, or does it just kill things you
-  wanted the XP from? Still untested — Research was reached for the first
-  time this round but its nodes were bought blind (see below) and Whisper
-  Campaign/Blood Feud specifically were not identified or targeted.
-- What does maximum threat do to the economy over a long run? Threat has now
-  been observed climbing organically past 2.38 without ever being touched by
-  hand — the dial itself unlocked at t=318s in the best run, but the run
-  ended less than 20 seconds later. Nobody has still ever pressed `-`/`=`.
+  wanted the XP from? Still functionally untested. Whisper Campaign was
+  bought for the first time this round (14 Cores, Command branch, 5 `RIGHT`
+  + 5 `DOWN` from the tree's default cursor position) and its income
+  side-effect fired instantly, but the war itself lasts only 45s and the
+  dossier only records wars active *at death* — by the time this run ended
+  (120+ seconds later) any war would already have expired. Whoever tries
+  next should buy it, then immediately check `raw` state's `wars` array
+  (not wait for death) to see the actual pairing and timer.
+- **Answered: what does maximum threat do to the economy over a long run?**
+  See "confirmed by measurement" above — `reward_mult = effective_threat^0.92`
+  exactly, verified at threat 2.2 through the dial's hard ceiling of 8.0. A
+  fortress able to tank threat 8 earns roughly 6.8-6.9x the base reward per
+  kill, for free, the whole time it holds.
 - Is knockback beside a chasm strong enough to build around? Still untested —
-  no chasm was encountered in five runs across two rounds.
+  no chasm was encountered in six runs across three rounds.
 - Do light pools pay for the attention they draw? Still untested.
-- **New question: does a turret ring plateau or genuinely hold indefinitely?**
-  The best run this round built a 5-structure ring that visibly stabilized HP
-  (climbing from 63 to 132 over ~80 seconds while kills piled up) — but by
-  wave 6 the ring had been worn down to 1 turret and the position collapsed,
-  forcing a flee that ended in death near an unrelated fort cluster. Was that
-  an inevitable consequence of threat scaling outpacing structure HP, or would
-  a bigger/earlier ring (started with more Scrap saved up front, or built with
-  Overtuned taken before the swarm arrived rather than during it) have held
-  past that point? Untested.
+- **Does a turret ring plateau or genuinely hold indefinitely?** Better
+  answered but not fully settled: a 25-structure ring at threat 8.0 held the
+  *player* at full HP through 100+ simultaneous enemies for a sustained
+  stretch (multiple structure/ally wipe-and-rebuild cycles, all while HP
+  never dropped), but once density crossed roughly 90 enemies within 12m
+  with the ring worn down to 2-3 structures, the position collapsed to death
+  in about 14 seconds flat with no recovery window. So: a big-enough ring
+  *does* hold indefinitely against moderate-to-high threat, but there appears
+  to be a genuine density ceiling near ~90-within-12m at max threat where
+  rebuild rate cannot keep up with attrition rate no matter how much scrap is
+  banked, because building costs real actions/time, not just currency.
+  Untested: whether a ring built *even bigger, even earlier* (before threat
+  8 rather than reactively during it), or one that adds Barricades
+  specifically to choke the approach lanes down to fewer than 90-fits-within,
+  pushes that ceiling higher, or whether it's a hard wall regardless.
 
 ---
 
@@ -205,3 +270,96 @@ neighbouring factions at war and hold the ground while they fight each other.
 The most ambitious combination the systems currently allow. Still nobody's
 reached a fort in a state stable enough to try capturing it — the closest any
 run has come is passing within ~20-30m of fort markers while fleeing.
+
+### fortress — 374.4s, new record (round 3)
+Hypothesis: round 2's turtle proved a ring works but only tried one turret
+and never touched Research or the threat dial. Build a *real* ring — several
+structures, mixed kinds, Shocker + Barricade included — spend continuously
+instead of banking, and deliberately pull both of the never-tested levers
+(Research at 240s, the threat dial at 300s) once the ring is stable. Aim past
+337.7s.
+
+**What was built.** Landed, farmed the immediate area for ~90s (picking up a
+zone at 3-5m from spawn almost by accident — it captures itself if you stand
+near it, no deliberate action needed), then used `plan-mode` to place a
+Tack/Tack/Lobber/Shocker/Barricade/Generator core ring at radius 3, then a
+second ring at radius 6-7 (adding a 2nd Generator plus more Tack/Lobber/
+Shocker), then, once the scrap income snowballed, a third ring at radius 10
+with mostly Tack Turrets. Peak: **25 structures simultaneously**, squad
+4/4 (Scout/Gunner/Bulwark/Medic), 6 weapons, income peaking at **27.9
+scrap/s** (up from 0) thanks to 4 live Generators + 1 held zone + Logistics/
+Supply-Lines-style cards. Scrap banked, at various points, well past 1000,
+2000, and finally over 8000 — the economy compounded faster than the build
+loop (cursor movement + placement, each structure taking real keystrokes)
+could spend it, which is a *new* shape of the "unspent resources" failure:
+not laziness, a throughput ceiling.
+
+**Threat dial, pulled by hand for the first time ever.** Unlocked at t=304s.
+Pressed `=` in bursts of 5. Threat climbed 2.19 → 3.50 → 4.75 → 6.00 → 7.25 →
+8.00 over about 30 game-seconds, and **the dial hard-caps at 8.00** (fires a
+"Redline: hold the threat dial at maximum" achievement hint the instant it's
+reached — first time anyone has seen that state). Reward multiplier climbed
+in lockstep: 1.0x → 3.33x → 4.35x → 5.36x → 6.34x → 6.93x, and the exact
+formula came out to `reward_mult = effective_threat^0.92` where
+`effective_threat = threat.level + 0.2 * zones_held` — checked against four
+separate data points and it matches to two decimal places every time. **HP
+stayed pegged at max (rising from ~290 to 374 via level-ups) through the
+entire climb to threat 8.0** — the ring ate 100+ simultaneous enemies (peak
+146, 8-16 elites, 2-3 bosses concurrently) without the player taking a single
+point of damage for roughly 15-20 real seconds at the ceiling.
+
+**Research, opened and bought for the first time.** `T`, then 3x `RIGHT` to
+reach the Command branch, 5x `DOWN` to reach Whisper Campaign (14 Cores).
+Bought it. Income jumped 16.1 → 19.4 scrap/s *immediately* — the node's own
+`StatBoost::Income` side-effect fires regardless of the war, so it is not a
+pure "spend cores, get a war" button, it is "spend cores, get a permanent
+income bump AND (unconfirmed this run, see open questions) a 45s war between
+the two strongest nearby factions."
+
+**How it ended.** Once the ring had been repeatedly worn down (structures and
+allies dying and being rebuilt several times over — squad dropped to 1/4 more
+than once, structure count cycled between 25 and as low as 2), a wave at
+max threat pushed density past ~90 enemies within 12m with the ring reduced
+to 2 structures. HP went from full to dead in **14 real seconds flat**,
+taking a near-metronomic 20-35 damage tick roughly every 0.4-0.5s — the same
+encirclement pattern the round-2 turtle run hit, reproduced at an order of
+magnitude more enemies. Pressing `-` repeatedly the moment the drop started
+did not visibly lower threat before death; whether that's the same
+level-up-swallows-keystrokes issue documented below or a genuinely too-narrow
+reaction window was not determined. Died at **374.4s, level 34, 331 kills,
+peak threat 8.00**, holding 8918 Scrap and 40 Cores unspent (structures=2,
+allies=1 *at death*, both far below their peaks — the dossier only samples
+the end state). Result:
+`fortress DESK 374.4 34 331 2 1 0 0 0 8.00 312 2286 8918 40 0.540`.
+
+**Operational notes for whoever drives next.** `pilot.py`'s arrow keys must
+be sent as `UP`/`DOWN`/`LEFT`/`RIGHT` — `hold ArrowUp 1.0` parses to nothing
+(`key_from_name` only recognises the plain names) and silently fails to move
+the plan-mode cursor at all; this cost several wasted turns before it was
+caught by explicitly diffing `plan_mode.cursor` before/after a move. The
+cursor itself moves at a calibrated **17 units/sec of real time**, unaffected
+by plan-mode's 12% slowdown (it reads `Time<Real>`), so a placement at radius
+r from the player needs a hold of `r/17` seconds. Also: a `tap 1`/`2`/`3`
+meant for structure selection, chained blindly through a `LevelUp` state that
+opens mid-batch, gets silently reinterpreted as a card pick instead (and vice
+versa) — always confirm `state == "Playing"` before trusting a structure-kind
+keystroke landed, or you will burn a level-up choice you didn't mean to make
+and place the wrong turret kind.
+
+**Takeaway: the ring is not just the strongest strategy measured, it
+*answers the game's central design bet* — a fortress that can tank threat 8
+gets paid ~6.8x per kill, for free, the entire time it holds, and it can hold
+a genuinely enormous crowd (100+) at full player HP.** It is not immortal:
+there is a real density ceiling (~90 within 12m at max threat) past which
+rebuild rate cannot keep up with attrition and the collapse-to-death window
+is under 15 seconds with no observed recovery. Never travelled past ~20m from
+spawn the entire run (furthest/explored numbers are unchanged from every
+prior round) — forts, nests, and the fort-and-feud combination remain
+completely untouched. Next: (1) build the *third* ring layer with Barricades
+specifically, to choke approach lanes rather than just adding raw DPS, and
+see if that raises the ~90-enemy collapse threshold; (2) buy Whisper Campaign
+or Blood Feud and immediately check `raw` state's `wars` array rather than
+waiting for death, to finally learn whether the war actually fires; (3) once
+the ring is proven stable at threat 8, walk it — or a smaller satellite
+ring — the 130+ units out to an actual fort and see whether a held zone's
+"allies can capture without you present" claim holds up.

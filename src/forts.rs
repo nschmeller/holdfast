@@ -17,8 +17,31 @@
 //! own, and it means holding ground is a positioning problem rather than a
 //! damage-per-second problem, which is what this game is supposed to be about.
 //!
+//! Presence is also the only capture rule that survives the damage curve. A
+//! mastered weapon is around six times a level-one one, so a fort with a health
+//! bar would go from impossible to trivial inside three level-ups, which is the
+//! opposite of a late-game objective. Standing somewhere does not scale.
+//!
+//! **The difficulty is the siege, not the meter.** A fort defends its ground:
+//!
+//! - **Emplaced guns** fire on whoever is in the ring. They cannot be shot off;
+//!   they are the fort, and they are why you cannot capture with a build that
+//!   has no sustain.
+//! - **Wardens** - elite monsters whose whole job is to drive the player off -
+//!   are sent out under contest, on top of the ordinary assault.
+//! - **Contest collapses the assault timer**, so the longer you stand there the
+//!   worse it gets. Eleven seconds in a ring is a siege, not a stopwatch.
+//! - **Distance from home makes all of it worse**, so the near forts are the
+//!   lesson and the far ones need a squad.
+//!
+//! And a fort you take is deliberately a much weaker thing than the fort you
+//! took it from - a prize, not a win button. It keeps one gun instead of three,
+//! it pays income, and it stops manufacturing the pressure that was aimed at
+//! you. It does not raise armies for you.
+//!
 //! Nests, by contrast, are destroyed rather than converted. Forts are places;
-//! nests are infestations.
+//! nests are infestations - and clearing the nests around a fort is how you
+//! soften it before laying siege. Damage prepares; presence decides.
 
 use bevy::prelude::*;
 
@@ -50,6 +73,72 @@ const FORT_CAPTURE_SECONDS: f32 = 11.0;
 /// Footprint of a nest.
 pub const NEST_RADIUS: f32 = 1.3;
 
+/// Emplacements on an enemy-held fort.
+const ENEMY_FORT_GUNS: u16 = 3;
+
+/// Emplacements left standing once the player owns it.
+///
+/// The asymmetry is the point. A captured fort that fought as hard for you as
+/// it did against you would end the run the moment you took your first one.
+const PLAYER_FORT_GUNS: u16 = 1;
+
+/// Everything a player-held fort does, against what an enemy-held one does.
+const PLAYER_FORT_POWER: f32 = 0.35;
+
+/// How far a fort gun reaches. Twice the capture ring, so there is no standing
+/// at the edge and waiting.
+const GUN_RANGE: f32 = 15.0;
+
+/// Seconds for one emplacement to come round again.
+///
+/// The guns fire in rotation rather than in volley - one muzzle every
+/// `GUN_CADENCE / guns` - so a fort reads as a wall with several positions on
+/// it and the damage arrives as attrition. A simultaneous volley of three at a
+/// player who has just stepped into the ring is a wall, not a fight.
+const GUN_CADENCE: f32 = 1.7;
+
+/// Damage per shot, before the fort's own strength is applied.
+///
+/// Sized as attrition, not as a kill: an enemy fort's three guns come to about
+/// fourteen a second, which a build carrying armour and regen can stand in for
+/// the length of a capture and an unprepared one cannot.
+const GUN_DAMAGE: f32 = 8.0;
+
+/// Seconds between wardens while a fort is contested.
+const WARDEN_INTERVAL: f32 = 9.0;
+
+/// How much a contested fort accelerates its ordinary assault.
+///
+/// Standing in the ring is what summons the garrison home; the fort does not
+/// wait out its timer while it is being taken. Deliberately modest: at six
+/// times, a besieged fort refilled its own ring faster than anybody could clear
+/// it and the capture was unwinnable by arithmetic rather than by difficulty.
+/// The pressure is supposed to come from the wardens.
+const CONTEST_URGENCY: f32 = 2.5;
+
+/// How much more a faction wants a fort the player is holding than one a rival
+/// is holding.
+///
+/// "It works for you now - and they will come for it" is a promise the hint
+/// makes when the meter flips. Without this the player's fort is scored like
+/// anybody else's, and the neighbours are as likely to go and bother each other
+/// - which is a perfectly sensible war and a broken promise.
+const GRUDGE: f32 = 2.4;
+
+/// Where a fort stops getting tougher with distance.
+const STRENGTH_CEILING: f32 = 1.9;
+
+/// A fort's strength for the ground it stands on.
+///
+/// Forts begin at `HOME_PEACE` and thin out inwards, so distance is already
+/// the gate on finding one. This makes distance the gate on *taking* one too:
+/// the first fort you meet is the lesson, and the belt at four hundred units
+/// needs a squad and a build.
+fn strength_from_home(pos: Vec2) -> f32 {
+    let beyond = (pos.length() - crate::environments::HOME_PEACE).max(0.0);
+    (1.0 + beyond * 0.0022).min(STRENGTH_CEILING)
+}
+
 /// How near the player has to be before a fort bothers assaulting.
 ///
 /// A fort three screens away throwing monsters at nothing is wasted
@@ -73,6 +162,14 @@ pub struct Fort {
     /// Surfaced to the pilot: a capture meter that will not move is otherwise
     /// indistinguishable from a broken one.
     pub garrison: u32,
+    /// Countdown on the emplaced guns.
+    pub gun: f32,
+    /// Which emplacement fires next, so they rotate round the wall.
+    pub next_gun: u16,
+    /// Countdown on the next warden. Only runs while contested.
+    pub warden: f32,
+    /// How hard this particular fort fights, from the ground it stands on.
+    pub strength: f32,
     pub assault: f32,
     pub seeding: f32,
     /// Nests this fort has planted and not yet lost.
@@ -86,6 +183,10 @@ impl Default for Fort {
             progress: -1.0,
             contested: false,
             garrison: 0,
+            gun: 0.0,
+            next_gun: 0,
+            warden: WARDEN_INTERVAL,
+            strength: 1.0,
             // Staggered so a cluster of forts does not fire in lockstep.
             assault: 18.0,
             seeding: 26.0,
@@ -273,7 +374,15 @@ pub fn decide(
             // merely lightly held.
             let reach = 1.0 / (1.0 + f.distance / 60.0);
             let ease = 1.0 / (1.0 + f.defenders as f32 * 0.6);
-            (f, reach * ease)
+            // A fort in the player's hands is an affront, and the promise made
+            // when they took it was that somebody would come for it. Rivals
+            // between themselves are a slower, more patient business.
+            let grudge = if f.owner == Faction::Player {
+                GRUDGE
+            } else {
+                1.0
+            };
+            (f, reach * ease * grudge)
         })
         .max_by(|a, b| a.1.total_cmp(&b.1));
 
@@ -337,7 +446,16 @@ impl Plugin for FortPlugin {
             )
             .add_systems(
                 Update,
-                (capture_forts, tick_forts, tick_nests, reap_nests)
+                // Guns after capture, so a fort that has just been contested
+                // is already shooting on the same frame.
+                (
+                    capture_forts,
+                    fort_guns,
+                    fort_income,
+                    tick_forts,
+                    tick_nests,
+                    reap_nests,
+                )
                     .chain()
                     .in_set(GameSet::Resolve),
             )
@@ -357,6 +475,7 @@ fn place_forts(mut commands: Commands, art: Res<GameArt>, mut requests: MessageR
         let mut fort = commands.spawn((
             Fort {
                 progress: if player_owned { 1.0 } else { -1.0 },
+                strength: strength_from_home(req.pos),
                 ..default()
             },
             Allegiance(req.faction),
@@ -497,11 +616,18 @@ fn capture_forts(
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Lost));
             }
         } else if toward_player.abs() > 0.01 {
+            // A garrison stalls a capture; it does not undo one while somebody
+            // is still standing there. With seven defenders in the ring - which
+            // a besieged fort produces on its own - a reversing meter made the
+            // capture unwinnable by arithmetic, so nobody could tell a hard
+            // objective from a broken one.
+            let net = if friendly > 0.0 {
+                toward_player.max(0.0)
+            } else {
+                toward_player
+            };
             fort.progress = (fort.progress
-                + toward_player.signum()
-                    * toward_player.abs().min(3.0)
-                    * capture_step(dt)
-                    * stats.zone_capture_rate)
+                + net.signum() * net.abs().min(3.0) * capture_step(dt) * stats.zone_capture_rate)
                 .clamp(-1.0, 1.0);
             if fort.progress >= 0.999 {
                 owner.0 = Faction::Player;
@@ -523,6 +649,114 @@ fn capture_forts(
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Capture));
             }
         }
+    }
+}
+
+/// What a fort you hold is actually worth.
+///
+/// A captured fort is a prize, and a prize has to pay. It cannot pay in
+/// soldiers - a fort that raised armies for you would end the run the moment
+/// you took your second one - so it pays in Cores and Scrap, the currencies
+/// that buy research and structures. Cores especially: they are the scarcest
+/// thing in the game and the research tree is priced in them.
+///
+/// It is loud, too. Holding a fort raises the threat floor exactly as holding
+/// territory does, because in this game every source of strength is also a
+/// source of pressure.
+fn fort_income(
+    time: Res<Time>,
+    stats: Res<crate::player::PlayerStats>,
+    forts: Query<&Allegiance, With<Fort>>,
+    mut economy: ResMut<crate::allies::Economy>,
+    mut threat: ResMut<Threat>,
+) {
+    let dt = time.delta_secs();
+    let held = forts.iter().filter(|a| a.0 == Faction::Player).count() as f32;
+    threat.holdings = held * 0.35;
+    if held <= 0.0 {
+        return;
+    }
+    economy.gain_cores(held * 0.16 * dt * stats.core_mult);
+    economy.gain_scrap(held * 2.4 * dt * stats.income_mult);
+}
+
+/// Emplaced guns. The reason presence is not free.
+///
+/// The guns are the fort, not entities standing on it: there is nothing to
+/// snipe off from outside the ring first. Their range is twice the capture
+/// radius so that contesting a fort means being shot at for the whole eleven
+/// seconds, which is what makes health, armour and regen worth carrying to a
+/// siege.
+///
+/// A player-held fort keeps one of its three, at a third of the damage. It
+/// defends the ground you hold and no more.
+fn fort_guns(
+    time: Res<Time>,
+    grid: Res<crate::combat::EnemyGrid>,
+    obstacles: Res<crate::arena::ObstacleField>,
+    mut forts: Query<(&mut Fort, &Allegiance, &Body)>,
+    player: Query<&Body, With<Player>>,
+    mut shots: MessageWriter<crate::combat::SpawnShot>,
+) {
+    let dt = time.delta_secs();
+    let hero = player.iter().next().map(|b| b.pos);
+
+    for (mut fort, owner, body) in &mut forts {
+        let ours = owner.0 == Faction::Player;
+        let guns = if ours {
+            PLAYER_FORT_GUNS
+        } else {
+            ENEMY_FORT_GUNS
+        };
+        if guns == 0 {
+            continue;
+        }
+
+        fort.gun = (fort.gun - dt).max(0.0);
+        if fort.gun > 0.0 {
+            continue;
+        }
+        let emplacement = fort.next_gun % guns;
+
+        // A fort shoots at whoever it is not. The player's forts shoot
+        // monsters; everyone else's shoot the player.
+        let target = if ours {
+            grid.best_visible_target(body.pos, GUN_RANGE, &obstacles)
+                .map(|t| t.pos)
+        } else {
+            hero.filter(|p| p.distance(body.pos) <= GUN_RANGE)
+        };
+        let Some(target) = target else {
+            continue;
+        };
+
+        // One muzzle at a time, round the wall.
+        fort.gun = GUN_CADENCE / f32::from(guns);
+        fort.next_gun = fort.next_gun.wrapping_add(1);
+        let power = fort.strength * if ours { PLAYER_FORT_POWER } else { 1.0 };
+        let angle = std::f32::consts::TAU * f32::from(emplacement) / f32::from(guns);
+        let muzzle = body.pos + Vec2::new(angle.cos(), angle.sin()) * FORT_RADIUS;
+        let dir = (target - muzzle).normalize_or_zero();
+        let mut shot = if ours {
+            crate::combat::SpawnShot::friendly(
+                muzzle,
+                dir,
+                26.0,
+                GUN_DAMAGE * power,
+                crate::combat::ShotVisual::Tack,
+            )
+        } else {
+            crate::combat::SpawnShot::enemy(
+                muzzle,
+                dir,
+                26.0,
+                GUN_DAMAGE * power,
+                crate::combat::ShotVisual::Tack,
+            )
+        };
+        shot.height = 0.7;
+        shot.scale = 1.3;
+        shots.write(shot);
     }
 }
 
@@ -550,14 +784,54 @@ fn tick_forts(
 
     for (entity, mut fort, owner, body) in &mut forts {
         fort.pulse = (fort.pulse - dt * 1.5).max(0.0);
-        // The player's forts do not manufacture enemies, and a fort nobody is
-        // near does not need simulating.
+        // A fort you hold does not manufacture enemies - that is most of what
+        // makes taking one worth the trouble - and a fort nobody is near does
+        // not need simulating.
         if owner.0 == Faction::Player || body.pos.distance(hero) > ASSAULT_RANGE {
             continue;
         }
         let temperament = owner.0.temperament();
 
-        fort.assault -= dt;
+        // Being stood on is what calls the garrison home. A fort under contest
+        // does not wait out its timer: the assault it would have thrown in
+        // twenty seconds arrives in three, and keeps arriving.
+        let urgency = if fort.contested { CONTEST_URGENCY } else { 1.0 };
+
+        // Wardens: elite monsters sent for the specific job of driving the
+        // player off the ring. Only while contested, so they are a consequence
+        // of the siege rather than ambient traffic.
+        if fort.contested {
+            fort.warden -= dt;
+            if fort.warden <= 0.0 {
+                fort.warden = WARDEN_INTERVAL / temperament.garrison.max(0.3);
+                let offset = rng.in_disc(FORT_RADIUS + 1.5).truncate();
+                let kind = assault_kind(&mut rng, clock.elapsed / 60.0);
+                let warden = spawn_enemy(
+                    &mut commands,
+                    &art,
+                    *env,
+                    kind,
+                    Rank::Elite,
+                    body.pos + offset,
+                    power * fort.strength * 1.35,
+                    &mut rng,
+                );
+                commands.entity(warden).insert((
+                    Allegiance(owner.0),
+                    Objective {
+                        kind: ObjectiveKind::HuntPlayer,
+                        pos: hero,
+                        fort: Some(entity),
+                        review: 6.0,
+                    },
+                    VisualScale::new(1.45),
+                ));
+            }
+        } else {
+            fort.warden = WARDEN_INTERVAL;
+        }
+
+        fort.assault -= dt * urgency;
         if fort.assault <= 0.0 {
             fort.assault = rng.range(16.0, 26.0) / temperament.garrison.max(0.3);
             let count = 2 + rng.below(3);
@@ -571,7 +845,7 @@ fn tick_forts(
                     kind,
                     Rank::Normal,
                     body.pos + offset,
-                    power,
+                    power * fort.strength,
                     &mut rng,
                 );
                 commands.entity(spawned).insert(Allegiance(owner.0));
@@ -967,6 +1241,121 @@ fn holding_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_far_fort_is_weaker_ground_than_a_near_one() {
+        // Distance is the gate on finding a fort; it should be the gate on
+        // taking one too, so the first one anyone meets is the lesson.
+        let home = crate::environments::HOME_PEACE;
+        let near = strength_from_home(Vec2::new(home + 5.0, 0.0));
+        let far = strength_from_home(Vec2::new(home + 400.0, 0.0));
+        assert!(near < far, "near {near} far {far}");
+        assert!(near >= 1.0, "a fort is never weaker than baseline");
+        assert!(far <= STRENGTH_CEILING);
+    }
+
+    #[test]
+    fn strength_does_not_run_away_forever() {
+        // The world is unbounded; the difficulty curve is not.
+        let miles_out = strength_from_home(Vec2::new(50_000.0, 0.0));
+        assert!((miles_out - STRENGTH_CEILING).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_player_held_fort_is_weaker_than_the_one_it_was() {
+        // A captured fort that fought as hard for you as it did against you
+        // would end the run at the first capture.
+        // The volley one fort throws, as `fort_guns` computes it.
+        let volley = |ours: bool| {
+            let guns = if ours {
+                PLAYER_FORT_GUNS
+            } else {
+                ENEMY_FORT_GUNS
+            };
+            let power = if ours { PLAYER_FORT_POWER } else { 1.0 };
+            (0..guns).map(|_| GUN_DAMAGE * power).sum::<f32>()
+        };
+        assert!(
+            volley(true) * 4.0 < volley(false),
+            "ours {} theirs {}",
+            volley(true),
+            volley(false)
+        );
+    }
+
+    #[test]
+    fn a_fort_the_player_holds_is_the_priority_target() {
+        // The hint promises they will come for it. They have to come for it.
+        let forts = [
+            view(1, Faction::Player, 0, 40.0, false),
+            view(2, Faction::Void, 0, 40.0, false),
+        ];
+        let plan = decide(Faction::Bloom, 0.0, 40, &forts, &neutral());
+        assert_eq!(
+            plan.focus_pos, forts[0].pos,
+            "went after a rival instead of the player's fort"
+        );
+        assert_ne!(plan.posture, Posture::HuntPlayer);
+    }
+
+    #[test]
+    fn losing_ones_own_fort_outranks_taking_anyone_elses() {
+        let forts = [
+            view(1, Faction::Player, 0, 10.0, false),
+            view(2, Faction::Bloom, 1, 80.0, true),
+        ];
+        let plan = decide(Faction::Bloom, 5.0, 40, &forts, &neutral());
+        assert_eq!(plan.posture, Posture::Defend);
+    }
+
+    #[test]
+    fn a_besieged_fort_answers_faster_than_a_quiet_one() {
+        // Eleven seconds in a ring has to be a siege, not a stopwatch.
+        // How long a twenty-second assault timer actually takes to run down,
+        // as `tick_forts` runs it.
+        const DT: f32 = 1.0 / 60.0;
+        let countdown = |contested: bool| {
+            let urgency = if contested { CONTEST_URGENCY } else { 1.0 };
+            let mut left = 20.0f32;
+            let mut frames = 0u32;
+            while left.is_sign_positive() && left != 0.0 {
+                left -= DT * urgency;
+                frames += 1;
+            }
+            frames as f32 * DT
+        };
+        let quiet = countdown(false);
+        let besieged = countdown(true);
+        assert!(
+            besieged < FORT_CAPTURE_SECONDS,
+            "an assault arrives in {besieged:.0}s, after the {FORT_CAPTURE_SECONDS}s capture"
+        );
+        assert!(quiet > FORT_CAPTURE_SECONDS);
+    }
+
+    #[test]
+    fn the_guns_are_attrition_rather_than_a_wall() {
+        // Three guns firing together at somebody who has just stepped into the
+        // ring is a wall. Rotating, they are a cost you can carry sustain for.
+        let dps = |guns: u16, power: f32| {
+            let interval = GUN_CADENCE / f32::from(guns);
+            GUN_DAMAGE * power / interval
+        };
+        let theirs = dps(ENEMY_FORT_GUNS, 1.0);
+        assert!(
+            (10.0..20.0).contains(&theirs),
+            "an enemy fort does {theirs:.0} damage a second"
+        );
+        assert!(dps(PLAYER_FORT_GUNS, PLAYER_FORT_POWER) * 4.0 < theirs);
+    }
+
+    #[test]
+    fn the_guns_reach_past_the_ring() {
+        // Otherwise a capture is done from the edge, untouched.
+        let ring = FORT_CAPTURE_RADIUS;
+        let reach = GUN_RANGE;
+        assert!(reach > ring * 1.5, "ring {ring} reach {reach}");
+    }
 
     #[test]
     fn a_fort_flips_in_the_advertised_time() {

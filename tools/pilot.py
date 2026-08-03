@@ -212,6 +212,10 @@ def digest(s):
 
     if s["events"]:
         out.append("SINCE LAST LOOK: " + " | ".join(s["events"]))
+    # Sticky, and above everything else in importance: a command the game
+    # refused looks exactly like a key that did nothing.
+    if s.get("problems"):
+        out.append("!! REFUSED THIS RUN: " + " | ".join(s["problems"]))
 
     return "\n".join(out)
 

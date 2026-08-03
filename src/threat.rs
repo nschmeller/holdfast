@@ -34,6 +34,10 @@ pub struct Threat {
     pub streak: f32,
     /// Contribution from held territory, recomputed each frame.
     pub territory: f32,
+    /// Floor contribution from forts the player holds. Separate from
+    /// `territory` so the HUD and the dossier can tell a zone-holder from a
+    /// fort-holder.
+    pub holdings: f32,
     /// Purely for the HUD: flashes when the value changed.
     pub flash: f32,
 }
@@ -48,6 +52,7 @@ impl Default for Threat {
             surge_cooldown: 0.0,
             streak: 0.0,
             territory: 0.0,
+            holdings: 0.0,
             flash: 0.0,
         }
     }
@@ -65,7 +70,7 @@ impl Threat {
 
     /// The value every other system multiplies against.
     pub fn effective(&self) -> f32 {
-        self.level + self.streak * 0.5 + self.territory
+        self.level + self.streak * 0.5 + self.territory + self.holdings
     }
 
     pub fn surging(&self) -> bool {

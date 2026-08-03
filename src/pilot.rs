@@ -495,10 +495,13 @@ fn key_from_name(name: &str) -> Option<KeyCode> {
         "TAB" => KeyCode::Tab,
         "SHIFT" => KeyCode::ShiftLeft,
         "BACKSPACE" => KeyCode::Backspace,
-        "UP" => KeyCode::ArrowUp,
-        "DOWN" => KeyCode::ArrowDown,
-        "LEFT" => KeyCode::ArrowLeft,
-        "RIGHT" => KeyCode::ArrowRight,
+        // Every spelling anyone has actually typed. A reader who writes
+        // "ArrowUp" - the Bevy name, and the one the source suggests - meant
+        // the up arrow, and there is nothing else it could mean.
+        "UP" | "ARROWUP" | "ARROW_UP" | "UPARROW" => KeyCode::ArrowUp,
+        "DOWN" | "ARROWDOWN" | "ARROW_DOWN" | "DOWNARROW" => KeyCode::ArrowDown,
+        "LEFT" | "ARROWLEFT" | "ARROW_LEFT" | "LEFTARROW" => KeyCode::ArrowLeft,
+        "RIGHT" | "ARROWRIGHT" | "ARROW_RIGHT" | "RIGHTARROW" => KeyCode::ArrowRight,
         "MINUS" => KeyCode::Minus,
         "EQUAL" | "PLUS" => KeyCode::Equal,
         _ => return None,
@@ -800,6 +803,14 @@ struct Pilot {
     last_escape: Vec2,
     /// Notable changes since the last snapshot.
     events: Vec<String>,
+    /// Things that went wrong, kept for the whole run.
+    ///
+    /// `events` is cleared into every snapshot, so it lives about two hundred
+    /// milliseconds - a rejected command was reported once, into a file nobody
+    /// was reading at that instant, and was then gone. A tester therefore could
+    /// not distinguish "the key did nothing" from "the key was never accepted",
+    /// and reported the former. These stay.
+    problems: Vec<String>,
     seq: u64,
     since_snapshot: f32,
     wall: f32,
@@ -829,6 +840,7 @@ impl Pilot {
             strategy: None,
             last_escape: Vec2::ZERO,
             events: Vec::new(),
+            problems: Vec::new(),
             seq: 0,
             since_snapshot: SNAPSHOT_PERIOD,
             wall: 0.0,
@@ -838,6 +850,19 @@ impl Pilot {
 
     fn commands_path(&self) -> PathBuf {
         self.dir.join("commands")
+    }
+
+    /// Record something that went wrong, where it will still be visible later.
+    fn problem(&mut self, line: impl Into<String>) {
+        const KEEP: usize = 8;
+        let line = line.into();
+        self.record(line.clone());
+        if !self.problems.contains(&line) {
+            if self.problems.len() >= KEEP {
+                self.problems.remove(0);
+            }
+            self.problems.push(line);
+        }
     }
 
     fn record(&mut self, line: impl Into<String>) {
@@ -929,7 +954,7 @@ fn read_commands(mut pilot: ResMut<Pilot>) {
         match parse_line(&line) {
             Ok(Some(cmd)) => pilot.queue.push_back(cmd),
             Ok(None) => {}
-            Err(err) => pilot.record(format!("bad command: {err}")),
+            Err(err) => pilot.problem(format!("rejected: {err}")),
         }
     }
 }
@@ -1370,6 +1395,14 @@ fn write_snapshot(
     json.arr("events");
     for event in std::mem::take(&mut pilot.events) {
         json.push_text(&event);
+    }
+    json.end();
+
+    // Not taken: these persist, so a command the game refused is still visible
+    // the next time anyone looks.
+    json.arr("problems");
+    for problem in &pilot.problems {
+        json.push_text(problem);
     }
     json.end();
 
@@ -1891,6 +1924,25 @@ mod tests {
         );
         assert!(parse_line("goto 3").is_err());
         assert!(parse_line("roam").is_err());
+    }
+
+    #[test]
+    fn the_arrow_keys_answer_to_every_name_anyone_types() {
+        // A reader who writes the Bevy name meant the arrow key; there is
+        // nothing else it could mean, and a rejection reads as a dead key.
+        for name in ["UP", "ArrowUp", "arrow_up", "uparrow"] {
+            assert_eq!(key_from_name(name), Some(KeyCode::ArrowUp), "{name}");
+        }
+        for name in ["DOWN", "ArrowDown", "LEFT", "ArrowLeft", "RIGHT"] {
+            assert!(key_from_name(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_key_that_means_nothing_is_still_rejected() {
+        // Aliasing must not turn into guessing.
+        assert!(key_from_name("ARROWSIDEWAYS").is_none());
+        assert!(key_from_name("").is_none());
     }
 
     #[test]
