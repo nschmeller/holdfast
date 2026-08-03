@@ -71,6 +71,7 @@ fn handle_deaths(
     mut sfx: MessageWriter<SfxEvent>,
     mut shakes: MessageWriter<ShakeEvent>,
     mut next_state: ResMut<NextState<AppState>>,
+    mut records: MessageWriter<crate::stats::Record>,
     players: Query<Entity, With<Player>>,
 ) {
     // One multiplier, computed once, applied to every reward this frame.
@@ -97,6 +98,14 @@ fn handle_deaths(
 
         let is_boss = enemy.rank == Rank::Boss;
         let is_elite = enemy.rank == Rank::Elite;
+
+        records.write(crate::stats::Record::add(crate::stats::stat::KILLS, 1.0));
+        if is_boss {
+            records.write(crate::stats::Record::add(crate::stats::stat::BOSSES, 1.0));
+        }
+        if is_elite {
+            records.write(crate::stats::Record::add(crate::stats::stat::ELITES, 1.0));
+        }
 
         // -- experience -----------------------------------------------------
         let xp_total = enemy.xp * reward * stats.xp_mult;

@@ -384,6 +384,7 @@ fn capture_forts(
     enemies: Query<(&Body, Option<&Allegiance>), (With<Enemy>, Without<Fort>)>,
     mut economy: ResMut<crate::allies::Economy>,
     mut hints: ResMut<crate::onboarding::HintQueue>,
+    mut records: MessageWriter<crate::stats::Record>,
     mut sfx: MessageWriter<SfxEvent>,
 ) {
     let dt = time.delta_secs();
@@ -438,6 +439,10 @@ fn capture_forts(
                     format!("{} took it back.", taker.name()),
                     crate::onboarding::HintTone::Tip,
                 );
+                records.write(crate::stats::Record::add(
+                    crate::stats::stat::FORTS_LOST,
+                    1.0,
+                ));
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Lost));
             }
         } else if toward_player.abs() > 0.01 {
@@ -459,6 +464,10 @@ fn capture_forts(
                     "It works for you now - and they will come for it.",
                     crate::onboarding::HintTone::Unlock,
                 );
+                records.write(crate::stats::Record::add(
+                    crate::stats::stat::FORTS_TAKEN,
+                    1.0,
+                ));
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Capture));
             }
         }
@@ -645,6 +654,7 @@ fn reap_nests(
     nests: Query<(Entity, &Nest, &Health, &Body, &Allegiance)>,
     mut forts: Query<&mut Fort>,
     mut deaths: MessageWriter<DeathEvent>,
+    mut records: MessageWriter<crate::stats::Record>,
     mut bursts: MessageWriter<BurstEvent>,
 ) {
     for (entity, nest, health, body, owner) in &nests {
@@ -666,6 +676,10 @@ fn reap_nests(
             speed: 7.0,
             size: 0.18,
         });
+        records.write(crate::stats::Record::add(
+            crate::stats::stat::NESTS_CLEARED,
+            1.0,
+        ));
         deaths.write(DeathEvent {
             entity,
             pos: body.pos,

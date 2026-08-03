@@ -369,6 +369,7 @@ fn resolve_incitements(
     mut requests: MessageReader<InciteRequest>,
     mut diplomacy: ResMut<Diplomacy>,
     mut hints: ResMut<crate::onboarding::HintQueue>,
+    mut records: MessageWriter<crate::stats::Record>,
     player: Query<&crate::common::Body, With<crate::player::Player>>,
     monsters: Query<(&crate::common::Body, &Allegiance)>,
 ) {
@@ -387,6 +388,10 @@ fn resolve_incitements(
 
         if let Some((a, b)) = pick_feuding_pair(&weight) {
             diplomacy.incite(a, b, request.seconds);
+            records.write(crate::stats::Record::add(
+                crate::stats::stat::WARS_STARTED,
+                1.0,
+            ));
         } else {
             hints.push(
                 "NOBODY TO TURN",

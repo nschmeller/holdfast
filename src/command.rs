@@ -204,6 +204,7 @@ fn plan_actions(
     stats: Res<crate::player::PlayerStats>,
     mut plan: ResMut<PlanMode>,
     mut builds: MessageWriter<BuildRequest>,
+    mut records: MessageWriter<crate::stats::Record>,
     mut sfx: MessageWriter<SfxEvent>,
 ) {
     if !plan.active {
@@ -260,11 +261,16 @@ fn plan_actions(
         kind,
         pos: plan.cursor,
     });
+    records.write(crate::stats::Record::add(
+        crate::stats::stat::STRUCTURES_BUILT,
+        1.0,
+    ));
 }
 
 /// The pacing dial, plus calling the wave in early.
 #[allow(clippy::too_many_arguments)]
 fn threat_input(
+    mut records: MessageWriter<crate::stats::Record>,
     keys: Res<ButtonInput<KeyCode>>,
     unlocks: Res<Unlocks>,
     plan: Res<PlanMode>,
@@ -286,6 +292,7 @@ fn threat_input(
         if keys.just_pressed(KeyCode::KeyO) {
             if threat.can_surge() {
                 threat.start_surge();
+                records.write(crate::stats::Record::add(crate::stats::stat::SURGES, 1.0));
                 hints.push(
                     "OVERCLOCK",
                     "Threat spiked. Rewards up 60%. Survive it.",
@@ -310,6 +317,10 @@ fn threat_input(
         let bonus = cycle.pending_bonus();
         if bonus > 0.01 {
             cycle.call_early();
+            records.write(crate::stats::Record::add(
+                crate::stats::stat::WAVES_CALLED,
+                1.0,
+            ));
             hints.push(
                 format!("WAVE CALLED  +{}%", (bonus * 100.0) as u32),
                 "Rewards boosted for this wave.",
@@ -324,6 +335,7 @@ fn threat_input(
 #[allow(clippy::too_many_arguments)]
 fn squad_input(
     keys: Res<ButtonInput<KeyCode>>,
+    mut records: MessageWriter<crate::stats::Record>,
     unlocks: Res<Unlocks>,
     clock: Res<crate::threat::RunClock>,
     economy: Res<Economy>,
@@ -402,6 +414,10 @@ fn squad_input(
 
         if let Some(kind) = pick {
             recruits.write(RecruitRequest { kind });
+            records.write(crate::stats::Record::add(
+                crate::stats::stat::ALLIES_RECRUITED,
+                1.0,
+            ));
         } else {
             hints.push(
                 "NOT ENOUGH CORES",

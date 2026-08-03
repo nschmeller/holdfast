@@ -30,6 +30,7 @@ pub mod progress;
 pub mod rng;
 pub mod save;
 pub mod screens;
+pub mod stats;
 pub mod threat;
 pub mod weapons;
 pub mod world;
@@ -234,6 +235,7 @@ pub fn run() {
         hud::HudPlugin,
         screens::ScreensPlugin,
         save::SavePlugin,
+        stats::StatsPlugin,
         devtools::DevToolsPlugin,
         pilot::PilotPlugin,
     ));

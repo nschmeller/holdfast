@@ -805,6 +805,8 @@ fn build_gameover(
     cycle: Res<WaveCycle>,
     env: Res<EnvKind>,
     unlocks: Res<Unlocks>,
+    ledger: Res<crate::stats::Ledger>,
+    earned: Res<crate::stats::Unlocked>,
 ) {
     commands.spawn(overlay(0.9)).with_children(|root| {
         root.spawn(text("OVERRUN", 58.0, pal::DANGER));
@@ -854,6 +856,57 @@ fn build_gameover(
                 ),
             ],
         ));
+
+        // Lifetime standing, and the achievement closest to falling. A
+        // results screen that only reports the run just lost gives an endless
+        // game nothing to point at.
+        {
+            use crate::stats::{ACHIEVEMENTS, stat};
+            let next = ACHIEVEMENTS
+                .iter()
+                .filter(|a| !earned.has(a.id) && !a.secret)
+                .max_by(|a, b| a.progress(&ledger).total_cmp(&b.progress(&ledger)));
+
+            root.spawn((
+                Node {
+                    margin: UiRect::top(Val::Px(14.0)),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(3.0),
+                    ..default()
+                },
+                children![
+                    text(
+                        format!(
+                            "LIFETIME   {} runs   {} kills   best {}",
+                            ledger.get(stat::RUNS) as u64,
+                            format_count(ledger.get(stat::KILLS) as u64),
+                            format_time(ledger.get(stat::BEST_TIME).max(0.0) as f32)
+                        ),
+                        14.0,
+                        pal::HUD_DIM
+                    ),
+                    text(
+                        format!("{} of {} achievements", earned.count(), ACHIEVEMENTS.len()),
+                        14.0,
+                        pal::GEAR_GOLD
+                    ),
+                    text(
+                        next.map_or_else(
+                            || "Every achievement earned.".to_string(),
+                            |a| format!(
+                                "Closest: {} - {} ({:.0}%)",
+                                a.name,
+                                a.detail,
+                                a.progress(&ledger) * 100.0
+                            )
+                        ),
+                        13.0,
+                        pal::HUD_DIM
+                    ),
+                ],
+            ));
+        }
 
         root.spawn((
             Node {
