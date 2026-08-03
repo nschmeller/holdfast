@@ -959,6 +959,15 @@ fn warn_modal(pilot: &mut Pilot, modal: Option<&'static str>, keys: &[KeyCode]) 
         return;
     };
     for key in keys {
+        // Only complain about a key that this screen eats and cannot use. A `1`
+        // sent to a level-up is the correct answer to it, and warning about that
+        // is crying wolf: a fresh-eyes tester read these warnings as its own
+        // input having failed, and concluded the level-up screen was refusing
+        // input while actually processing it. A sticky list that fires on correct
+        // play trains its reader to ignore the list.
+        if answers_the_screen(screen, *key) {
+            continue;
+        }
         let collides = matches!(
             key,
             KeyCode::Digit1
@@ -977,6 +986,35 @@ fn warn_modal(pilot: &mut Pilot, modal: Option<&'static str>, keys: &[KeyCode]) 
                 "{key:?} was delivered while {screen} was open, and read as a {screen} key"
             ));
         }
+    }
+}
+
+/// Whether this key is a legitimate answer to the screen that is up.
+fn answers_the_screen(screen: &str, key: KeyCode) -> bool {
+    match screen {
+        // Pick a card, or reroll once.
+        "LEVELUP" => matches!(
+            key,
+            KeyCode::Digit1 | KeyCode::Digit2 | KeyCode::Digit3 | KeyCode::KeyR
+        ),
+        // Navigate, buy, close.
+        "RESEARCH" => matches!(
+            key,
+            KeyCode::ArrowUp
+                | KeyCode::ArrowDown
+                | KeyCode::ArrowLeft
+                | KeyCode::ArrowRight
+                | KeyCode::Enter
+                | KeyCode::NumpadEnter
+                | KeyCode::KeyT
+                | KeyCode::Escape
+        ),
+        "PAUSED" => matches!(key, KeyCode::Escape | KeyCode::Backspace),
+        "GAMEOVER" | "MENU" => matches!(
+            key,
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::ArrowLeft | KeyCode::ArrowRight
+        ),
+        _ => false,
     }
 }
 
@@ -2290,6 +2328,39 @@ mod tests {
     }
 
     #[test]
+    fn answering_a_screen_correctly_is_not_a_problem() {
+        // The warning fired on every legitimate card pick, so a fresh-eyes
+        // tester read its own correct input as having been refused and reported
+        // the level-up screen as blocking input it was in fact processing.
+        let mut pilot = Pilot::new(PathBuf::from("/dev/null"));
+        for key in [
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::Digit3,
+            KeyCode::KeyR,
+        ] {
+            warn_modal(&mut pilot, Some("LEVELUP"), &[key]);
+        }
+        assert!(
+            pilot.problems.is_empty(),
+            "warned about answering the screen: {:?}",
+            pilot.problems
+        );
+        // A key the screen eats and cannot use is still worth saying.
+        warn_modal(&mut pilot, Some("LEVELUP"), &[KeyCode::Digit5]);
+        assert_eq!(pilot.problems.len(), 1, "{:?}", pilot.problems);
+    }
+
+    #[test]
+    fn research_navigation_is_not_a_problem_either() {
+        let mut pilot = Pilot::new(PathBuf::from("/dev/null"));
+        for key in [KeyCode::ArrowDown, KeyCode::Enter, KeyCode::KeyT] {
+            warn_modal(&mut pilot, Some("RESEARCH"), &[key]);
+        }
+        assert!(pilot.problems.is_empty(), "{:?}", pilot.problems);
+    }
+
+    #[test]
     fn a_colliding_key_in_a_modal_is_reported_and_a_harmless_one_is_not() {
         // A `3` during a level-up is "take card three" - the tester's turret
         // never gets selected and whatever it was measuring is quietly wrong.
@@ -2297,14 +2368,16 @@ mod tests {
         let mut pilot = Pilot::new(PathBuf::from("/dev/null"));
         warn_modal(&mut pilot, Some("LEVELUP"), &[KeyCode::KeyW]);
         assert!(pilot.problems.is_empty(), "warned about a harmless key");
-        warn_modal(&mut pilot, Some("LEVELUP"), &[KeyCode::Digit3]);
+        // Digit4 is eaten by a level-up and answers nothing on it - a structure
+        // selection that never reached plan mode. Digit3 would be a card pick.
+        warn_modal(&mut pilot, Some("LEVELUP"), &[KeyCode::Digit4]);
         assert_eq!(pilot.problems.len(), 1, "{:?}", pilot.problems);
         assert!(
-            pilot.problems[0].1.contains("Digit3"),
+            pilot.problems[0].1.contains("Digit4"),
             "{:?}",
             pilot.problems
         );
-        warn_modal(&mut pilot, None, &[KeyCode::Digit3]);
+        warn_modal(&mut pilot, None, &[KeyCode::Digit4]);
         assert_eq!(pilot.problems.len(), 1, "warned with no modal open");
     }
 
