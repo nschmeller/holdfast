@@ -536,6 +536,24 @@ fn capture_step(dt: f32) -> f32 {
 /// garrison, then hold the ground. A squad or a cleared ring makes it quick.
 const DEFENDER_WEIGHT: f32 = 0.34;
 
+/// What one of the player's structures is worth as presence.
+///
+/// Turrets hold ground; that is the entire job. Counting them is what turns a
+/// captured fort into something you can actually keep, and it makes the whole
+/// chain hang together: travel out, clear the nests, survive the siege, then
+/// fortify what you took. Less than a body, because a turret cannot chase
+/// anyone out of the ring.
+const STRUCTURE_WEIGHT: f32 = 0.5;
+
+/// How much more presence than the holder a challenger needs before the meter
+/// moves against them.
+///
+/// Taking a fort is eleven seconds of deliberate work. Losing one was three
+/// monsters wandering through the ring: the first fort ever captured was held
+/// for six seconds. Ownership has to be sticky in both directions or a prize is
+/// not a prize.
+const LOSS_MARGIN: f32 = 1.0;
+
 /// Presence decides who owns a fort.
 ///
 /// Deliberately not damage: allies have to be able to take one without the
@@ -547,6 +565,7 @@ fn capture_forts(
     mut forts: Query<(&mut Fort, &mut Allegiance, &Body)>,
     player: Query<&Body, With<Player>>,
     allies: Query<&Body, (With<crate::allies::Ally>, Without<Fort>)>,
+    structures: Query<&Body, (With<crate::allies::Turret>, Without<Fort>)>,
     enemies: Query<(&Body, Option<&Allegiance>), (With<Enemy>, Without<Fort>)>,
     mut economy: ResMut<crate::allies::Economy>,
     mut hints: ResMut<crate::onboarding::HintQueue>,
@@ -565,6 +584,7 @@ fn capture_forts(
             friendly += 1.0;
         }
         friendly += allies.iter().filter(|b| inside(b.pos)).count() as f32 * 0.7;
+        friendly += structures.iter().filter(|b| inside(b.pos)).count() as f32 * STRUCTURE_WEIGHT;
 
         // Only monsters loyal to the current owner defend it. A rival faction
         // standing in the ring is not helping anybody hold it.
@@ -589,9 +609,19 @@ fn capture_forts(
         fort.garrison = u32::try_from((defenders / DEFENDER_WEIGHT).round() as i64).unwrap_or(0);
 
         if owner.0 == Faction::Player {
-            // The player holds it; monsters of any stripe push it back.
+            // The player holds it; monsters of any stripe push it back - but
+            // only a real assault does. A margin, because losing a fort was
+            // three monsters wandering through the ring, and the first fort
+            // ever captured was held for six seconds.
             let pressure = defenders.max(rivals);
-            let net = friendly - pressure;
+            let excess = pressure - friendly - LOSS_MARGIN;
+            let net = if excess > 0.0 {
+                -excess
+            } else {
+                // Nothing is seriously contesting it, so it settles back to
+                // fully held rather than sitting wherever it was left.
+                1.0
+            };
             fort.progress = (fort.progress + net.signum() * net.abs().min(3.0) * capture_step(dt))
                 .clamp(-1.0, 1.0);
             if fort.progress <= -0.999 {
@@ -1355,6 +1385,54 @@ mod tests {
         let ring = FORT_CAPTURE_RADIUS;
         let reach = GUN_RANGE;
         assert!(reach > ring * 1.5, "ring {ring} reach {reach}");
+    }
+
+    /// The net presence figure `capture_forts` computes for a fort the player
+    /// holds, from the bodies standing in its ring.
+    fn holding_net(monsters: u32, allies: u32, turrets: u32, standing_there: bool) -> f32 {
+        let mut friendly = if standing_there { 1.0 } else { 0.0 };
+        friendly += allies as f32 * 0.7;
+        friendly += turrets as f32 * STRUCTURE_WEIGHT;
+        let pressure: f32 = (0..monsters).map(|_| DEFENDER_WEIGHT).sum();
+        let excess = pressure - friendly - LOSS_MARGIN;
+        if excess > 0.0 { -excess } else { 1.0 }
+    }
+
+    #[test]
+    fn a_capture_is_not_undone_by_passers_by() {
+        // The first fort ever taken was held for six seconds, because three
+        // monsters crossing the ring outweighed the player standing in it.
+        assert!(
+            holding_net(3, 0, 0, true) > 0.0,
+            "lost it to three monsters"
+        );
+        assert!(holding_net(2, 0, 0, false) > 0.0, "lost it while away");
+    }
+
+    #[test]
+    fn a_real_assault_still_takes_a_fort_back() {
+        // Sticky, not invulnerable.
+        assert!(
+            holding_net(12, 0, 0, true) < 0.0,
+            "eight monsters is an assault"
+        );
+    }
+
+    #[test]
+    fn fortifying_what_you_took_is_what_keeps_it() {
+        // The whole chain: travel out, clear the nests, survive the siege,
+        // then build. Turrets hold ground - that is the entire job.
+        let bare = holding_net(8, 0, 0, false);
+        let held = holding_net(8, 0, 4, false);
+        assert!(bare < 0.0, "eight monsters should be taking it back");
+        assert!(held > 0.0, "four turrets should hold the ring: {held}");
+    }
+
+    #[test]
+    fn a_squad_holds_a_fort_while_the_player_is_elsewhere() {
+        // Allies capture and hold without the player. That is most of why
+        // presence rather than damage.
+        assert!(holding_net(8, 4, 0, false) > 0.0);
     }
 
     #[test]
