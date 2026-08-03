@@ -622,6 +622,7 @@ fn build_research(
 fn research_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     mut incite: MessageWriter<crate::factions::InciteRequest>,
     mut cursor: ResMut<ResearchCursor>,
     mut research: ResMut<Research>,
@@ -673,6 +674,7 @@ fn research_input(
                         seconds: discord * (0.7 + rank * 0.3),
                     });
                 }
+                seen.write(crate::coverage::Seen(String::from("deed:research")));
                 recompute.write(RecomputeStats);
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Gear));
             } else {

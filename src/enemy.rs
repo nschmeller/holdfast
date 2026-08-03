@@ -291,6 +291,8 @@ pub struct Enemy {
     pub ai_state: f32,
     /// Set when the enemy has been launched past the arena edge.
     pub falling: bool,
+    /// Time left in which a fall still counts as the player's doing.
+    pub pushed_recently: f32,
 }
 
 /// Slow / stun effects applied by hazards and weapons.
@@ -409,6 +411,7 @@ fn direct_spawns(
     mut director: ResMut<Director>,
     threat: Res<Threat>,
     clock: Res<RunClock>,
+    mut cycle: ResMut<crate::threat::WaveCycle>,
     progression: Res<crate::progress::Progression>,
     obstacles: Res<ObstacleField>,
     env: Res<EnvKind>,
@@ -482,6 +485,14 @@ fn direct_spawns(
     }
 
     // -- trickle ------------------------------------------------------------
+    //
+    // The wave cycle gates this. It used to compute a budget that nothing read,
+    // which made Prep and Assault mechanically identical and turned calling a
+    // wave early into a free reward multiplier: the same fight, paid double.
+    // Prep is now genuinely a lull, and an assault spends a budget that runs
+    // out.
+    let assaulting = !cycle.in_prep();
+    let phase_rate = if assaulting { 1.0 } else { 0.35 };
     if director.alive < director.cap {
         // Base rate ramps with time, then the dial multiplies it.
         let base_rate = (1.5 + minutes * 0.75) * crate::threat::opening_grace(clock.elapsed);
@@ -491,7 +502,8 @@ fn direct_spawns(
         // test run reached 114 enemies inside thirty seconds. Pressure should
         // come from the map when the player is deep in hostile territory, and
         // from the director when they are not.
-        director.spawn_accum += dt * base_rate * threat.spawn_mult() * crowding(director.alive);
+        director.spawn_accum +=
+            dt * base_rate * phase_rate * threat.spawn_mult() * crowding(director.alive);
 
         let mut budget = 0;
         while director.spawn_accum >= 1.0 && budget < 24 && director.alive < director.cap {
@@ -500,6 +512,14 @@ fn direct_spawns(
             let Some(kind) = pick_kind(&mut rng, minutes) else {
                 continue;
             };
+            // An assault draws down its budget; when it is spent, the wave is
+            // over in substance as well as on the clock.
+            if assaulting {
+                if cycle.budget <= 0.0 {
+                    break;
+                }
+                cycle.budget -= kind.stats().hp.max(1.0);
+            }
             let anchor = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
             let pos = spawn_point(anchor, &obstacles, &mut rng, kind.stats().radius);
             spawn_enemy(
@@ -552,6 +572,20 @@ fn pick_kind(rng: &mut Rng, minutes: f32) -> Option<EnemyKind> {
 }
 
 /// A clear point on the arena rim.
+/// The fastest any monster moves, before status effects.
+///
+/// `enemy_think` and the whole chase design assume the player outruns this;
+/// what it never assumed is that they outrun it *threefold*. Published so the
+/// stat recompute can cap the player against it instead of leaving the
+/// assumption undefended.
+#[must_use]
+pub fn fastest_enemy_speed() -> f32 {
+    EnemyKind::ALL
+        .iter()
+        .map(|k| k.stats().speed)
+        .fold(0.0_f32, f32::max)
+}
+
 /// Distance from the player that new arrivals appear at.
 ///
 /// Just beyond what the overlook camera frames, so monsters walk into view
@@ -632,6 +666,7 @@ pub fn spawn_enemy(
             phase: rng.range(0.0, std::f32::consts::TAU),
             ai_state: 0.0,
             falling: false,
+            pushed_recently: 0.0,
         },
         StatusEffects::default(),
         // Without this the shared movement pass skips them and `enemy_think`
@@ -749,6 +784,7 @@ fn enemy_think(
         }
         enemy.timer += dt;
         enemy.touch_cd = (enemy.touch_cd - dt).max(0.0);
+        enemy.pushed_recently = (enemy.pushed_recently - dt).max(0.0);
 
         let to_player = target - body.pos;
         let dist = to_player.length();
@@ -1058,11 +1094,15 @@ fn enemy_fall_off(
             alt.vy -= 26.0 * dt;
             alt.y += alt.vy * dt;
             if alt.y < -12.0 {
-                // Still counts as a kill: the XP is the reward for the setup.
+                // Knocking something into a hole is a kill the player set up
+                // and should be paid for. Walking into one on its own is not,
+                // and paying for it turned chasms into a farm: a run reached
+                // 16.6 kills a second with a single enemy anywhere near the
+                // player.
                 deaths.write(DeathEvent {
                     entity,
                     pos: body.pos,
-                    by_player: true,
+                    by_player: enemy.pushed_recently > 0.0,
                 });
                 commands.entity(entity).try_insert(Doomed);
             }

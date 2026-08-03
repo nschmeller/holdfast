@@ -834,6 +834,11 @@ pub fn apply_card(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// How much faster than the quickest monster the player may ever be.
+///
+/// Enough to disengage from anything, not enough to make contact impossible.
+const MAX_SPEED_RATIO: f32 = 2.4;
+
 /// Health multiplier from levels alone.
 #[must_use]
 pub fn constitution(level: u32) -> f32 {
@@ -889,6 +894,17 @@ fn recompute_stats(
     // is a wall. This is deliberately smaller than a health card so taking one
     // still matters.
     next.max_hp *= constitution(progression.level);
+
+    // Cap the run away from the horde.
+    //
+    // MoveSpeed is a plain 8% multiplier with no ceiling, and enemy speeds are
+    // constants that nothing scales. A sweep reached 15.5 against a fastest
+    // enemy of 4.6 and finished with four thousand monsters alive and one of
+    // them within twelve metres - the late game had no failure state, because
+    // nothing could reach the player. Staying comfortably faster than the
+    // horde is the point of the stat; being untouchable is not.
+    let ceiling = crate::enemy::fastest_enemy_speed() * MAX_SPEED_RATIO;
+    next.move_speed = next.move_speed.min(ceiling);
 
     // Refinements touch everything a little.
     let r = 1.0 + f32::from(u16::try_from(boosts.refinements).unwrap_or(u16::MAX)) * 0.04;
@@ -1425,5 +1441,19 @@ mod tests {
             last = now;
         }
         assert!(constitution(u32::MAX).is_finite());
+    }
+    #[test]
+    fn move_speed_is_capped_against_the_fastest_monster() {
+        // Uncapped, this stat ends the game: a player fast enough that nothing
+        // can touch them turns a horde of thousands into scenery.
+        let ceiling = crate::enemy::fastest_enemy_speed() * MAX_SPEED_RATIO;
+        assert!(
+            ceiling > crate::player::BASE_SPEED,
+            "the cap bites immediately"
+        );
+        assert!(
+            ceiling < crate::enemy::fastest_enemy_speed() * 3.0,
+            "a threefold lead is what made the late game inert"
+        );
     }
 }

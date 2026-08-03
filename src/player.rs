@@ -190,6 +190,7 @@ pub fn spawn_player(
 /// reassigned to the build cursor, so movement falls back to WASD only.
 fn read_move_input(
     keys: Res<ButtonInput<KeyCode>>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     plan: Res<crate::command::PlanMode>,
     mut q: Query<(&mut Intent, &mut Dash)>,
 ) {
@@ -233,6 +234,7 @@ fn read_move_input(
                 intent.move_dir
             };
             dash_state.active = 0.18;
+            seen.write(crate::coverage::Seen(String::from("deed:dash")));
         }
     }
 }

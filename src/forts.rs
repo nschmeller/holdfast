@@ -127,6 +127,9 @@ pub enum ObjectiveKind {
 pub struct SpawnFort {
     pub pos: Vec2,
     pub faction: Faction,
+    /// The chunk that asked for it, when world generation did. `None` for a
+    /// fort placed by anything else, which then lives until the run ends.
+    pub chunk: Option<IVec2>,
 }
 
 /// Ask the world to place a nest.
@@ -135,6 +138,9 @@ pub struct SpawnNest {
     pub pos: Vec2,
     pub faction: Faction,
     pub home: Option<Entity>,
+    /// As `SpawnFort::chunk`. A nest planted by a seeder has no chunk and
+    /// persists, which is the point of planting it.
+    pub chunk: Option<IVec2>,
 }
 
 // -- the war plan -----------------------------------------------------------
@@ -336,7 +342,7 @@ fn reset_war(mut war: ResMut<WarRoom>) {
 fn place_forts(mut commands: Commands, art: Res<GameArt>, mut requests: MessageReader<SpawnFort>) {
     for req in requests.read() {
         let player_owned = req.faction == Faction::Player;
-        commands.spawn((
+        let mut fort = commands.spawn((
             Fort {
                 progress: if player_owned { 1.0 } else { -1.0 },
                 ..default()
@@ -350,12 +356,15 @@ fn place_forts(mut commands: Commands, art: Res<GameArt>, mut requests: MessageR
             crate::fog::FogOccluded::default(),
             RunEntity,
         ));
+        if let Some(coord) = req.chunk {
+            fort.insert(crate::world::ChunkEntity(coord));
+        }
     }
 }
 
 fn place_nests(mut commands: Commands, art: Res<GameArt>, mut requests: MessageReader<SpawnNest>) {
     for req in requests.read() {
-        commands.spawn((
+        let mut nest = commands.spawn((
             Nest {
                 // Staggered so a fort's escort does not pulse together.
                 timer: 3.0 + (req.pos.x.abs() % 4.0),
@@ -376,6 +385,9 @@ fn place_nests(mut commands: Commands, art: Res<GameArt>, mut requests: MessageR
             crate::fog::FogOccluded::default(),
             RunEntity,
         ));
+        if let Some(coord) = req.chunk {
+            nest.insert(crate::world::ChunkEntity(coord));
+        }
     }
 }
 
@@ -605,6 +617,7 @@ fn tick_seeders(
             pos: body.pos,
             faction: owner.0,
             home: seeder.home,
+            chunk: None,
         });
         seen.write(crate::coverage::Seen(String::from("deed:seeder-planted")));
         bursts.write(BurstEvent {

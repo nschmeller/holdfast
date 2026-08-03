@@ -797,6 +797,7 @@ fn apply_damage(
         &mut Body,
         Option<&Player>,
         Option<&mut VisualScale>,
+        Option<&mut Enemy>,
     )>,
     mut deaths: MessageWriter<DeathEvent>,
     mut floats: MessageWriter<FloatingTextEvent>,
@@ -804,7 +805,8 @@ fn apply_damage(
     mut sfx: MessageWriter<SfxEvent>,
 ) {
     for ev in events.read() {
-        let Ok((mut health, mut body, is_player, visual)) = targets.get_mut(ev.target) else {
+        let Ok((mut health, mut body, is_player, visual, pushed)) = targets.get_mut(ev.target)
+        else {
             continue;
         };
         if health.is_dead() {
@@ -831,6 +833,11 @@ fn apply_damage(
 
         if let Some(mut vs) = visual {
             vs.pulse = 1.0;
+        }
+
+        // Being hit is what makes a subsequent fall the player's doing.
+        if let Some(mut enemy) = pushed {
+            enemy.pushed_recently = 2.5;
         }
 
         // Knockback.

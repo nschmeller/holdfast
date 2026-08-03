@@ -377,6 +377,8 @@ pub struct Zone {
 #[derive(Debug, Message, Clone, Copy)]
 pub struct SpawnZone {
     pub pos: Vec2,
+    /// The chunk that asked for it, so unloading can take it away again.
+    pub chunk: IVec2,
 }
 
 /// Recruit request, raised by the input layer.
@@ -432,6 +434,7 @@ fn reset_command_state(mut economy: ResMut<Economy>, mut squad: ResMut<Squad>) {
 fn spawn_zones(mut commands: Commands, art: Res<GameArt>, mut requests: MessageReader<SpawnZone>) {
     for req in requests.read() {
         commands.spawn((
+            crate::world::ChunkEntity(req.chunk),
             Zone {
                 owner: ZoneOwner::Neutral,
                 progress: 0.0,
@@ -465,6 +468,9 @@ pub struct ZoneRing(pub Vec2);
 fn handle_recruit(
     mut commands: Commands,
     art: Res<GameArt>,
+    threat: Res<Threat>,
+    clock: Res<crate::threat::RunClock>,
+    progression: Res<crate::progress::Progression>,
     mut seen: MessageWriter<crate::coverage::Seen>,
     stats: Res<PlayerStats>,
     mut economy: ResMut<Economy>,
@@ -494,6 +500,11 @@ fn handle_recruit(
 
         let origin = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
         let (hp, speed, damage, range, cooldown) = req.kind.stats();
+        let scale = defence_scale(crate::threat::enemy_power(
+            &threat,
+            &clock,
+            progression.level,
+        ));
         let slot = squad.count;
         squad.count += 1;
 
@@ -503,14 +514,14 @@ fn handle_recruit(
                 stance: squad.stance,
                 anchor: origin,
                 cooldown: 0.0,
-                damage: damage * stats.ally_damage,
+                damage: damage * stats.ally_damage * scale,
                 range,
                 speed,
                 fire_rate: cooldown,
                 slot,
                 level: 1,
             },
-            Health::new(hp * stats.ally_health),
+            Health::new(hp * stats.ally_health * scale),
             Body::new(origin + Vec2::new(1.5, 1.5), 0.42),
             Altitude::default(),
             Actor::default(),
@@ -531,7 +542,23 @@ fn handle_recruit(
     }
 }
 
+/// How much a structure or ally is worth against the current opposition.
+///
+/// Their stats were flat constants while enemy health and damage compounded
+/// with time, threat and level. By minute sixteen a Tack Turret needed
+/// 162 seconds to kill one Dust Bunny and the tankiest ally died to three
+/// touches - so the scrap economy had no sink, because the things it buys had
+/// stopped working. Scaled by the square root of enemy power rather than by
+/// power itself: defences should stay relevant, not stay equal.
+#[must_use]
+pub fn defence_scale(power: f32) -> f32 {
+    power.max(1.0).sqrt()
+}
+
 fn handle_build(
+    threat: Res<Threat>,
+    clock: Res<crate::threat::RunClock>,
+    progression: Res<crate::progress::Progression>,
     mut seen: MessageWriter<crate::coverage::Seen>,
     mut commands: Commands,
     art: Res<GameArt>,
@@ -549,6 +576,11 @@ fn handle_build(
         }
 
         let (hp, damage, range, cooldown, radius) = req.kind.stats();
+        let scale = defence_scale(crate::threat::enemy_power(
+            &threat,
+            &clock,
+            progression.level,
+        ));
 
         // Barricades are the only structure that becomes terrain. Everything
         // else stays walkable so the player cannot accidentally wall
@@ -568,12 +600,12 @@ fn handle_build(
             Turret {
                 kind: req.kind,
                 cooldown: 0.0,
-                damage: damage * stats.structure_damage,
+                damage: damage * stats.structure_damage * scale,
                 range,
                 fire_rate: cooldown,
                 level: 1,
             },
-            Health::new(hp * stats.structure_health),
+            Health::new(hp * stats.structure_health * scale),
             Body::new(req.pos, radius),
             Altitude::default(),
             VisualScale::new(1.0),

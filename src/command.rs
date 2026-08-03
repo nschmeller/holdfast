@@ -99,6 +99,7 @@ fn reset_plan(mut plan: ResMut<PlanMode>, base: Res<SimSpeed>, mut time: ResMut<
 
 fn toggle_plan_mode(
     keys: Res<ButtonInput<KeyCode>>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     mut plan: ResMut<PlanMode>,
     mut hints: ResMut<HintQueue>,
     player: Query<&Body, With<Player>>,
@@ -109,6 +110,7 @@ fn toggle_plan_mode(
         return;
     }
     plan.active = !plan.active;
+    seen.write(crate::coverage::Seen(String::from("deed:plan-mode")));
     if plan.active {
         // Start the cursor on the player so the common case - build right
         // here - is zero keystrokes of aiming.
@@ -271,6 +273,7 @@ fn plan_actions(
 #[allow(clippy::too_many_arguments)]
 fn threat_input(
     mut records: MessageWriter<crate::stats::Record>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     keys: Res<ButtonInput<KeyCode>>,
     unlocks: Res<Unlocks>,
     plan: Res<PlanMode>,
@@ -293,6 +296,7 @@ fn threat_input(
             if threat.can_surge() {
                 threat.start_surge();
                 records.write(crate::stats::Record::add(crate::stats::stat::SURGES, 1.0));
+                seen.write(crate::coverage::Seen(String::from("deed:overclock")));
                 hints.push(
                     "OVERCLOCK",
                     "Threat spiked. Rewards up 60%. Survive it.",
@@ -321,6 +325,7 @@ fn threat_input(
                 crate::stats::stat::WAVES_CALLED,
                 1.0,
             ));
+            seen.write(crate::coverage::Seen(String::from("deed:wave-called")));
             hints.push(
                 format!("WAVE CALLED  +{}%", (bonus * 100.0) as u32),
                 "Rewards boosted for this wave.",

@@ -258,6 +258,7 @@ fn stream_chunks(
     mut zone_spawns: MessageWriter<crate::allies::SpawnZone>,
     mut fort_spawns: MessageWriter<crate::forts::SpawnFort>,
     mut nest_spawns: MessageWriter<crate::forts::SpawnNest>,
+    streamed: Query<(Entity, &ChunkEntity)>,
     player: Query<&Body, With<crate::player::Player>>,
 ) {
     let Some(body) = player.iter().next() else {
@@ -289,6 +290,17 @@ fn stream_chunks(
         if let Some(chunk) = manager.loaded.remove(&coord) {
             for e in chunk.entities {
                 commands.entity(e).try_despawn();
+            }
+            // Zones, forts and nests are created through messages, so they are
+            // not in `chunk.entities` - the spawning happens a frame later and
+            // in another module. They carry `ChunkEntity` instead, and this is
+            // the only thing that removes them. Without it a revisit built a
+            // second copy of every holding in the chunk, which is how a run
+            // ended up with four identical forts and 4,774 monsters.
+            for (entity, owner) in &streamed {
+                if owner.0 == coord {
+                    commands.entity(entity).try_despawn();
+                }
             }
             changed = true;
         }
@@ -465,7 +477,7 @@ fn build_chunk(
 
     // Territory markers.
     for pos in content.zones {
-        zone_spawns.write(crate::allies::SpawnZone { pos });
+        zone_spawns.write(crate::allies::SpawnZone { pos, chunk: coord });
     }
 
     // Holdings. Which faction owns a given piece of ground is a property of
@@ -475,6 +487,7 @@ fn build_chunk(
         fort_spawns.write(crate::forts::SpawnFort {
             pos,
             faction: crate::factions::faction_at(pos, seed.0),
+            chunk: Some(coord),
         });
     }
     for pos in content.spawners {
@@ -482,6 +495,7 @@ fn build_chunk(
             pos,
             faction: crate::factions::faction_at(pos, seed.0),
             home: None,
+            chunk: Some(coord),
         });
     }
 

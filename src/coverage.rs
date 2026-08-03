@@ -160,6 +160,7 @@ impl Plugin for CoveragePlugin {
         app.init_resource::<Coverage>()
             .add_message::<Seen>()
             .add_systems(Update, absorb)
+            .add_systems(Update, note_milestones.run_if(in_state(AppState::Playing)))
             .add_systems(OnExit(AppState::Menu), note_world.in_set(RunSetup::Reset));
     }
 }
@@ -172,6 +173,43 @@ fn absorb(mut coverage: ResMut<Coverage>, mut seen: MessageReader<Seen>) {
 
 fn note_world(env: Res<EnvKind>, mut seen: MessageWriter<Seen>) {
     seen.write(Seen::of("world", env.short_name()));
+}
+
+/// The four entries that are states rather than events.
+///
+/// "Reached level ten" and "held a zone" raise nothing anywhere, so they are
+/// sampled. Ten of the nineteen deeds had no writer at all and coverage could
+/// never pass 41% - the checklist was lying to whoever used it to decide what
+/// to test next.
+fn note_milestones(
+    clock: Res<crate::threat::RunClock>,
+    progression: Res<crate::progress::Progression>,
+    equipped: Res<crate::progress::Equipped>,
+    zones: Query<&crate::allies::Zone>,
+    player: Query<&crate::common::Body, With<crate::player::Player>>,
+    mut seen: MessageWriter<Seen>,
+) {
+    if progression.level >= 10 {
+        seen.write(Seen(String::from("deed:level-10")));
+    }
+    if clock.elapsed >= 600.0 {
+        seen.write(Seen(String::from("deed:ten-minutes")));
+    }
+    if crate::progress::GearSlot::ALL
+        .iter()
+        .any(|slot| equipped.get(*slot).is_some())
+    {
+        seen.write(Seen(String::from("deed:gear")));
+    }
+    if zones
+        .iter()
+        .any(|zone| zone.owner == crate::allies::ZoneOwner::Player)
+    {
+        seen.write(Seen(String::from("deed:zone-held")));
+    }
+    if player.iter().any(|body| body.pos.length() >= 2000.0) {
+        seen.write(Seen(String::from("deed:far-country")));
+    }
 }
 
 #[cfg(test)]
