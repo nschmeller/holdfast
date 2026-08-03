@@ -9,7 +9,7 @@ use crate::allies::Economy;
 use crate::common::{RunEntity, SfxEvent, format_count, format_time};
 use crate::environments::{EnvDirty, EnvKind};
 use crate::hud::text;
-use crate::onboarding::{HintQueue, Unlocks};
+use crate::onboarding::{HintQueue, HintTone, Unlocks};
 use crate::palette as pal;
 use crate::player::PlayerStats;
 use crate::progress::{
@@ -528,7 +528,9 @@ fn build_research(
     progression: Res<Progression>,
     economy: Res<Economy>,
     cursor: Res<ResearchCursor>,
+    powers: Res<crate::factions::NearbyPowers>,
 ) {
+    let war_possible = powers.feuding_pair().is_some();
     commands.spawn(overlay(0.82)).with_children(|root| {
         root.spawn(text("RESEARCH", 40.0, pal::ACCENT));
         root.spawn(text(
@@ -601,7 +603,11 @@ fn build_research(
                                     ),
                                     text(node.detail, 12.0, pal::HUD_DIM),
                                     text(
-                                        price(node),
+                                        if node.effective(war_possible) {
+                                            price(node)
+                                        } else {
+                                            "no second power in earshot".to_string()
+                                        },
                                         12.0,
                                         if node.affordable(economy.cores, progression.skill_points)
                                         {
@@ -633,6 +639,8 @@ fn research_input(
     mut next: ResMut<NextState<AppState>>,
     mut recompute: MessageWriter<RecomputeStats>,
     mut sfx: MessageWriter<SfxEvent>,
+    mut hints: ResMut<HintQueue>,
+    powers: Res<crate::factions::NearbyPowers>,
     roots: Query<Entity, With<ScreenRoot>>,
 ) {
     // Accumulated across five independent input checks below; there is no
@@ -668,7 +676,15 @@ fn research_input(
             // Check both currencies before spending either, or a node you
             // cannot afford in skill points still takes your Cores.
             let affordable = research.nodes[ni].affordable(economy.cores, progression.skill_points);
-            if affordable && economy.spend_cores(cost) {
+            let useful = research.nodes[ni].effective(powers.feuding_pair().is_some());
+            if !useful {
+                hints.push(
+                    "NOBODY TO TURN",
+                    "There is only one power in earshot. Travel towards another faction's ground, then buy it.",
+                    HintTone::Tip,
+                );
+            }
+            if affordable && useful && economy.spend_cores(cost) {
                 progression.skill_points -= skill;
                 research.nodes[ni].rank += 1;
                 let discord = research.nodes[ni].discord;
@@ -707,6 +723,7 @@ fn research_input(
             progression.into(),
             economy.into(),
             cursor.into(),
+            powers,
         );
     }
 }

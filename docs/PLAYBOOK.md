@@ -423,3 +423,133 @@ waiting for death, to finally learn whether the war actually fires; (3) once
 the ring is proven stable at threat 8, walk it — or a smaller satellite
 ring — the 130+ units out to an actual fort and see whether a held zone's
 "allies can capture without you present" claim holds up.
+
+### warlord — 363.9s and 350.4s (three attempts, same round), first fort capture in a live run
+Hypothesis: this round's assignment was explicitly the four untouched systems
+— zones, allies, forts, and faction war — in that order, not a survival-time
+record. Every dossier row up to this point read `zones 0 allies 0 forts 0
+wars 0`. Verify each mechanic works, with numbers, even if that means dying on
+purpose to confirm a reading.
+
+**Zone capture and decay, confirmed with numbers.** Walking onto a marker and
+standing within ~2m for a few seconds captures it with no special command —
+`defend`/`goto` both work, presence is presence. Confirmed twice: income went
+0.0 → 1.6 scrap/s the instant `owner` flipped to `Player`, and `threat.
+from_territory` went 0.0 → 0.2 (effective threat 1.0 → 1.2, reward_mult 1.0 →
+1.183 — matches `effective^0.92` exactly). **New this round: zones decay when
+abandoned.** Walked ~40m away for about 30 real seconds and watched
+`progress` fall from 1.0 to 0.13, then to fully `Neutral` on the next check —
+holding ground is not "capture and forget", it needs periodic return trips or
+a second zone snowballs the same way in reverse.
+
+**Fort capture, confirmed twice in a live run, including a full capture and a
+full loss with exact cause.** First attempt reached "taking 42%" on a BLOOM
+fort before dying underlevelled (110.5s, level 7) — enough to confirm the
+`[taking N%]` reading is real, not cosmetic. Second attempt did the whole
+loop: approached a SWARM fort at level 9-10, stalled at 29-36% for nearly 20
+seconds because ~3 SWARM-allegiance monsters in the ring (`garrison: 3`) each
+worth 0.34 presence almost exactly cancelled the player's 1.0 — textbook "one
+lone defender each stalls it". Opened Plan Mode, placed **two Tack Turrets
+inside the ring** (structures count as 0.5 presence each per the
+`STRUCTURE_WEIGHT` constant in `forts.rs`), and progress went 36% → 45% → 100%
+in about 15 real seconds. Log confirmed: `FORT TAKEN - It works for you now -
+and they will come for it.` Reward multiplier jumped 1.36 → 1.76 the instant
+ownership flipped, before anything else changed — a held fort pays into the
+same reward-multiplier exponent a zone does. **Then it was lost, on camera.**
+Later in the same run, pressing Overclock (`O`) spiked threat to ~6.0 for
+about 22 real seconds (matches the design doc's own number exactly) and 8+
+real seconds after that with the dial still at 3.5-6.0; the SWARM-owned nest
+5m from the fort rode that spike and its trickle rate outpaced our rebuild
+rate. Garrison climbed to 23 while our structure count had been worn down to
+1-2 Barricades; friendly presence (~1.5-2.5) came nowhere close to defenders
+(23 × 0.34 ≈ 7.8) plus the loss margin. Log: `FORT LOST: THE SWARM took it
+back.` **Net: holding a captured fort is not free — cranking the escalation
+dials you'd naturally reach for near a fort you already own can feed the
+neighbour's nest faster than your ring can rebuild, and hand the fort straight
+back.**
+
+**Allies: recruited repeatedly, `R` truly has no proximity gate.** First
+recruit cost 2 Cores, confirmed by economy delta (8→6), and it worked from
+open ground with no beacon in sight — corroborates last round's source-read
+that `handle_recruit` has no distance check. Ally survival is density-gated,
+not random: a Scout recruited into a 60-70-enemy crush died within about 9
+real seconds every time; the same recruit, made when nearby density was under
+10, was still alive 9+ seconds later at the next check. Never got a clean
+test of "can an ally alone capture an uncaptured fort" (question 4) — every
+run either already held the only fort in reach or died before a second squad
+member could be spared to leave behind on Guard. That specific test is still
+open.
+
+**Faction war: bought twice, fired zero times, and the reason is now known
+exactly.** Whisper Campaign (14 Cores, Command branch, `RIGHT`×3 `DOWN`×5 from
+the tree's default cursor) was bought in two different runs this round —
+confirmed by exact Core deltas (15→1, then separately 42→28) — and both times
+`raw` state's `wars` array stayed `[]` and `deed:war-incited` never marked
+seen, checked repeatedly over several real seconds each time (research pauses
+the clock, so there was no rush). Read `resolve_incitements` in
+`src/factions.rs`: it only counts monsters that carry an `Allegiance`
+component, which is **only ever inserted on fort-garrison, fort-assault, and
+nest-trickle spawns** — the generic wave-director horde that makes up nearly
+all of a long run's enemy count (Dust Bunny, Clip Crawler, Sugar Ant, Staple
+Skitter, Crumb Blob, Lamp Moth, Tack Lobber) carries no faction tag at all,
+regardless of how dense it gets. `pick_feuding_pair` requires the **top two**
+factions by nearby weight to *both* be non-zero; both of my buys happened
+standing inside one faction's own nest cluster (VOID-only, then SWARM-only),
+so the second-ranked faction's weight was exactly 0.0 and the function
+returned `None` — the Cores were still spent, nothing happened, and the
+"NOBODY TO TURN" hint that should explain why was never seen in the log
+(likely overwritten within the same tick by a recurring boss-warning hint).
+**This is corroborated across the whole round, not just this run**: every
+single row in `holdfast-runs.tsv` this round reads `wars 0`, including two
+runs explicitly named `diplomat`. Whoever tries next needs to be standing
+where **two different factions' actual nests or garrisons** are both within
+close range simultaneously (not just two fort *markers* — their fed
+monsters) at the moment of purchase — which is also the single most
+dangerous kind of terrain in the game (see the VOID/RUST boundary
+encirclement death in the log for this round). Bring a ring that can already
+tank that density before trying it.
+
+**Threat dial and Overclock, independently reproduced.** `=` raised threat
+2.44 → 3.50 with `reward_mult` climbing to 3.46x at full HP, matching the
+`effective_threat^0.92` formula already on record. `O` (Overclock) had never
+been pressed by name before this round: it spiked threat from 3.50 to 5.92
+(settling at 6.00) instantly, `reward_mult` to 8.6-8.8x, `surge: ON` for
+almost exactly 22 real seconds before showing `surge: cooling` — matches the
+task brief's own stated duration precisely.
+
+**Numbers.** Run 2 (fort capture, died underlevelled while pushing toward it):
+`warlord DESK 110.5 7 66 0 0 0 0 0 1.13 137 10791 127 4 0.159`. Run 3 (fort
+taken then lost, six-weapon build, no ally alive at death): survived to
+**level 43, 467 kills, 350.4s** — second-highest survival time recorded this
+round, behind only `fortress`'s 374.4s, and reached with a much smaller
+structure count (peaked around 4-5 vs. `fortress`'s 25), suggesting weapon
+diversity/levels can substitute for raw structure count in holding a crowd.
+Died when Tack Lobbers (ranged, first seen this run) plus two simultaneous
+bosses caught the ring down to a single Barricade and took HP from 90% to
+dead in about 6 seconds. Result:
+`warlord DESK 350.4 43 467 1 0 0 0 0 3.50 137 20277 5928 67 0.492`. An earlier
+attempt in between, holding a captured zone/fort combo at lower level, hit
+**363.9s, level 24, 339 kills** before an encirclement-freeze death, the
+round's second-best time at the point it was set:
+`warlord DESK 363.9 24 339 2 0 0 0 0 2.54 312 40968 665 3 0.476`.
+
+**Operational hazard for whoever plays next on a shared machine: other agents'
+scripts `pkill -f "target/debug/holdfast"` without any instance filter.** This
+killed my pilot process outright three times mid-run this round (once mid
+level-up-card-pick, twice mid-command), each time with zero warning beyond
+`state.json` silently freezing (`seq`/`wall` stop advancing even though the
+process briefly still existed under CPU starvation from a concurrent
+`cargo run` rebuild). If a command's result looks frozen for more than a
+couple of real seconds, check `ps aux | grep holdfast` before assuming a game
+bug — it may simply be dead, and the fix is the exact relaunch command from
+the task, then `note strategy=...` again before continuing.
+
+**Takeaway: all four assigned systems now have a real, numbered confirmation
+in a live run — zone pay/decay, fort capture/loss with exact cause, ally
+recruit/death-by-density, and a fully diagnosed (if not yet triggered) war
+mechanic.** The one genuinely open item is question 4, ally-solo fort
+capture — set two allies to Guard at an *uncaptured* fort and walk far enough
+away that the player's own 1.0 presence can't be contributing, then check
+whether `capture` still climbs. The war fix, for whoever tries it: hold a
+ring capable of tanking 40+ enemies, walk it to a spot where two factions'
+nests are both within ~30-40 units, and buy the node there.

@@ -1297,6 +1297,7 @@ struct Meta<'w> {
     fog: Res<'w, crate::fog::FogMap>,
     war: Res<'w, crate::forts::WarRoom>,
     diplomacy: Res<'w, crate::factions::Diplomacy>,
+    powers: Res<'w, crate::factions::NearbyPowers>,
     unlocks: Res<'w, Unlocks>,
     plan: Res<'w, crate::command::PlanMode>,
     offer: Res<'w, CardOffer>,
@@ -1702,9 +1703,18 @@ fn write_war(json: &mut Json, meta: &Meta, holdings: &Holdings, hero: Vec2) {
         json.text("faction", faction.tag());
         json.text("posture", &format!("{:?}", plan.posture));
         json.num("commitment", plan.commitment);
+        // How much of this power is within earshot. Two of these being non-zero
+        // is exactly the condition for a war being purchasable, so a reader can
+        // see why the research node is refusing rather than guess.
+        json.num("nearby", meta.powers.0[faction.index()]);
         json.end();
     }
     json.end();
+
+    match meta.powers.feuding_pair() {
+        Some((a, b)) => json.text("war_available", &format!("{} vs {}", a.tag(), b.tag())),
+        None => json.maybe("war_available", None),
+    }
 
     json.arr("wars");
     for (a, b, left) in meta.diplomacy.active_wars() {

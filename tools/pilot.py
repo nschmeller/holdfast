@@ -214,6 +214,9 @@ def digest(s):
         out.append("SINCE LAST LOOK: " + " | ".join(s["events"]))
     # Sticky, and above everything else in importance: a command the game
     # refused looks exactly like a key that did nothing.
+    war = s.get("war_available")
+    if war:
+        out.append(f"A WAR CAN BE INCITED NOW: {war} (Research, Command branch)")
     if s.get("problems"):
         out.append("!! REFUSED THIS RUN: " + " | ".join(s["problems"]))
 

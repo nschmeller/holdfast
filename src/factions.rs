@@ -305,14 +305,85 @@ pub struct InciteRequest {
     pub seconds: f32,
 }
 
+/// Which powers are within earshot, and how strongly.
+///
+/// Recomputed every frame so anything can ask the question. It exists because
+/// the research screen has to refuse to *sell* a war it cannot start: a
+/// strategist bought Whisper Campaign twice, paid twenty-eight Cores and four
+/// skill points, and got nothing either time. The purchase is irreversible and
+/// the failure was a transient hint.
+#[derive(Resource, Debug, Default)]
+pub struct NearbyPowers(pub [f32; Faction::COUNT]);
+
+impl NearbyPowers {
+    /// The war that would start if one were incited right now.
+    #[must_use]
+    pub fn feuding_pair(&self) -> Option<(Faction, Faction)> {
+        pick_feuding_pair(&self.0)
+    }
+}
+
+/// Nobody has an allegiance until something gives them one, and the ambient
+/// horde is spawned by the wave director rather than by a fort. So it had none
+/// at all: every ordinary monster in the game was factionless, which is why a
+/// war could only be incited while standing between two nests, and why the
+/// regions the user asked for were invisible in normal play.
+///
+/// An enemy with no allegiance belongs to whoever owns the ground it stands on.
+/// Forts and nests still stamp their own, and theirs wins.
+fn adopt_local_allegiance(
+    mut commands: Commands,
+    seed: Res<crate::world::WorldSeed>,
+    orphans: Query<
+        (Entity, &crate::common::Body),
+        (With<crate::enemy::Enemy>, Without<Allegiance>),
+    >,
+) {
+    for (entity, body) in &orphans {
+        commands
+            .entity(entity)
+            .try_insert(Allegiance(faction_at(body.pos, seed.0)));
+    }
+}
+
+fn survey_powers(
+    mut powers: ResMut<NearbyPowers>,
+    player: Query<&crate::common::Body, With<crate::player::Player>>,
+    monsters: Query<(&crate::common::Body, &Allegiance)>,
+) {
+    powers.0 = [0.0; Faction::COUNT];
+    let Some(hero) = player.iter().next().map(|b| b.pos) else {
+        return;
+    };
+    for (body, allegiance) in &monsters {
+        // Nearer bodies count for more, so "strongest nearby" means what it
+        // says rather than "biggest faction anywhere".
+        let d = body.pos.distance(hero);
+        powers.0[allegiance.0.index()] += 1.0 / (1.0 + d / 40.0);
+    }
+}
+
 #[derive(Debug)]
 pub struct FactionPlugin;
 
 impl Plugin for FactionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Diplomacy>()
+            .init_resource::<NearbyPowers>()
             .add_message::<InciteRequest>()
-            .add_systems(Update, resolve_incitements.in_set(GameSet::Think))
+            .add_systems(
+                Update,
+                (adopt_local_allegiance, survey_powers)
+                    .chain()
+                    .in_set(GameSet::Think),
+            )
+            // Deliberately *not* in `GameSet::Think`, which only runs while
+            // playing. The request is written by the research screen, which is
+            // its own state, so the resolver never ran and the message expired
+            // two frames later - the player paid fourteen Cores and two skill
+            // points for nothing, twice, and the only sign was a hint that
+            // needed the screen closed to be seen.
+            .add_systems(Update, resolve_incitements)
             .add_systems(
                 OnExit(AppState::Menu),
                 reset_diplomacy.in_set(RunSetup::Reset),
@@ -371,23 +442,10 @@ fn resolve_incitements(
     mut hints: ResMut<crate::onboarding::HintQueue>,
     mut records: MessageWriter<crate::stats::Record>,
     mut seen: MessageWriter<crate::coverage::Seen>,
-    player: Query<&crate::common::Body, With<crate::player::Player>>,
-    monsters: Query<(&crate::common::Body, &Allegiance)>,
+    powers: Res<NearbyPowers>,
 ) {
     for request in requests.read() {
-        let Some(hero) = player.iter().next().map(|b| b.pos) else {
-            continue;
-        };
-
-        let mut weight = [0.0f32; Faction::COUNT];
-        for (body, allegiance) in &monsters {
-            // Nearer bodies count for more, so "strongest nearby" means what
-            // it says rather than "biggest faction anywhere".
-            let d = body.pos.distance(hero);
-            weight[allegiance.0.index()] += 1.0 / (1.0 + d / 40.0);
-        }
-
-        if let Some((a, b)) = pick_feuding_pair(&weight) {
+        if let Some((a, b)) = powers.feuding_pair() {
             diplomacy.incite(a, b, request.seconds);
             records.write(crate::stats::Record::add(
                 crate::stats::stat::WARS_STARTED,
@@ -409,6 +467,29 @@ mod tests {
     use super::*;
 
     const SEED: u64 = 0x00FA_C710;
+
+    #[test]
+    fn a_war_needs_two_powers_in_earshot() {
+        let mut powers = NearbyPowers::default();
+        assert!(powers.feuding_pair().is_none(), "a war out of nothing");
+        powers.0[Faction::Swarm.index()] = 3.0;
+        assert!(
+            powers.feuding_pair().is_none(),
+            "a faction at war with itself"
+        );
+        powers.0[Faction::Bloom.index()] = 1.0;
+        let (a, b) = powers.feuding_pair().expect("two powers, no war");
+        assert_eq!((a, b), (Faction::Swarm, Faction::Bloom), "the wrong pair");
+    }
+
+    #[test]
+    fn the_player_is_never_one_of_the_two() {
+        // Inciting a war with yourself is not a diplomacy option.
+        let mut powers = NearbyPowers::default();
+        powers.0[Faction::Player.index()] = 99.0;
+        powers.0[Faction::Void.index()] = 1.0;
+        assert!(powers.feuding_pair().is_none());
+    }
 
     #[test]
     fn regions_are_stable_for_a_seed() {

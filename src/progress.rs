@@ -328,6 +328,18 @@ impl ResearchNode {
         !self.maxed() && cores >= self.current_cost() && skill_points >= self.skill_cost()
     }
 
+    /// Whether buying this rank would actually do anything.
+    ///
+    /// The two discord nodes start a war between the two strongest powers
+    /// nearby, and if there is only one power in earshot there is no war to
+    /// start. The purchase is irreversible, so it has to be refused rather than
+    /// charged for: a strategist bought Whisper Campaign twice, paid
+    /// twenty-eight Cores and four skill points, and got nothing either time.
+    /// The failure was a hint that lasted a few seconds.
+    pub fn effective(&self, a_war_is_possible: bool) -> bool {
+        self.discord <= 0.0 || a_war_is_possible
+    }
+
     pub fn maxed(&self) -> bool {
         !self.endless && self.rank >= self.max_rank
     }
@@ -1102,6 +1114,24 @@ mod tests {
             p.gain(p.to_next);
             assert!(p.to_next > previous, "curve flattened at level {}", p.level);
             previous = p.to_next;
+        }
+    }
+
+    #[test]
+    fn a_war_node_is_not_sold_when_there_is_no_war_to_start() {
+        // Twenty-eight Cores and four skill points went on two purchases that
+        // did nothing, because the failure was a hint and the spend was not.
+        let nodes = default_nodes();
+        let discord = nodes.iter().find(|n| n.discord > 0.0).expect("no discord");
+        assert!(!discord.effective(false), "sold a war with nobody to turn");
+        assert!(discord.effective(true));
+    }
+
+    #[test]
+    fn every_other_node_is_always_worth_buying() {
+        // Only the discord nodes depend on the world; a percentage does not.
+        for node in default_nodes().iter().filter(|n| n.discord <= 0.0) {
+            assert!(node.effective(false), "{} was gated", node.title);
         }
     }
 
