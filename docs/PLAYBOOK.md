@@ -272,6 +272,21 @@ and the two things that slow them floor out at 0.58 (a crowd) and 0.15 (a
 hazard). The worst case is still three quarters of a unit a second. Zero was
 only ever reachable through the bridge.
 
+**Fixed after round 5:**
+
+- **A run that ends by `quit` now writes a dossier row.** Round 5's run - the
+  best yet, ended deliberately while healthy - left no row at all, because the
+  dossier only appended on `GameOver`. Both endings write exactly one row now.
+- **A held fort's books are visible.** `raw` reports `threat.from_forts` (0.35
+  per fort, against 0.2 for a zone) and `economy.scrap_per_sec_from_forts`. Fort
+  income used to be missing from `scrap_per_sec` entirely.
+- The three numbers a fort pays are named constants in `src/forts.rs` now:
+  `FORT_SCRAP` 2.4/s, `FORT_CORES` 0.16/s, `FORT_THREAT` 0.35.
+- Plan mode's hint no longer implies walking is at full speed in there. It is at
+  plan pace like everything else - which means escaping in plan mode is exactly
+  as effective as escaping in real time, since the monsters are slowed too. It
+  just takes longer in wall-clock.
+
 Other operational fixes:
 
 - **Arrow keys answer to any spelling** — `UP`, `ArrowUp`, `arrow_up` all work.
