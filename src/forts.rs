@@ -331,6 +331,51 @@ pub struct WarRoom {
     pub headline: Option<String>,
 }
 
+/// Forts the player has taken, remembered across chunk unloading.
+///
+/// A fort carries `ChunkEntity`, so it is despawned when its chunk streams out
+/// at 120 units and rebuilt from the world seed on return - enemy-owned, because
+/// generation asks `faction_at` and knows nothing about what has happened since.
+/// So walking away from a fort you had just fought a siege for silently undid
+/// it, with no hint, no sound and no line in the log. An empire spread wider than
+/// 120 units was impossible by construction, which is most of why holding two
+/// took nine rounds to achieve.
+///
+/// Keyed on the fort's position rounded to whole units. Generation is
+/// deterministic, so the same fort reappears at the same spot to the bit.
+#[derive(Resource, Debug, Default)]
+pub struct Conquests {
+    taken: std::collections::HashSet<IVec2>,
+}
+
+impl Conquests {
+    fn key(pos: Vec2) -> IVec2 {
+        IVec2::new(pos.x.round() as i32, pos.y.round() as i32)
+    }
+
+    pub fn remember(&mut self, pos: Vec2) {
+        self.taken.insert(Self::key(pos));
+    }
+
+    pub fn forget(&mut self, pos: Vec2) {
+        self.taken.remove(&Self::key(pos));
+    }
+
+    #[must_use]
+    pub fn holds(&self, pos: Vec2) -> bool {
+        self.taken.contains(&Self::key(pos))
+    }
+
+    pub fn reset(&mut self) {
+        self.taken.clear();
+    }
+
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.taken.len()
+    }
+}
+
 /// How long a faction will press an unsuccessful reclaim before regrouping.
 const SIEGE_PATIENCE: f32 = 42.0;
 
@@ -498,6 +543,7 @@ pub struct FortPlugin;
 impl Plugin for FortPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WarRoom>()
+            .init_resource::<Conquests>()
             .add_message::<SpawnFort>()
             .add_message::<SpawnNest>()
             .add_systems(OnExit(AppState::Menu), reset_war.in_set(RunSetup::Reset))
@@ -527,22 +573,34 @@ impl Plugin for FortPlugin {
     }
 }
 
-fn reset_war(mut war: ResMut<WarRoom>) {
+fn reset_war(mut war: ResMut<WarRoom>, mut conquests: ResMut<Conquests>) {
     war.reset();
+    conquests.reset();
 }
 
 // -- placement --------------------------------------------------------------
 
-fn place_forts(mut commands: Commands, art: Res<GameArt>, mut requests: MessageReader<SpawnFort>) {
+fn place_forts(
+    mut commands: Commands,
+    art: Res<GameArt>,
+    conquests: Res<Conquests>,
+    mut requests: MessageReader<SpawnFort>,
+) {
     for req in requests.read() {
-        let player_owned = req.faction == Faction::Player;
+        // A fort the player took stays theirs, even though the chunk that
+        // rebuilt it has no idea that ever happened.
+        let player_owned = req.faction == Faction::Player || conquests.holds(req.pos);
         let mut fort = commands.spawn((
             Fort {
                 progress: if player_owned { 1.0 } else { -1.0 },
                 strength: strength_from_home(req.pos),
                 ..default()
             },
-            Allegiance(req.faction),
+            Allegiance(if player_owned {
+                Faction::Player
+            } else {
+                req.faction
+            }),
             Body::new(req.pos, FORT_RADIUS),
             Health::new(1.0),
             Mesh3d(art.fort.clone()),
@@ -626,6 +684,7 @@ const LOSS_MARGIN: f32 = 1.0;
 fn capture_forts(
     time: Res<Time>,
     stats: Res<crate::player::PlayerStats>,
+    mut conquests: ResMut<Conquests>,
     mut forts: Query<(&mut Fort, &mut Allegiance, &Body)>,
     player: Query<&Body, With<Player>>,
     allies: Query<&Body, (With<crate::allies::Ally>, Without<Fort>)>,
@@ -683,7 +742,19 @@ fn capture_forts(
         fort.contested = friendly > 0.0 && defenders > 0.0;
         // Reported so a tester standing in a ring that will not flip can see
         // why. Without it the only reading is "capture: -1.0" and no cause.
-        fort.garrison = u32::try_from((defenders / DEFENDER_WEIGHT).round() as i64).unwrap_or(0);
+        //
+        // Whoever is opposing the fort's *current* owner: garrison monsters
+        // while somebody else holds it, rivals once the player does. Counting
+        // only the owner's loyalists meant this read zero for every fort the
+        // player held, while the rivals actually pushing it back were invisible -
+        // so a fort visibly falling had no reported cause, and I misdiagnosed one
+        // myself off the back of it.
+        let opposing = if owner.0 == Faction::Player {
+            rivals
+        } else {
+            defenders
+        };
+        fort.garrison = u32::try_from((opposing / DEFENDER_WEIGHT).round() as i64).unwrap_or(0);
 
         if owner.0 == Faction::Player {
             // The player holds it; monsters of any stripe push it back - but
@@ -709,6 +780,7 @@ fn capture_forts(
                     .find_map(|(_, a)| a.map(|a| a.0))
                     .unwrap_or(Faction::Swarm);
                 owner.0 = taker;
+                conquests.forget(body.pos);
                 fort.pulse = 1.0;
                 hints.push(
                     "FORT LOST",
@@ -738,6 +810,7 @@ fn capture_forts(
                 .clamp(-1.0, 1.0);
             if fort.progress >= 0.999 {
                 owner.0 = Faction::Player;
+                conquests.remember(body.pos);
                 fort.pulse = 1.0;
                 fort.assault = 12.0;
                 fort.seeding = 20.0;
@@ -1564,6 +1637,36 @@ mod tests {
         // The other half of the rule, and the interaction that makes the whole
         // chain work: take it with bodies, keep it with turrets.
         assert!(holding_net(8, 0, 4, false) > 0.0);
+    }
+
+    #[test]
+    fn a_conquest_survives_the_chunk_it_stood_in() {
+        // A fort is despawned when its chunk streams out at 120 units and
+        // rebuilt from the seed on return, enemy-owned. So walking away from a
+        // siege you had just won silently undid it, and an empire wider than 120
+        // units was impossible by construction.
+        let mut conquests = Conquests::default();
+        let fort = Vec2::new(-153.788, -11.695);
+        assert!(!conquests.holds(fort));
+        conquests.remember(fort);
+        assert!(conquests.holds(fort), "forgot a fort immediately");
+        // Regeneration is deterministic, so the same fort returns to the same
+        // spot - but float noise must not lose it.
+        assert!(conquests.holds(fort + Vec2::splat(0.0001)));
+        assert!(
+            !conquests.holds(fort + Vec2::splat(4.0)),
+            "matched a neighbour"
+        );
+        conquests.forget(fort);
+        assert!(!conquests.holds(fort), "kept a fort it had lost");
+    }
+
+    #[test]
+    fn a_new_run_inherits_nothing() {
+        let mut conquests = Conquests::default();
+        conquests.remember(Vec2::new(200.0, 40.0));
+        conquests.reset();
+        assert_eq!(conquests.count(), 0);
     }
 
     #[test]

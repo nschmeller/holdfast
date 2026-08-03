@@ -2067,3 +2067,150 @@ duration this round measured scales further with ring size; and a serious
 look at whether the pilot bridge can detect "a LevelUp opened mid-batch" and
 either retry the swallowed keys or report it inline, since it is now the
 single largest cause of death in this dossier, bigger than any monster.
+
+### auditor — falsification pass on the two round-9 fixes, plus the round-8 ranged-death gap (round 9)
+
+Assignment: verify-or-break `FORGET_DISTANCE=165` and the reclaim-lift
+(`SIEGE_PATIENCE=42`/`SIEGE_REGROUP=34`), and settle whether ranged fire is
+the real killer post-crowd-floor-fix. Six lives. Verdict on all three:
+**both fixes work as intended and neither has become an exploit or a
+trivialisation; the round-8 ranged-death gap has a sharper answer than
+expected — the dominant ranged killer in a first fort siege is not the Tack
+Lobber, it is the fort's own emplaced gun, and it is unavoidable by design.**
+
+**Claim 1 (165-unit forget) — confirmed clean by direct A/B, and it does not
+break a fight.** Source: `forget_the_left_behind` in `src/enemy.rs` despawns
+any non-boss enemy past 165 units every frame, decrementing `director.alive`
+and writing no `Record` — so nothing it touches can inflate kills or reverse
+the counter, confirmed by code and never once seen to regress a kill total
+live (338→356→372→411→416→…, monotonic every check this round). Measured the
+exploit question directly: at t=406.3s (238 enemies total, 41 within 12m, HP
+220/250) issued one `goto` 198.6 units in a straight line, arriving at
+t=428.6s (22.3 elapsed seconds later, ≈8.9 u/s — essentially full move speed,
+the crowd-floor was not even needed because nothing could keep pace) with
+enemies down to 177 and only +18 kills credited: `(238−177)−18 = 43` monsters
+silently released, paying nothing, in that one flight. Returning to
+approximately the same spot afterward showed the *local* crowd was genuinely
+gone (2 within 12m vs. 41 before fleeing) even while the *global* total kept
+climbing from continued wide travel (238→177→230→248→253) — so fleeing shreds
+the specific mob chasing you, it does not zero out the ambient pressure the
+run has already earned by exploring, which is exactly the design's intended
+half of the fix. On "does it break a fight": both the player's weapons (max
+range ≈20-70 depending on level/area stats) and the worst ranged monster
+(Tack Lobber, 20 units) are far under half of 165, so nothing that is
+actually exchanging hits with the player can be anywhere near the forget
+radius — the only way to trigger it is genuinely outrunning a mob over
+150-200 units, which cost ~22 real/game seconds of committed, undistracted
+movement here. That is a real cost, not a free reset, and it is the design's
+intended cost ("losing ground should be a decision made minutes ago"), paid
+in time and distance rather than HP. **No exploit found, no interrupted
+fight found.**
+
+**Claim 2 (reclaim lifts) — confirmed live, with a captured-and-lost fort
+watched start to finish, and it answers "too easy to keep" with a clean no.**
+Capturing one clean (garrison 0) fort took five deaths first — three of them
+(`auditor-3`, `auditor-4`, `auditor-5-retreat-and-let-turrets-work`, 251.9s/
+296.9s/316.5s, levels 15/20/16) died at 44-81% capture progress despite full
+HP moments earlier, every time from the same two-part mechanism: the fort's
+gun (see Claim 3) plus a `LevelUp` chain silently cancelling an in-progress
+Plan Mode turret build (confirmed directly: a batch of `SPACE, ENTER, RIGHT,
+RIGHT, ENTER, …, SPACE` that crossed a level-up left only 1 of 3 intended
+turrets built and dumped the player back into full-speed combat mid-ring —
+independently rediscovered the same session as `viceroy`'s "six of eight
+lives" finding above). The fix: build **one turret per `do` call**, check
+state after every single key, and resolve any interrupting card before
+placing the next turret — confirmed Plan Mode genuinely survives a resolved
+LevelUp (`PLAN MODE IS ON` persisted across a level-up-and-card-pick in this
+run), so the fault is specifically an *un-resolved* card eating the batch,
+not Plan Mode itself. With that discipline, `auditor-6` captured a VOID fort
+at level 16/full HP (192/192) with 5 Tack Turrets + a 3-ally `Hold` squad,
+never dropping below full HP during the build. Directly confirmed via `raw`,
+twice, 110 elapsed seconds apart (t=263.0 and t=373.6): `owner: YOU,
+capture: 1.0, contested: false`, while `factions` simultaneously read
+`VOID:MassOnFort(0.95) RUST:MassOnFort(0.4)` continuously across that whole
+window — three-faction commitment sustained for well over a minute produced
+*no* contest at all, because the ring was still killing attackers before they
+reached the 7.5-unit capture radius. The fort held roughly **130 elapsed
+seconds** total (captured ≈t=255s, first sign of `contested: true` and
+`garrison: 14` on VOID's side by ≈t=385-395s, cross-referenced against
+`FORT LOST` firing at wall=4336.04, ~9-15 seconds after the last confirmed
+full-HP `Playing` tick) — longer than `marshal`'s round-8 baseline of 30-90s
+for a similarly-sized ring, and in the same range as `viceroy`'s round-9
+80-100s for a *pre-built* ring. Once it actually flipped, the loss took only
+**~9-11 seconds** end to end (three ~6-8 damage ticks then `FORT LOST`),
+matching the original "eleven seconds is a siege" design exactly on the way
+out as well as the way in. **Verdict: a held fort is measurably harder to
+lose than before round 8/9 (longer uncontested windows under real
+multi-faction pressure), but it is not "too easy" or unlosable — a ring far
+stronger than the hypothetical "two turrets" (5 turrets + Overtuned + 3
+allies) still fell to a determined siege once contact was actually made.**
+On "does the lull read as disinterest": not confirmed either way this
+round — my own sampling was too coarse (two reads 110s apart, both catching
+`MassOnFort` at high commitment) to see whether SWARM/VOID/RUST/BLOOM's
+posture actually cycled to `HuntPlayer` and back per the 42s/34s clock in
+between; whoever samples next should poll `raw`'s `factions` array every
+~5-10 real seconds through a full hold to catch the toggle directly.
+
+**Claim 3 (is ranged fire the real killer, and what can a player do) — yes,
+and the source of it is not what round 8 expected.** `src/forts.rs`'s
+`fort_guns` fires `GUN_DAMAGE=8.0 * fort.strength` per shot, one muzzle
+rotating every `GUN_CADENCE(1.7)/guns(3) ≈ 0.567s`, for an enemy fort — about
+14.1 dps aggregate, unavoidable by any movement speed because *capturing
+requires standing inside `FORT_CAPTURE_RADIUS=7.5`*, itself well inside the
+gun's own `GUN_RANGE=15`. Every death this round at a fort (three separate
+lives, three separate forts) showed the exact same log signature: a
+metronomic ~8-damage tick every 0.4-0.6 real/game seconds, occasionally
+punctuated by larger melee hits, dropping 150-250 HP to zero in 10-20
+seconds once the fort's posture flipped to `Defend`. This is *not* new to
+round 8/9 — `GUN_DAMAGE`, `DEFENDER_WEIGHT`, `LOSS_MARGIN` and
+`CONTEST_URGENCY` are unchanged since `c174444` ("forts defend themselves"),
+confirmed by `git log -p`, so it predates and is independent of both changes
+this round was asked to audit. Round 8's Tack-Lobber-after-a-successful-flee
+death is a *different, smaller* threat (max 20-unit range, ~5-11 damage per
+hit, genuinely dodgeable by kiting) from the fort gun (15-unit range, ~14
+dps aggregate, *not* dodgeable once you are committed to a capture, because
+the objective itself requires standing in range). **What a player should do
+about it, and whether that option is actually available:** yes, it is
+available and it worked — bring HP/armour/regen cards *before* approaching
+(this round's successful life had taken Second Wind, Thicker Shell and
+Plating over the preceding levels), bring a full ally squad to split
+incoming fire, and build the turret ring one placement at a time rather than
+batching, since a batched build is the single most common way this round's
+testers (both `auditor` and `viceroy`) died with the ring half-finished. The
+option exists and is exactly what the source comments describe
+("bring armour, regen and health, or do not go") — the failure mode is
+executing it carelessly (batching keys through a level-up), not the
+mechanic being unfair.
+
+**Numbers.** `holdfast-runs.tsv`: `auditor` 277.9s/L16/181k/2.05,
+`auditor-2-forgetdist-reclaim` 160.9s/L9/80k/1.41, `auditor-3-careful-siege`
+251.9s/L15/159k/1.90, `auditor-4-armored-siege` 316.5s/L20/198k/2.26,
+`auditor-5-retreat-and-let-turrets-work` 296.9s/L16/172k/2.15, and the best
+of the round, `auditor-6-final-siege-attempt` (ended by `quit`, though the
+process took its usual several extra real seconds to actually close —
+matching `viceroy`'s and round 8's notes on this): **477.3s, level 32, 416
+kills, peak threat 3.15, 2 allies alive, 0 structures alive, 3669 Scrap / 61
+Cores unspent** (`auditor-6-final-siege-attempt DESK 477.3 32 416 0 2 0 0 0
+3.15 282 39501 3669 61 0.667`) — a fort was captured and later reclaimed by
+VOID before the row was written, so the dossier's `forts` column reads 0
+despite ~130 seconds of successful holding earlier in the same life; the
+`forts` column is a snapshot at death/quit, not a lifetime count, and should
+not be read as "never captured one" without checking the narrative.
+
+**Next:** the chunk-unload question this round did not get to test cleanly
+but should be checked directly — `src/world.rs`'s `stream_chunks` fully
+`try_despawn`s every `ChunkEntity` (forts and nests both carry one) once its
+chunk exceeds `UNLOAD_RADIUS(5)*CHUNK_SIZE(24)=120` units from the player,
+and `generate_chunk` reassigns a fort's owner deterministically from the
+world seed with **zero persistence of a player capture** when the chunk
+reloads. If that is right, a captured fort whose chunk unloads (travelling
+~120+ units away, which `marshal`'s two-forts-189-units-apart and this
+round's own wide travel both did) would silently revert to its original
+hostile owner *regardless* of the reclaim-lift fix or ring strength — a
+different, cheaper way to lose a fort than a siege, and one that would mean
+some of the "reclaimed within 30-90s" measurements in earlier rounds may have
+been chunk-unload resets rather than genuine `MassOnFort` victories. Confirm
+by capturing a fort, walking dead straight along one axis until it drops out
+of `raw`'s `forts` list entirely, then returning to check whether `owner`
+and `capture` came back as `YOU`/`1.0` or reset to the original hostile
+faction at `-1.0`.
