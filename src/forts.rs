@@ -1551,12 +1551,10 @@ fn feud_targets(
 /// when it was throwing a wave, or where its capture ring lay. All three are
 /// things the player has to react to, so all three are now visible.
 ///
-/// - the **ring** on the ground is the capture radius, tinted by owner and
-///   scaled by how far the meter has moved
-/// - the **flare** above it snaps bright when a gun fires and flares wider and
-///   longer when a wave or a seeder goes out
-/// - the fort itself **swells** while it is winding up to throw something, so
-///   the wave has a tell before it lands rather than after
+/// The **ring** on the ground is the capture radius, tinted by owner. The
+/// **flare** at the mast snaps bright when a gun fires and flares wider when a
+/// wave or a seeder goes out. And the fort itself **swells** while it winds up to
+/// throw something, so the wave has a tell before it lands rather than after.
 /// What one fort is currently saying, gathered so the children can be updated
 /// without two queries fighting over `Transform`.
 struct FortLook {

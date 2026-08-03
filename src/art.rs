@@ -334,7 +334,6 @@ fn build_art(
     let unit_sphere = meshes.add(sphere_hi(0.5));
 
     commands.insert_resource(GameArt {
-        fort_banner,
         solid,
         matte,
         metal,
@@ -367,6 +366,7 @@ fn build_art(
         shadow,
         zone_pillar,
         fort,
+        fort_banner,
         nest,
         banners,
         arrow,
