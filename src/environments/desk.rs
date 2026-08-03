@@ -22,9 +22,17 @@ pub(super) fn look() -> EnvLook {
     EnvLook {
         sky: Color::srgb(0.012, 0.012, 0.02),
         ambient: Color::srgb(0.36, 0.42, 0.7),
-        ambient_brightness: 210.0,
+        // Low, so the lamps actually do something.
+        //
+        // This file opens with "2AM, one lamp" and `palette.rs` with "one warm
+        // desk lamp in a dark office", and a UX pass measured that floor two
+        // metres from a lamp was no brighter than floor twenty metres away. The
+        // lamps were never the problem - each one emits a 700k point light. The
+        // problem was 210 of ambient plus 2100 of sun washing it out, so the
+        // scene was uniformly lit and the art direction existed only in comments.
+        ambient_brightness: 115.0,
         sun_color: Color::srgb(1.0, 0.86, 0.66),
-        sun_illuminance: 2100.0,
+        sun_illuminance: 1050.0,
         sun_dir: Vec3::new(-0.55, -1.0, 0.3),
         // The USB fan sweeps a lane, shoving everything towards -X.
         gust: Gust {
