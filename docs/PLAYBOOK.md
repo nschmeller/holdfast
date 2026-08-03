@@ -2237,3 +2237,103 @@ by capturing a fort, walking dead straight along one axis until it drops out
 of `raw`'s `forts` list entirely, then returning to check whether `owner`
 and `capture` came back as `YOU`/`1.0` or reset to the original hostile
 faction at `-1.0`.
+
+### warden — the chunk-persistence fix, watched working live (round 10)
+
+Assignment: a prior session (`1de2bc8`) wrote a fix for the round-9 audit's
+concern — a captured fort carries `ChunkEntity` and was rebuilt hostile from
+the world seed whenever its chunk streamed out past 120 units, silently, with
+no log line — but could never demonstrate it in play, because every
+undefended fort it tried was legitimately reclaimed by `MassOnFort` before it
+could be isolated from a genuine loss. One job: get a clean answer either way.
+**Answer: the fix works. Watched directly, twice, with the log distinguishing
+a real round-trip survival from a real siege loss both times.**
+
+**Method.** Used `HOLDFAST_UNLOCK=1 HOLDFAST_AUTOPICK=1 HOLDFAST_RICH=1
+HOLDFAST_TOUGH=1` for this run rather than a from-scratch build — the
+assignment was a specific mechanism check, not a strategy trial, and TOUGH in
+particular meant a chunk-unload revert couldn't be confused with "died on the
+way back." Labelled `chunk-persistence-verification-devtools-assisted` in the
+dossier so it reads honestly next to runs that earned their build.
+
+**Trial 1 — clean fix confirmation.** Captured a VOID fort at
+`(129.143, -31.306)` (`FORT TAKEN` logged, `threat.from_forts: 0.35`,
+`economy.scrap_per_sec_from_forts: 2.4`, both exactly the documented
+per-fort constants) with player + 4 allies (`Follow`), then built 6 Tack
+Turrets on its ring one placement at a time in Plan Mode (arrows nudge past
+the fort's own collider and past a minimum-spacing block between turrets;
+`the game says: Blocked - move the cursor` is the tell). Immediately
+`goto`'d 200 units away in a straight line (chunk math: `(330-129)/24 ≈ 8.4`
+chunks of pure-x displacement, versus `UNLOAD_RADIUS=5` — the origin chunk
+unloads by a wide margin on Chebyshev distance alone, confirmed by reading
+`stream_chunks` directly) and straight back. **Result: owner `YOU`, capture
+`1.0`, and zero `FORT LOST` lines anywhere in the log between the capture
+(wall≈257) and well past the return (wall≈456) — the next reclaim of any
+kind didn't fire until wall≈508, over 130 log-seconds after arriving back.**
+4 of 6 turrets and 1 of 4 allies had died to ordinary siege pressure during
+the trip (turrets are `RunEntity`, not `ChunkEntity` — confirmed by reading
+`handle_build` in `src/allies.rs` — so their survival was never in question;
+only the fort's own persistence was), which is exactly the kind of ordinary
+attrition the fix is supposed to coexist with, not immunity from it.
+
+**Trial 2 — the contrast case, same fort, same log mechanism.** The fort
+was later legitimately retaken by VOID under a much harsher board (threat
+had climbed to 3.8+, 300+ enemies, two factions simultaneously at
+`MassOnFort(64%)` / `MassOnFort(95%)`) — recaptured it a second time with a
+fresh 5-turret ring, then repeated the >200-unit round trip. This time the
+ring was already fully dead (`turrets: []`) within seconds of departure, and
+the fort flipped back to VOID almost immediately — but *with* a `FORT LOST -
+THE VOID took it back` line, fired within seconds of leaving. Distinguishing
+this from trial 1 is the whole point of the assignment: same fort, same
+travel pattern, one comes back silently correct (`YOU`, no log line, ring
+mostly intact), the other is lost loudly and honestly (logged, ring already
+gone before departure). The mechanism the fix touches and the mechanism the
+log already handles are cleanly separable in practice, not just in theory.
+
+**One more number worth flagging:** `economy.scrap_per_sec_from_forts` read
+`2.4` in trial 1 but `2.88` in trial 2 for the same single fort — a clean
+20% uplift, presumably from a structure-income or salvage stat picked up
+between the two (the character had gone from level 27 to level 65 and
+several gear slots deep by trial 2). The playbook's "2.4 per fort" constant
+is a base rate, not a hard invariant once stat-scaling gear is in play —
+worth remembering before reading a scrap-rate mismatch as a bug.
+
+**A real pilot-bridge bug, found and worked around, not part of the
+assignment but worth fixing:** issuing a steering verb (`kite`, `goto`, etc.)
+whose command gets *dequeued while a modal screen (`LevelUp`) is already
+open* deadlocks the pilot permanently. `run_queue` in `src/pilot.rs` only
+pops the next queued command when `pilot.active` is `None`; a `Steer`
+command's `remaining` timer is deliberately frozen while a modal is up
+(`paused = modal.is_some() && active.steer.is_some()`, to stop a `flee`
+from burning its budget against a paused game) — but nothing ever un-freezes
+it if the *only* thing that can close the modal (a `tap 1/2/3`) is sitting
+behind it in the same queue. Confirmed directly: `kite 18` landed in
+`LevelUp` (a race between two separate `do` calls, not a batching mistake),
+`tap 3` queued behind it, and `state.json` sat at `queued: 1, busy: true,
+game_time_frozen_for: 226s+` indefinitely — the game was not frozen, the
+*pilot* was, permanently, until the OS process was killed by PID (never by
+binary name; confirmed the right PID first via `lsof | grep <own pilot
+dir>`). Restarted with `HOLDFAST_AUTOPICK=1` afterward, which resolves
+`LevelUp` in the same or next frame server-side and sidesteps the whole
+class of bug for any run that doesn't need to hand-pick cards. Whoever fixes
+the pilot bridge next: either let a `Tap`/`Press` aimed at a modal jump the
+queue ahead of a paused `Steer`, or refuse to dequeue a new `Steer` while a
+modal is already open and say so, rather than silently absorbing it.
+
+**Numbers.** One continuous life, ended by a deliberate `quit` (which again
+took several extra real seconds to actually exit — consistent with every
+prior round's note on this): `chunk-persistence-verification-devtools-
+assisted DESK 746.0 76 1006 0 0 0 1 0 4.99 330 27171 11797 191 0.698` — level
+76, 1006 kills, peak threat 4.99, 1 fort held at the moment of quitting, 330
+units furthest travelled, 11797 Scrap / 191 Cores unspent (expected and
+uninteresting here: TOUGH/RICH were on, so economy pressure was never the
+point).
+
+**Next:** the chunk-persistence question is closed for a single fort under
+normal-to-heavy siege pressure. Not yet tried: a fort whose chunk unloads
+while genuinely *uncontested* (no rival faction ever massing on it) held for
+a much longer absence (minutes, not one round trip), to see whether the fix
+holds indefinitely or only long enough that no test has yet outlasted it;
+and the fort-siege pilot deadlock above should get an actual fix rather than
+a workaround, since `HOLDFAST_AUTOPICK` won't be available to a round trying
+to test genuine card-selection strategy under a live siege.

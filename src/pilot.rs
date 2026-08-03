@@ -797,6 +797,9 @@ struct Pilot {
     partial: String,
     queue: VecDeque<Cmd>,
     active: Option<Active>,
+    /// A steering command set aside while a modal screen is up, so the queue can
+    /// reach the command that closes it.
+    suspended: Option<Active>,
     held: HashSet<KeyCode>,
     /// Keys pressed for exactly this frame, released at the start of the next.
     tapped: Vec<KeyCode>,
@@ -845,6 +848,7 @@ impl Pilot {
             partial: String::new(),
             queue: VecDeque::new(),
             active: None,
+            suspended: None,
             held: HashSet::new(),
             tapped: Vec::new(),
             steering: Vec::new(),
@@ -1071,18 +1075,35 @@ fn run_queue(
 
     // Read before the mutable borrow of `active` below.
     let obstructed = pilot.travel.detoured;
-    if let Some(active) = pilot.active.as_mut() {
-        // A steering command's clock stops while the game does. Every `GameSet`
-        // is gated on `AppState::Playing`, so a `flee 20` issued just before a
-        // level-up opened used to burn its twenty seconds doing nothing at all,
-        // and the reader got back a digest saying it had fled. That cost an
-        // agent two outright deaths - 154 HP to 9 in one window - because it
-        // believed it had escaped. Keys aimed at the modal still tick, or
-        // answering one would deadlock.
-        let paused = modal.is_some() && active.steer.is_some();
-        if !paused {
-            active.remaining -= dt;
+    // A steering command cannot run while the game is stopped. Every `GameSet`
+    // is gated on `AppState::Playing`, so a `flee 20` issued just before a
+    // level-up opened used to burn its twenty seconds doing nothing at all and
+    // report that it had fled - which cost one agent two deaths outright.
+    //
+    // Freezing its timer in place was the obvious fix and it deadlocked the
+    // bridge: the queue only advances when the active command finishes, so a
+    // frozen steer sat at the head forever while the `tap 1` that would have
+    // closed the modal waited behind it. So the steer is set aside instead, and
+    // the queue carries on to whatever can actually answer the screen.
+    if modal.is_some()
+        && pilot.active.as_ref().is_some_and(|a| a.steer.is_some())
+        && let Some(waiting) = pilot.active.take()
+    {
+        for key in std::mem::take(&mut pilot.steering) {
+            keys.release(key);
         }
+        pilot.suspended = Some(waiting);
+    }
+    // Back to it once the screen is answered.
+    if modal.is_none()
+        && pilot.active.is_none()
+        && let Some(resumed) = pilot.suspended.take()
+    {
+        pilot.active = Some(resumed);
+    }
+
+    if let Some(active) = pilot.active.as_mut() {
+        active.remaining -= dt;
         // A `goto` ends on arrival; its duration is only a safety net against
         // a target that turns out to be unreachable.
         let arrived = match (active.steer, hero_pos) {
@@ -1453,7 +1474,7 @@ fn write_snapshot(
     // `queued` goes to zero the moment the last command becomes the active one,
     // so a client watching only that stopped waiting while a forty-second kite
     // was still running and reported on a game state it had not seen yet.
-    json.flag("busy", pilot.active.is_some());
+    json.flag("busy", pilot.active.is_some() || pilot.suspended.is_some());
     // Game time against real time. Every `GameSet` is gated on `AppState::Playing`,
     // so the run clock genuinely stops while a card screen is open - two reads
     // seventy-four wall-seconds apart returned an identical `t`. A tester
@@ -1477,7 +1498,12 @@ fn write_snapshot(
             0.0
         },
     );
-    match pilot.active.as_ref().and_then(|a| a.steer) {
+    match pilot
+        .active
+        .as_ref()
+        .or(pilot.suspended.as_ref())
+        .and_then(|a| a.steer)
+    {
         Some(steer) => json.text("steering", &format!("{steer:?}")),
         None => json.maybe("steering", None),
     }
