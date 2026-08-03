@@ -5,6 +5,7 @@
 //! move. Everything else is transient and appears where the eye already is.
 
 use bevy::prelude::*;
+use bevy::ui::UiScale;
 
 use crate::allies::{Economy, Squad, Zone, ZoneOwner};
 use crate::common::{Health, format_count, format_time};
@@ -117,9 +118,51 @@ struct ControlsLabel;
 #[derive(Debug)]
 pub struct HudPlugin;
 
+/// The window size the HUD's pixel values were authored against.
+///
+/// Every panel, inset and font size in `hud.rs` and `screens.rs` is a literal
+/// `Val::Px` - ninety-seven of them. A UX pass found that at 607x569 the research
+/// tree clips on both sides and its header lands on top of the health bar, and
+/// noted that this blocks both stated ship targets: itch.io embeds are commonly
+/// 960x600 and a phone is narrower still.
+///
+/// Rather than convert ninety-seven literals to percentages, Bevy's `UiScale`
+/// scales the whole tree by one factor. So the numbers stay readable in the
+/// source, authored against this size, and the window does the arithmetic.
+const AUTHORED_FOR: Vec2 = Vec2::new(1280.0, 720.0);
+
+/// Never shrink past this - beyond it the text stops being readable and the
+/// right answer is a different layout, not a smaller one.
+const MIN_UI_SCALE: f32 = 0.62;
+
+/// And never blow it up on a huge monitor past a modest amount, or the HUD eats
+/// the play area it is supposed to frame.
+const MAX_UI_SCALE: f32 = 1.35;
+
+/// Fit the whole UI to the window.
+fn scale_ui_to_window(
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut scale: ResMut<UiScale>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let size = Vec2::new(window.width(), window.height());
+    if size.x < 1.0 || size.y < 1.0 {
+        return;
+    }
+    // The smaller ratio, so nothing overflows the narrow axis.
+    let fit = (size / AUTHORED_FOR).min_element();
+    let want = fit.clamp(MIN_UI_SCALE, MAX_UI_SCALE);
+    if (scale.0 - want).abs() > 1e-3 {
+        scale.0 = want;
+    }
+}
+
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Playing), ensure_hud)
+        app.add_systems(Update, scale_ui_to_window)
+            .add_systems(OnEnter(AppState::Playing), ensure_hud)
             .add_systems(
                 Update,
                 (
@@ -796,5 +839,51 @@ fn update_plan(
         } else {
             pal::DANGER
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `scale_ui_to_window` computes for a given window.
+    fn fit(w: f32, h: f32) -> f32 {
+        (Vec2::new(w, h) / AUTHORED_FOR)
+            .min_element()
+            .clamp(MIN_UI_SCALE, MAX_UI_SCALE)
+    }
+
+    #[test]
+    fn the_authored_size_needs_no_scaling() {
+        assert!((fit(1280.0, 720.0) - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn an_itch_embed_and_a_phone_both_fit() {
+        // 960x600 is the common itch.io embed and the narrow axis has to win, or
+        // the research tree clips on both sides as it did at 607x569.
+        assert!(fit(960.0, 600.0) < 1.0, "an itch embed was not scaled down");
+        assert!(
+            fit(607.0, 569.0) < 1.0,
+            "a small window was not scaled down"
+        );
+        // A phone in portrait is the narrowest thing either ship target implies.
+        assert!(fit(390.0, 844.0) <= MIN_UI_SCALE + 1e-4);
+    }
+
+    #[test]
+    fn it_never_shrinks_or_grows_past_readable() {
+        assert!(fit(1.0, 1.0) >= MIN_UI_SCALE, "shrank past legibility");
+        assert!(
+            fit(7680.0, 4320.0) <= MAX_UI_SCALE,
+            "the HUD ate the screen"
+        );
+    }
+
+    #[test]
+    fn the_narrow_axis_decides() {
+        // A wide, short window must scale for its height.
+        let wide = fit(3000.0, 600.0);
+        assert!(wide < 1.0, "a short window was not scaled: {wide}");
     }
 }

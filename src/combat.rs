@@ -888,19 +888,22 @@ fn apply_damage(
             body.push(ev.knockback, force);
         }
 
-        // Damage numbers, but only for meaningful hits: a burn tick every frame
-        // would bury the screen in noise.
-        if ev.source != DamageSource::Hazard && amount >= 1.0 && is_player.is_none() {
+        // Only crits float a number now.
+        //
+        // A UX pass counted about twenty on screen at density, overlapping into
+        // unreadable runs like "4545" - in a game where you never press attack,
+        // so the numbers report something the player did not do and cannot
+        // change. The information they carried was noise; what a player needs
+        // from a hit is the squash, the sound and the health bar, all of which
+        // already happen. A crit is different: it is rare, it is the payoff for
+        // a stat they chose, and one of them is legible.
+        if ev.crit && ev.source != DamageSource::Hazard && amount >= 1.0 && is_player.is_none() {
             floats.write(FloatingTextEvent {
                 pos: body.pos + rng.in_disc(0.3).truncate(),
                 height: 1.2,
                 text: format!("{}", amount.round() as i32),
-                color: if ev.crit {
-                    crate::palette::ACCENT
-                } else {
-                    crate::palette::HUD_TEXT
-                },
-                size: if ev.crit { 24.0 } else { 17.0 },
+                color: crate::palette::ACCENT,
+                size: 24.0,
             });
         }
 
