@@ -1072,7 +1072,17 @@ fn run_queue(
     // Read before the mutable borrow of `active` below.
     let obstructed = pilot.travel.detoured;
     if let Some(active) = pilot.active.as_mut() {
-        active.remaining -= dt;
+        // A steering command's clock stops while the game does. Every `GameSet`
+        // is gated on `AppState::Playing`, so a `flee 20` issued just before a
+        // level-up opened used to burn its twenty seconds doing nothing at all,
+        // and the reader got back a digest saying it had fled. That cost an
+        // agent two outright deaths - 154 HP to 9 in one window - because it
+        // believed it had escaped. Keys aimed at the modal still tick, or
+        // answering one would deadlock.
+        let paused = modal.is_some() && active.steer.is_some();
+        if !paused {
+            active.remaining -= dt;
+        }
         // A `goto` ends on arrival; its duration is only a safety net against
         // a target that turns out to be unreachable.
         let arrived = match (active.steer, hero_pos) {

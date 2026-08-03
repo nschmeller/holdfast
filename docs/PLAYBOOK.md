@@ -32,14 +32,20 @@ left on the table, and it closed the frontier completely: a fort was taken,
 survived at the instant of the flip, lost, retaken repeatedly, and held
 through both a researched war and the threat dial's 8.00 ceiling
 simultaneously, for well over a hundred seconds of cumulative ownership.**
-**Holding *two* forts at once is the next frontier, and `marshal` (round 8)
-closed it with a "no" that is a design property, not a bug: two forts ~189
-units apart were each captured cleanly with a turret-and-ally ring left
-behind, and each reverted to its original owner within roughly a minute of
-the player leaving, every single time it was tried. Presence is zero-sum —
-a ring holds ground until a real siege arrives, but it cannot substitute for
-the player against a determined multi-faction `MassOnFort` response. See
-`marshal` below for the numbers and what a bigger ring might still buy.**
+**Holding two forts at once is answered: yes, after the round-8 reclaim fix.
+`viceroy` (round 9) held *three* forts simultaneously** — `threat.from_forts`
+read `0.35`, `0.70` and `1.05` in turn as each one flipped, exactly `0.35×n`,
+and `economy.scrap_per_sec_from_forts` matched `2.4×n` at every step (`2.4`,
+`4.8`, `7.2`). Marshal's "no" was correct for the pre-fix build; the fix
+(reclaim presses 42s then regroups 34s, instead of committing forever) is
+what makes it possible now. The durability split is stark and now measured
+precisely: a fort defended by 4+ Tack Turrets and nothing else survived
+80+ real seconds fully unattended (player 100+ units away) before finally
+reverting; a fort "defended" by 3 allies on `Hold` and zero turrets reverted
+in roughly 20-35 seconds. Turrets outlast allies as unattended garrisons by
+a wide margin. See `viceroy` below for the full numbers and a new technique
+— building the ring from *outside* the fort's own capture radius — that
+made repeat captures survivable for the first time this dossier.
 
 ### Confirmed by measurement
 
@@ -1915,3 +1921,149 @@ measured), the ally-alone capture from Q4, and a genuine attempt to hold
 *three* forts by pre-building rings at all three before capturing any of
 them, since Scrap was never the bottleneck once the first fort's income
 came online.
+
+### viceroy — three forts held at once, a build-from-outside-the-ring technique, and a hard measurement of what wide exploration still costs (round 9)
+
+Assignment: verify the two round-8 fixes (reclaim lifts, monsters >165 units
+released) actually changed the picture — hold two forts at once, test whether
+an ally squad can capture a fort alone, and re-measure whether wide
+exploration is viable. Answer to all three: **yes on two forts (in fact
+three), unresolved-but-informative on ally-alone, and no on wide exploration
+being free — it is measurably better than pre-fix, but still expensive.**
+
+**Eight lives this round, six of them killed by the same mechanism: a
+`LevelUp` screen opening between two keys of an already-issued batch.** This
+was worse than any previous round's account of it. This build's weapon set
+(Ruler Sweep, Clip Orbit, Coffee Nova, Fan Blast) chains kills fast enough
+under 20-60 concurrent enemies that a level-up can open in the ~1-2 real
+seconds between one `pilot.py do` call finishing and the next one's first key
+being delivered — and once open, every subsequent key in that *next* batch
+(`SPACE`, a digit, `ENTER`, `flee`, `goto`) gets swallowed as a `LevelUp`
+input or silently dropped, while the character stands still and takes full,
+unmitigated damage. Confirmed directly and repeatedly: `goto`/`flee`/`kite`
+issued right after a card pick sometimes produced *zero* positional change
+and a full HP crash (139→29 in one four-second window; 158→8 in another) with
+the `!! REFUSED` log showing the exact keys that got redirected. The single
+fix that worked: never issue more than a card-pick plus one steering verb per
+batch, and re-check state after *every* card, not just the ones you expect.
+Even doing this, it cost two outright deaths (`disciplined-single-fort-siege-v3`
+died 261.6s/level 11/96 kills to a card-swallowed `kite` at 154→31→22→9 HP in
+under 15 seconds; `fort-siege-v5` died 249.2s/level 13/129 kills the same way
+at a fort's ring, garrison having grown from 1 to 6 between scouting it and
+arriving).
+
+**Q3 (is wide exploration viable now) — better, not free.** With the
+`FORGET_DISTANCE=165` fix live, local density (within 12m) genuinely resets
+to near-zero on a single `kite`/`flee` call even from 20-50 within 12m,
+confirmed a dozen times this round — the crowd-floor and forget-distance
+fixes are doing their job. But the **total ambient count still climbs hard
+with travel**, fix or no fix: one life went 20 (t=100s) → 82 (t=191s) → 145
+(t=249s, death) total enemies over about 150 real seconds and roughly 250
+units of net travel; another went 21 (t=139s) → 176 (t=248s) over 100
+seconds. The mechanism is the same one `marshal` named in round 8
+(`tick_nests` spawns from any nest within 66 units of the player's *current*
+position, not the fort's), but it is sharply worse specifically **inside a
+cluster of enemy forts** — a region with 4-6 forts within 30-90 units of each
+other (seen for VOID and RUST territory both) stacks that many forts' nests
+and seeders on top of each other, and simply walking through one is what
+turned 40 enemies into 150+ inside thirty seconds twice this round. **The
+fix makes kiting through open ground cheap; it does not make walking into a
+faction's fort cluster cheap, and the digest's `FORTS`/`NESTS` lines are the
+warning to read before committing to a direction.**
+
+**Q1 (hold two forts) — yes, decisively, and it went to three.** Approached
+an isolated `garrison: 2` SWARM fort at level 6 (five weapons, 0 allies —
+allies unlock on a **timer, 2:45 elapsed, not a level threshold**, confirmed
+directly: `HINT SQUAD LOCKED: Comes online at 2:45`, contradicting every
+previous round's assumption it was level-gated), stood ~20 units outside its
+7.5-unit capture radius, opened Plan Mode, and walked the cursor onto the
+fort itself (`FORT_CAPTURE_RADIUS` is small enough that the plan cursor's
+26-unit leash reaches it easily from well outside). Placed 4 Tack Turrets
+directly on the fort's ground (its own collider blocks the exact centre — a
+small cursor nudge finds clear ground still inside the ring) and fled. With
+**zero player presence in the capture radius at any point**, `capture`
+climbed 0%→30%→68%→79%→"FORT TAKEN" over about 20 real seconds while the
+player stood 15-25m away taking near-zero damage. Repeated the exact
+technique on a second fort (garrison 1) 33 units away: same result, same
+zero-presence capture. With both held, `raw`'s `threat.from_forts` read
+**exactly `0.70`** (`0.35 × 2`) and `economy.scrap_per_sec_from_forts` read
+**exactly `4.8`** (`2.4 × 2`) — the first time either number has been seen
+above `0.35`/`2.4` in this dossier. Continuing the same life, the player
+then walked (not planned — just arrived) into a *third* fort's ring and
+captured it through ordinary presence over about 30 seconds; with all three
+held, `threat.from_forts` read **`1.05`** and `scrap_per_sec_from_forts` read
+**`7.2`**, both exactly `n × constant` for `n=3` — confirming the assignment's
+own prediction ("Three forts is +1.05 threat") to the decimal. `reward_mult`
+peaked at **2.98** (effective threat 3.28: 1.56 level + 1.05 forts + 0.2
+territory + 0.45 for standing in a light pool at the same moment — every
+additive threat source stacking simultaneously, confirmed live for the first
+time).
+
+**Durability, measured precisely instead of estimated.** Fort 1 (4 Tack
+Turrets, no allies, player elsewhere) held from capture (~t=141s) until
+between t=221s (`capture: 0.745`, still slowly eroding) and t=241s (fully
+reverted, `owner: SWARM`, `garrison: 12`) — **roughly 80-100 seconds
+unattended** against a real `MassOnFort` reclaim, a large step up from
+round 8's 30-90s for a similarly-sized reactive ring, consistent with
+building the ring *before* the reclaim starts rather than during it. Fort 2
+(3 Tack Turrets) was still holding at that same check (`capture: 0.771`,
+`contested: false`) — at least as durable. Fort 3 was different: captured by
+ordinary player+ally presence (3 allies in `Follow`, no turrets), then the
+squad was switched to `Hold` at that exact spot and the player left — this
+fort reverted in roughly **20-35 seconds**, far faster than either
+turret-defended fort. All three eventually fell back to their original
+owners by t≈250s, but never simultaneously — the ring-defended forts clearly
+outlasted the ally-defended one.
+
+**Q2 (can allies alone capture/hold a fort) — the capture side is now
+answered by proxy, the hold side got a real but imperfect data point.**
+Structures alone (0 allies, 0 player-in-ring) captured two forts outright
+this round, which settles the design's core claim ("allies have to be able
+to contribute to a capture and finish one on their own") for structures at
+least — presence-by-proxy works exactly as the source promises. For
+allies specifically: the one clean-ish test (3 allies on `Hold`, 0 turrets,
+after the player had already stood in the ring during the capture itself)
+held for only 20-35 seconds, well under either turret-only fort's duration.
+That is not a clean "allies alone from scratch" test — the fort was already
+captured before the squad order was given — so whoever plays next should
+still do the from-scratch version marshal proposed: walk a full 4-ally squad
+to a full-garrison *enemy-owned* fort, set `Hold`, and leave before capture
+starts, watching `capture` climb (or not) with zero turrets and zero player
+presence ever in the radius.
+
+**Numbers.** Eight lives this round (see `holdfast-runs.tsv` for
+`multi-fort-empire-...`, `fort-ring-then-...-v2`, `disciplined-single-fort-
+siege-v3`/`v4`, `fort-siege-v5` through `v7`); the first six died between
+203s and 372s to the LevelUp-swallow mechanism above, none reaching a fort.
+The seventh (`fort-siege-v6-plan-mode-ring-from-outside-radius`) got the
+technique working for the first time but died at 254.5s/level 14/132 kills
+before the fort finished flipping. The eighth
+(`fort-siege-v7-early-plan-mode-ring-at-distance`) is the one described
+above: ended by deliberate `quit` at t=250.9s, level 19, 211 kills, 3
+forts held simultaneously at peak (`0` at the row itself, since all three had
+reverted again by the time of the `quit` — see below), peak reward
+`x2.98`, 923 Scrap / 43 Cores unspent —
+`fort-siege-v7-early-plan-mode-ring-at-distance DESK 250.9 19 211 3 1 1 0 0
+2.24 264 19962 923 43 0.667`. **Operational note on that `quit`:** issued
+while a `LevelUp` was open, it logged `quit requested` immediately but the
+process then sat with `state.json`'s `seq` apparently frozen (same `seq`,
+same `wall`, three consecutive reads) for several real seconds, matching
+round 8's lingering-process note exactly — but this time it resolved on its
+own: the process exited cleanly, the dossier row was written correctly, and
+it no longer appeared in `ps aux` afterward. Not a permanent hang, just a
+slow one; worth another few seconds' patience before assuming the run is
+stuck.
+
+**Takeaway.** The two round-8 fixes did exactly what they were meant to:
+forts can now be held in the plural, and travel is not an automatic death
+sentence. The frontier has moved again — it is no longer "can you hold two
+forts" (yes) but "can you reach a fort at all without either the density
+spiral or the LevelUp-swallow mechanism killing you first," and separately,
+"does a *pure* ally garrison (no turrets, no player, from a completely
+uncaptured fort) ever hold." Next: the from-scratch ally-Hold test above;
+carrying Bulk Salvage/Overtuned into a life dedicated to nothing but building
+15-20 Tack Turrets at a *fourth* fort to see if the 80-100s unattended
+duration this round measured scales further with ring size; and a serious
+look at whether the pilot bridge can detect "a LevelUp opened mid-batch" and
+either retry the swallowed keys or report it inline, since it is now the
+single largest cause of death in this dossier, bigger than any monster.

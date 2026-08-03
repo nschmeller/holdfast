@@ -648,7 +648,20 @@ fn capture_forts(
             friendly += 1.0;
         }
         friendly += allies.iter().filter(|b| inside(b.pos)).count() as f32 * 0.7;
-        friendly += structures.iter().filter(|b| inside(b.pos)).count() as f32 * STRUCTURE_WEIGHT;
+        // Structures hold ground; they do not storm a position. Counting them
+        // towards a *capture* let a fort be taken from outside its own guns: the
+        // build cursor reaches 26 units and a fort's guns reach 15, so an agent
+        // stood at 20 metres, placed four turrets on the fort's ground, and
+        // watched the meter climb to a capture with no player presence in the
+        // ring at any point and near-zero risk. That bypasses the whole siege -
+        // the guns, the wardens, the contest urgency - which is the difficulty
+        // the design puts here deliberately.
+        //
+        // So: bodies take a fort, structures keep one.
+        if owner.0 == Faction::Player {
+            friendly +=
+                structures.iter().filter(|b| inside(b.pos)).count() as f32 * STRUCTURE_WEIGHT;
+        }
 
         // Only monsters loyal to the current owner defend it. A rival faction
         // standing in the ring is not helping anybody hold it.
@@ -1513,6 +1526,44 @@ mod tests {
             war.tick_resolve(Faction::Void, false, 4.0);
         }
         assert!(war.will_besiege(Faction::Void));
+    }
+
+    /// Presence pushing a capture, as `capture_forts` counts it for a fort the
+    /// player does not own yet.
+    fn taking_presence(standing_there: bool, allies: u32, turrets: u32) -> f32 {
+        let mut friendly = if standing_there { 1.0 } else { 0.0 };
+        friendly += allies as f32 * 0.7;
+        // Structures deliberately absent: they hold ground, they do not storm it.
+        let _ = turrets;
+        friendly
+    }
+
+    #[test]
+    fn a_fort_cannot_be_taken_from_outside_its_own_guns() {
+        // The build cursor reaches 26 units and a fort's guns reach 15, so
+        // turrets counting towards a capture let one be taken from 20 metres
+        // away with no player presence in the ring at any point - bypassing the
+        // guns, the wardens and the contest urgency, which are the difficulty
+        // the design puts here on purpose.
+        assert!(
+            taking_presence(false, 0, 8) <= 0.0,
+            "eight turrets took a fort with nobody there"
+        );
+        assert!(
+            taking_presence(true, 0, 0) > 0.0,
+            "a player cannot take one"
+        );
+        assert!(
+            taking_presence(false, 2, 0) > 0.0,
+            "a squad cannot take one"
+        );
+    }
+
+    #[test]
+    fn structures_still_keep_a_fort_once_it_is_yours() {
+        // The other half of the rule, and the interaction that makes the whole
+        // chain work: take it with bodies, keep it with turrets.
+        assert!(holding_net(8, 0, 4, false) > 0.0);
     }
 
     #[test]
