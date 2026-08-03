@@ -104,7 +104,7 @@ fn handle_deaths(
         director.alive = director.alive.saturating_sub(1);
         clock.kills += 1;
         threat.note_kill();
-        clock.note_streak(threat.streak);
+        clock.note_kill();
 
         let is_boss = enemy.rank == Rank::Boss;
         let is_elite = enemy.rank == Rank::Elite;

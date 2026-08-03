@@ -160,6 +160,10 @@ pub struct RunClock {
     pub elapsed: f32,
     pub kills: u64,
     pub best_streak: u32,
+    /// Kills in the current unbroken streak.
+    streak_now: u32,
+    /// Time since the last kill, for deciding whether the streak is still on.
+    since_kill: f32,
     /// Furthest from the landing site *this run*.
     ///
     /// The dossier used to read this off the lifetime ledger, which is a
@@ -171,19 +175,43 @@ pub struct RunClock {
 }
 
 impl RunClock {
-    /// Remember the highest kill streak reached.
-    ///
-    /// `best_streak` was saved, loaded, reported by the pilot and shown on the
-    /// results screen while nothing ever assigned it - every dump read zero
-    /// after thousands of kills.
+    /// Longest a streak can be idle before it counts as broken.
+    const STREAK_WINDOW: f32 = 3.0;
+
     /// Widen the run's travel record.
     pub fn note_distance(&mut self, from_origin: f32) {
         self.furthest = self.furthest.max(from_origin);
     }
 
-    pub fn note_streak(&mut self, streak: f32) {
-        let peak = u32::try_from(streak.max(0.0) as u64).unwrap_or(u32::MAX);
-        self.best_streak = self.best_streak.max(peak);
+    /// Count a kill towards the current streak.
+    ///
+    /// `best_streak` was saved, loaded, reported by the pilot and shown on the
+    /// results screen while nothing ever assigned it. Writing `Threat::streak`
+    /// into it is a different kind of wrong: that is a decaying pressure meter
+    /// capped at 1.6, so the field read 0 or 1 after a thousand kills. It is a
+    /// count of kills with no gap between them.
+    pub fn note_kill(&mut self) {
+        self.streak_now = if self.since_kill <= Self::STREAK_WINDOW {
+            self.streak_now.saturating_add(1)
+        } else {
+            1
+        };
+        self.since_kill = 0.0;
+        self.best_streak = self.best_streak.max(self.streak_now);
+    }
+
+    /// Let the clock run, ending a streak that has gone quiet.
+    pub fn tick_streak(&mut self, dt: f32) {
+        self.since_kill += dt;
+        if self.since_kill > Self::STREAK_WINDOW {
+            self.streak_now = 0;
+        }
+    }
+
+    /// Kills in the streak running right now.
+    #[must_use]
+    pub fn streak(&self) -> u32 {
+        self.streak_now
     }
 
     /// Time-driven difficulty, independent of the dial. Compounding, so minute
@@ -372,6 +400,7 @@ pub fn tick_waves(
 pub fn tick_threat(time: Res<Time>, mut threat: ResMut<Threat>, mut clock: ResMut<RunClock>) {
     let dt = time.delta_secs();
     clock.elapsed += dt;
+    clock.tick_streak(dt);
 
     // The floor climbs about one full step every 45 seconds, which keeps a
     // pure-turtling strategy from ever being stable.
@@ -525,6 +554,36 @@ mod tests {
             t.note_kill();
         }
         assert!(t.streak <= 1.6, "streak ran away to {}", t.streak);
+    }
+
+    #[test]
+    fn a_streak_counts_kills_and_not_a_pressure_meter() {
+        // It reads "best streak" on the results screen. It has to be kills.
+        let mut clock = RunClock::default();
+        for _ in 0..40 {
+            clock.note_kill();
+            clock.tick_streak(0.5);
+        }
+        assert_eq!(clock.best_streak, 40);
+        assert_eq!(clock.streak(), 40);
+    }
+
+    #[test]
+    fn a_quiet_spell_breaks_a_streak_but_not_the_record() {
+        let mut clock = RunClock::default();
+        for _ in 0..5 {
+            clock.note_kill();
+        }
+        clock.tick_streak(RunClock::STREAK_WINDOW + 0.1);
+        assert_eq!(clock.streak(), 0, "streak survived the gap");
+        clock.note_kill();
+        assert_eq!(clock.streak(), 1, "the new streak did not start over");
+        assert_eq!(clock.best_streak, 5, "the record was lost");
+    }
+
+    #[test]
+    fn a_fresh_run_has_no_streak() {
+        assert_eq!(RunClock::default().best_streak, 0);
     }
 
     #[test]
