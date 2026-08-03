@@ -96,6 +96,21 @@ impl FogMap {
         self.visible.len()
     }
 
+    /// Every explored cell, for saving.
+    #[must_use]
+    pub fn explored_list(&self) -> Vec<IVec2> {
+        self.explored.iter().copied().collect()
+    }
+
+    /// Put a saved map back. The overlay rebuilds itself from `dirty`.
+    pub fn restore(&mut self, cells: &[IVec2]) {
+        self.explored.clear();
+        self.explored.extend(cells.iter().copied());
+        self.visible.clear();
+        self.revealed = u32::try_from(cells.len()).unwrap_or(u32::MAX);
+        self.dirty = true;
+    }
+
     /// How much veil a cell gets: `None` for none at all.
     ///
     /// Three states, and the whole feature turns on getting them right - so it

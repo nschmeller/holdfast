@@ -120,7 +120,7 @@ pub enum StatBoost {
 }
 
 impl StatBoost {
-    const ALL: [Self; 18] = [
+    pub const ALL: [Self; 18] = [
         Self::MaxHp,
         Self::MoveSpeed,
         Self::Damage,

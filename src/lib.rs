@@ -28,6 +28,7 @@ pub mod pilot;
 pub mod player;
 pub mod progress;
 pub mod rng;
+pub mod save;
 pub mod screens;
 pub mod threat;
 pub mod weapons;
@@ -187,6 +188,7 @@ pub fn run() {
         fx::FxPlugin,
         hud::HudPlugin,
         screens::ScreensPlugin,
+        save::SavePlugin,
         devtools::DevToolsPlugin,
         pilot::PilotPlugin,
     ));

@@ -350,10 +350,35 @@ const DIGITS: [KeyCode; 10] = [
     KeyCode::Digit9,
 ];
 
+const FUNCTION_KEYS: [KeyCode; 12] = [
+    KeyCode::F1,
+    KeyCode::F2,
+    KeyCode::F3,
+    KeyCode::F4,
+    KeyCode::F5,
+    KeyCode::F6,
+    KeyCode::F7,
+    KeyCode::F8,
+    KeyCode::F9,
+    KeyCode::F10,
+    KeyCode::F11,
+    KeyCode::F12,
+];
+
 /// Resolve a key name written by a human or an agent.
 fn key_from_name(name: &str) -> Option<KeyCode> {
     let upper = name.to_ascii_uppercase();
     let bytes = upper.as_bytes();
+
+    // Function keys, which the game uses for save and for dev toggles. Checked
+    // before the single-character cases so "F5" is not read as the letter F.
+    if let Some(digits) = upper.strip_prefix('F')
+        && !digits.is_empty()
+        && let Ok(n) = digits.parse::<usize>()
+        && (1..=12).contains(&n)
+    {
+        return Some(FUNCTION_KEYS[n - 1]);
+    }
     if bytes.len() == 1 {
         let c = bytes[0];
         if c.is_ascii_uppercase() {
@@ -1549,5 +1574,17 @@ mod tests {
             wander.step(Vec2::ZERO, 0.1);
         }
         assert_ne!(wander.heading, stuck, "a blocked roamer must turn");
+    }
+    #[test]
+    fn function_keys_resolve_and_do_not_shadow_the_letter_f() {
+        assert_eq!(key_from_name("F5"), Some(KeyCode::F5));
+        assert_eq!(key_from_name("f12"), Some(KeyCode::F12));
+        assert_eq!(
+            key_from_name("F"),
+            Some(KeyCode::KeyF),
+            "F is still a letter"
+        );
+        assert_eq!(key_from_name("F13"), None);
+        assert_eq!(key_from_name("F0"), None);
     }
 }

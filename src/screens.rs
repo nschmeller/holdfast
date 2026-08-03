@@ -125,7 +125,7 @@ struct EnvDetailPanel;
 #[derive(Component)]
 struct WorldChip(EnvKind);
 
-fn build_menu(mut commands: Commands, env: Res<EnvKind>) {
+fn build_menu(mut commands: Commands, env: Res<EnvKind>, slot: Res<crate::save::SaveSlot>) {
     let selected = *env;
 
     commands.spawn(overlay(1.0)).with_children(|root| {
@@ -229,6 +229,18 @@ fn build_menu(mut commands: Commands, env: Res<EnvKind>) {
             text("PRESS ENTER TO DEPLOY", 24.0, pal::XP_GREEN),
         ));
 
+        // Only offered when there is something to resume. An always-visible
+        // option that usually does nothing trains the player to ignore it.
+        if slot.present {
+            root.spawn((
+                Node {
+                    margin: UiRect::top(Val::Px(8.0)),
+                    ..default()
+                },
+                text("PRESS C TO CONTINUE YOUR LAST RUN", 18.0, pal::GEAR_GOLD),
+            ));
+        }
+
         // -- controls -------------------------------------------------------
         root.spawn((
             Node {
@@ -277,6 +289,7 @@ fn chip_border(world: EnvKind, active: bool) -> Color {
 #[allow(clippy::too_many_arguments)]
 fn menu_input(
     keys: Res<ButtonInput<KeyCode>>,
+    mut slot: ResMut<crate::save::SaveSlot>,
     mut env: ResMut<EnvKind>,
     mut next: ResMut<NextState<AppState>>,
     mut sfx: MessageWriter<SfxEvent>,
@@ -338,6 +351,21 @@ fn menu_input(
                 }
             }
         }
+    }
+
+    // Resume: load the file, then fall through to the same transition a fresh
+    // deploy takes. The restore pass runs during spawn and puts the run back.
+    if keys.just_pressed(KeyCode::KeyC) && slot.present {
+        if let Some(save) = crate::save::read_save() {
+            slot.pending = Some(save);
+            sfx.write(SfxEvent::new(crate::audio::Sfx::Capture));
+            next.set(AppState::Playing);
+            return;
+        }
+        // The file is there but unreadable. Say so rather than silently
+        // starting a new run the player did not ask for.
+        slot.present = false;
+        sfx.write(SfxEvent::at(crate::audio::Sfx::Deny, 0.6));
     }
 
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
