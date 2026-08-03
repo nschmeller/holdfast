@@ -96,10 +96,43 @@ pub enum GameSet {
     Reap,
 }
 
+/// Android entry point.
+///
+/// `bevy_main` generates the JNI glue; the game itself is the same `run` every
+/// other platform calls, which is the whole reason the app definition lives in
+/// the library rather than in `main.rs`.
+#[cfg(target_os = "android")]
+#[expect(
+    unsafe_code,
+    reason = "the activity looks this symbol up by name; the body is safe"
+)]
+#[unsafe(no_mangle)]
+fn android_main(android_app: bevy::window::AndroidApp) {
+    bevy::window::ANDROID_APP
+        .set(android_app)
+        .expect("android app handed over twice");
+    run();
+}
+
+/// iOS entry point, called from the Xcode wrapper's `main`.
+///
+/// `extern "C"` and unmangled so the Swift/ObjC side can link it without a
+/// bridging header.
+#[cfg(target_os = "ios")]
+#[expect(
+    unsafe_code,
+    reason = "the Xcode wrapper links this symbol by name; the body is safe"
+)]
+#[unsafe(no_mangle)]
+pub extern "C" fn holdfast_main() {
+    run();
+}
+
 /// Build and run the game.
 ///
-/// Lives in the library rather than the binary so that integration tests
-/// and the iOS static library can both drive the same app definition.
+/// Lives in the library rather than the binary so that integration tests, the
+/// iOS static library and the Android activity all drive exactly the same app
+/// definition.
 pub fn run() {
     let mut app = App::new();
 
@@ -110,6 +143,12 @@ pub fn run() {
                     title: "HOLDFAST".into(),
                     resolution: WindowResolution::new(1280, 720),
                     present_mode: PresentMode::AutoVsync,
+                    // A phone owns its own frame; asking for a size or for
+                    // decoration there is meaningless, and asking to be
+                    // resizable stops the window manager honouring rotation.
+                    resizable: !cfg!(any(target_os = "ios", target_os = "android")),
+                    // Draw under the notch rather than letterboxing around it.
+                    recognize_rotation_gesture: true,
                     // Stop the browser from stealing the arrow keys and space
                     // bar, both of which are core controls.
                     prevent_default_event_handling: true,
@@ -121,6 +160,12 @@ pub fn run() {
             })
             .set(ImagePlugin::default_nearest()),
     );
+
+    // A backgrounded phone app that keeps simulating drains the battery and
+    // gets killed for it. Desktop and web stay continuous, because a player
+    // watching a second window still wants the fight to happen.
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    app.insert_resource(bevy::winit::WinitSettings::mobile());
 
     app.init_state::<AppState>()
         .init_resource::<rng::Rng>()

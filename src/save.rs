@@ -14,7 +14,6 @@
 //! how far they got, what they chose, what they took, and what they have seen.
 
 use std::fmt::Write as _;
-use std::fs;
 use std::path::PathBuf;
 
 use bevy::prelude::*;
@@ -265,18 +264,78 @@ fn runs(xs: &[i32]) -> Vec<(i32, i32)> {
 
 // -- where it lives ---------------------------------------------------------
 
-/// Path of the save file.
+/// Where a save lives, spelled differently per platform.
 ///
-/// Beside the executable rather than in a platform data directory: this game
-/// ships as a single binary you can put on a stick, and a save that travels
-/// with it is less surprising than one filed away somewhere per-OS.
+/// A browser has no filesystem, so the web build keeps the same text in
+/// localStorage. Both sides of this speak the same format, which means a save
+/// can be copied between them by hand if anyone ever wants to.
+#[cfg(not(target_arch = "wasm32"))]
+mod storage {
+    use super::PathBuf;
+    use std::fs;
+
+    /// Beside the executable rather than in a platform data directory: this
+    /// game ships as a single binary you can put on a stick, and a save that
+    /// travels with it is less surprising than one filed away per-OS.
+    #[must_use]
+    pub fn path() -> PathBuf {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+            .unwrap_or_default()
+            .join("holdfast-save.txt")
+    }
+
+    pub fn exists() -> bool {
+        path().exists()
+    }
+
+    pub fn read() -> Option<String> {
+        fs::read_to_string(path()).ok()
+    }
+
+    pub fn write(text: &str) -> Result<(), String> {
+        fs::write(path(), text).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod storage {
+    use super::PathBuf;
+
+    const KEY: &str = "holdfast-save";
+
+    fn store() -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok()?
+    }
+
+    #[must_use]
+    pub fn path() -> PathBuf {
+        PathBuf::from(KEY)
+    }
+
+    pub fn exists() -> bool {
+        read().is_some()
+    }
+
+    pub fn read() -> Option<String> {
+        store()?.get_item(KEY).ok()?
+    }
+
+    pub fn write(text: &str) -> Result<(), String> {
+        // Private-browsing modes refuse writes and throw. Reporting it beats a
+        // save button that silently does nothing.
+        store()
+            .ok_or_else(|| "no localStorage".to_string())?
+            .set_item(KEY, text)
+            .map_err(|_| "browser refused to store the save".to_string())
+    }
+}
+
+/// Where the save lives. Exposed mostly so a bug report can say.
 #[must_use]
 pub fn save_path() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_default()
-        .join("holdfast-save.txt")
+    storage::path()
 }
 
 /// Whether a run is waiting to be resumed.
@@ -295,7 +354,7 @@ pub struct SavePlugin;
 impl Plugin for SavePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SaveSlot {
-            present: save_path().exists(),
+            present: storage::exists(),
             ..default()
         })
         .add_systems(
@@ -381,8 +440,7 @@ fn collect(
 
 /// Write the run to disk. Returns what to tell the player.
 fn write_save(save: &SaveGame) -> String {
-    let path = save_path();
-    match fs::write(&path, save.encode()) {
+    match storage::write(&save.encode()) {
         Ok(()) => format!("Saved at {}", crate::common::format_time(save.elapsed)),
         Err(err) => format!("Could not save: {err}"),
     }
@@ -391,8 +449,7 @@ fn write_save(save: &SaveGame) -> String {
 /// Read the run back, if there is one.
 #[must_use]
 pub fn read_save() -> Option<SaveGame> {
-    let text = fs::read_to_string(save_path()).ok()?;
-    SaveGame::decode(&text)
+    SaveGame::decode(&storage::read()?)
 }
 
 #[derive(SystemParam)]

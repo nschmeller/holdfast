@@ -1,0 +1,198 @@
+<!doctype html>
+<!--
+  The itch.io shell.
+
+  Two jobs, in this order: put something on screen immediately, and never let
+  the player wonder whether it is broken. A Bevy wasm bundle is several
+  megabytes, which on a slow connection is long enough for a blank page to
+  read as a dead page - so the wordmark and a real progress bar are plain HTML
+  and CSS, present in the first packet, before a byte of wasm is fetched.
+
+  The bar tracks actual bytes received rather than animating on a timer. A fake
+  progress bar that finishes before the game does is worse than none.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>HOLDFAST</title>
+    <style>
+      :root {
+        --ink: #eef0f6;
+        --dim: #969cac;
+        --gold: #ffbe4a;
+        --green: #7ee880;
+        --bg: #04040a;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        /* The game owns the arrow keys and the space bar. */
+        overscroll-behavior: none;
+        touch-action: none;
+      }
+      #game-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        outline: none;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.1rem;
+        background:
+          radial-gradient(120% 90% at 50% 12%, #10142a 0%, #04040a 62%);
+        transition: opacity 0.45s ease;
+        z-index: 10;
+      }
+      #boot.done { opacity: 0; pointer-events: none; }
+      h1 {
+        margin: 0;
+        font-size: clamp(2.4rem, 9vw, 5rem);
+        letter-spacing: 0.14em;
+        font-weight: 700;
+      }
+      .tag { color: var(--gold); letter-spacing: 0.18em; font-size: clamp(0.6rem, 2.2vw, 0.85rem); }
+      .sub { color: var(--dim); font-size: clamp(0.65rem, 2vw, 0.8rem); }
+      #track {
+        width: min(460px, 74vw);
+        height: 8px;
+        border: 1px solid #2a2f45;
+        background: #0a0c18;
+      }
+      #bar {
+        height: 100%;
+        width: 0;
+        background: linear-gradient(90deg, var(--gold), var(--green));
+        transition: width 0.15s linear;
+      }
+      #status { color: var(--dim); font-size: 0.75rem; min-height: 1.2em; }
+      #hint {
+        color: var(--dim);
+        font-size: 0.7rem;
+        max-width: min(560px, 84vw);
+        text-align: center;
+        line-height: 1.7;
+      }
+      kbd {
+        border: 1px solid #333a52;
+        border-bottom-width: 2px;
+        border-radius: 3px;
+        padding: 0 0.32em;
+        color: var(--ink);
+      }
+      #failed { color: #ff6a5e; max-width: min(620px, 88vw); text-align: center; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game-canvas" tabindex="0"></canvas>
+
+    <div id="boot">
+      <h1>HOLDFAST</h1>
+      <div class="tag">FIVE SMALL WORLDS. ONE RULE: HOLD YOUR GROUND.</div>
+      <div class="sub">a survival command roguelite</div>
+      <div id="track"><div id="bar"></div></div>
+      <div id="status">fetching…</div>
+      <div id="hint">
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp;
+        <kbd>Space</kbd> plan &nbsp;·&nbsp; weapons fire themselves.<br />
+        Keyboard only. Click the page once so it can hear you.
+      </div>
+      <div id="failed" hidden></div>
+    </div>
+
+    <script type="module">
+      const boot = document.getElementById("boot");
+      const bar = document.getElementById("bar");
+      const status = document.getElementById("status");
+      const failed = document.getElementById("failed");
+
+      const show = (text) => { status.textContent = text; };
+      const die = (text) => {
+        status.textContent = "";
+        failed.hidden = false;
+        failed.textContent = text;
+      };
+
+      // Progress from real bytes. Servers do not always send Content-Length
+      // (compressed responses often omit it), so fall back to a slow crawl
+      // that never reaches 100% rather than inventing a number.
+      async function fetchWithProgress(url) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`${response.status} fetching ${url}`);
+        const total = Number(response.headers.get("content-length")) || 0;
+        if (!response.body) return new Uint8Array(await response.arrayBuffer());
+
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          const mb = (received / 1048576).toFixed(1);
+          if (total) {
+            const pct = Math.min(99, (received / total) * 100);
+            bar.style.width = `${pct}%`;
+            show(`${mb} MB of ${(total / 1048576).toFixed(1)} MB`);
+          } else {
+            bar.style.width = `${Math.min(92, received / 90000)}%`;
+            show(`${mb} MB`);
+          }
+        }
+        const bytes = new Uint8Array(received);
+        let at = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, at);
+          at += chunk.length;
+        }
+        return bytes;
+      }
+
+      (async () => {
+        try {
+          if (!("gpu" in navigator) && !document.createElement("canvas").getContext("webgl2")) {
+            die("This browser has neither WebGPU nor WebGL2. Try a recent Chrome, Edge or Firefox.");
+            return;
+          }
+
+          show("fetching…");
+          const init = (await import("./holdfast.js")).default;
+          const wasm = await fetchWithProgress("./holdfast_bg.wasm");
+
+          bar.style.width = "100%";
+          show("starting…");
+          // One frame so the bar paints at 100% before the main thread is
+          // taken over by module instantiation.
+          await new Promise((r) => requestAnimationFrame(r));
+
+          await init({ module_or_path: wasm });
+
+          boot.classList.add("done");
+          setTimeout(() => boot.remove(), 500);
+          document.getElementById("game-canvas").focus();
+        } catch (error) {
+          console.error(error);
+          die(`Could not start: ${error}`);
+        }
+      })();
+
+      // Keep focus on the canvas; a keyboard-only game that has lost focus
+      // looks exactly like a frozen one.
+      addEventListener("pointerdown", () => document.getElementById("game-canvas")?.focus());
+    </script>
+  </body>
+</html>

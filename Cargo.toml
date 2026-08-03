@@ -14,6 +14,9 @@ homepage = "https://github.com/nschmeller/holdfast"
 [lib]
 name = "holdfast"
 path = "src/lib.rs"
+# `staticlib` for the iOS wrapper to link, `cdylib` for the Android activity to
+# load, `rlib` so the binary and the tests keep using it as an ordinary crate.
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
 name = "holdfast"
@@ -25,6 +28,13 @@ default = []
 # into real system and component names. Costs a full rebuild of Bevy, so it is
 # opt-in: `cargo run --features debug-names` when a schedule conflict appears.
 debug-names = ["bevy/debug"]
+
+# Web-only. `web-sys` is already in the tree for any wasm Bevy build; naming
+# it here just lets the save system reach localStorage, since a browser has no
+# filesystem to write a save file to. Native builds are untouched and still
+# carry nothing but Bevy.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
 
 [dependencies]
 # Zero non-Bevy dependencies on purpose: every mesh, material, sound and font
@@ -43,7 +53,13 @@ bevy = { version = "0.19", default-features = false, features = [
 # below is switched off because it actively fights Bevy's idioms, and each one
 # says why.
 [lints.rust]
-unsafe_code = "forbid"
+# `deny`, not `forbid`, for exactly one reason: iOS and Android both need a
+# C-ABI entry point, and `#[unsafe(no_mangle)]` is unsafe in edition 2024.
+# `forbid` cannot be granted an exception even for that. Every use is still a
+# hard error unless it carries an `#[expect]` with a written reason, and today
+# there are exactly two - both of them FFI entry points in `lib.rs` that
+# contain no unsafe operations, only an unsafe attribute.
+unsafe_code = "deny"
 rust_2018_idioms = { level = "warn", priority = -1 }
 unused_qualifications = "warn"
 trivial_casts = "warn"
