@@ -84,6 +84,12 @@ def digest(s):
         out.append(blocked)
 
     head = f"[{s['state']}] {s['world']}  t={s['run']['elapsed']:.0f}s  kills={s['run']['kills']}"
+    frozen = s.get("game_time_frozen_for")
+    if frozen is not None and frozen > 2.0:
+        # The run clock stops on any modal screen. A tester measuring a speed
+        # across one gets zero movement in zero time and concludes the movement
+        # system is dead.
+        head += f"  (game time has been stopped for {frozen:.0f}s of real time)"
     fps = s.get("frames_per_sec")
     if fps is not None and fps < 30.0:
         # Worth shouting about: a simulation advancing in big steps makes every

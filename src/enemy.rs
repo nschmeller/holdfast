@@ -337,6 +337,13 @@ pub struct BossBarTarget;
 
 // -- the director -----------------------------------------------------------
 
+/// How much faster elites arrive while the player stands in a pool of light.
+///
+/// The pool's payoff is a quarter more damage, 1.4 health a second and the
+/// reward multiplier that comes with its threat contribution. Its cost has to be
+/// something that mounts, or a strong build simply lives there.
+const LIGHT_ELITE_URGENCY: f32 = 2.2;
+
 /// When the first boss arrives.
 ///
 /// It used to be 115 seconds, the same as every boss after it, and that is where
@@ -443,6 +450,7 @@ fn direct_spawns(
     art: Res<GameArt>,
     mut rng: ResMut<Rng>,
     mut hints: ResMut<crate::onboarding::HintQueue>,
+    pools: Res<crate::world::LightPools>,
     player: Query<&Body, With<Player>>,
 ) {
     let dt = time.delta_secs();
@@ -494,7 +502,19 @@ fn direct_spawns(
     }
 
     // -- elites -------------------------------------------------------------
-    director.elite_timer -= dt * threat.spawn_mult().min(3.0);
+    // Bright ground draws the dangerous things. This is the cost the light pool
+    // was documented as having and did not: the +0.45 it adds to the threat
+    // floor turned out to be about half of what standing in one is worth, and a
+    // falsification pass measured a build pinned at 100% HP inside a pool while
+    // the same build at *lower* density outside it was losing 8 to 16 per cent
+    // in seconds. Elites arriving faster is a cost that grows the longer you
+    // stay, which a flat number cannot be.
+    let lit = player
+        .iter()
+        .next()
+        .is_some_and(|body| pools.contains(body.pos));
+    let urgency = if lit { LIGHT_ELITE_URGENCY } else { 1.0 };
+    director.elite_timer -= dt * threat.spawn_mult().min(3.0) * urgency;
     if director.elite_timer <= 0.0 {
         director.elite_timer = (34.0 - minutes * 1.4).max(9.0);
         let count = 1 + (threat.effective() / 3.0) as usize;
@@ -1304,6 +1324,19 @@ mod tests {
     }
 
     // -- status effects -----------------------------------------------------
+
+    #[test]
+    fn standing_in_the_light_costs_something_that_mounts() {
+        // A flat threat contribution turned out to be about half of what a pool
+        // is worth: a build pinned at 100% HP inside one was losing 8 to 16 per
+        // cent in seconds at *lower* density outside it. A cost that grows the
+        // longer you stay is the only kind a strong build cannot simply absorb.
+        let urgency = LIGHT_ELITE_URGENCY;
+        assert!(urgency > 1.5, "{urgency}x is not a deterrent");
+        // But bright ground must not be a death sentence either - it is a lever
+        // the player pulls, and a pool you cannot survive is just scenery.
+        assert!(urgency < 4.0, "{urgency}x makes the light unusable");
+    }
 
     #[test]
     fn the_first_boss_gives_more_room_than_the_rest() {

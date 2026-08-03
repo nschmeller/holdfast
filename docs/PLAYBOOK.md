@@ -1563,3 +1563,166 @@ carrying Laser Pointer specifically so a target-locking weapon is guaranteed to
 threaten the boss while it's near the rim, and fix or route around the
 screenshot capture bug so a fall can finally be confirmed on camera instead of
 inferred from a count going quiet.
+
+### assayer — falsification pass on three balance changes (round 8)
+Assignment: not exploration — verify or disprove three specific claims (crowd
+floor 0.58→0.68, first boss 115s→168s with a 9s warning, light pools now cost
++0.45 threat) with numbers, adversarially. Two runs, both on the patched
+binary: `assayer` (died 369.8s, level 29, 410 kills, peak threat 4.46,
+`assayer DESK 369.8 29 410 0 0 0 0 0 4.46 271 23940 1079 22 0.381`) and
+`assayer-2` (ended by `quit` mid-LevelUp, level 23, 254 kills, peak threat
+2.32, `assayer DESK 244.4 23 254 0 0 0 0 0 2.32 247 19962 821 16 0.381`).
+
+**Claim 1 (crowd floor): confirmed true, but the first six attempts to measure
+it produced a false negative that is worth its own warning.** Source:
+`CROWD_FLOOR = 0.68` in `src/player.rs`, predicting `8.4 * 0.68 = 5.712` u/s
+against an Ant's 4.97 ceiling. My first measurements — reading position with
+`pilot.py raw` before and after a separate `pilot.py do "flee N"` call —
+repeatedly showed **zero or near-zero net displacement** (0.02-1.7 units over
+4-13 "elapsed" seconds) even in open ground with no chasm/fort nearby, which
+looked exactly like the pre-fix "crowd traps you" bug reproducing. It wasn't.
+Two compounding measurement faults, both self-inflicted: (1) issuing a card
+`tap` and the next `flee` as **separate, sequential `Bash` tool invocations**
+adds real wall-clock round-trip latency between "the move command finished"
+and "I read the position" — during that idle gap, with no key held, the
+character is stationary by design, and that dead time was getting folded into
+the speed calculation as if the movement command had been running the whole
+time; (2) this build's AoE weapons (Ruler Sweep/Clip Orbit/Coffee Nova) kill
+fast enough in a 40+ enemy crowd to chain a level-up every 5-10 real seconds,
+and `AppState::LevelUp` gates **every** `GameSet` including `GameSet::Input`
+where `tick_threat` lives (`lib.rs`: all sets `run_if(in_state(Playing))`) —
+so the reported `t=` elapsed clock genuinely **freezes** the instant a card
+screen opens, and a `flee` issued right before that froze at zero elapsed,
+zero displacement, indistinguishable from a dead steering system. Confirmed
+directly: two `raw` reads 74 wall-seconds apart while parked in one long
+LevelUp chain returned byte-identical `t`. (This also means the "level-up
+doesn't pause damage" claim in a much earlier round's `diplomat` entry needs a
+caveat: `LevelUp` **is** a full simulation pause exactly like `SkillTree` —
+the damage that round saw bracketing a level-up happened in the `Playing`
+segments either side of it, not during it.)
+
+Fixed the measurement (one Python process: read state, append to `commands`,
+poll for `busy`-pickup then idle exactly like `pilot.py do`, read state again —
+no inter-call latency, no ambiguity about which segment was `Playing`) and
+re-ran it three times, at rising density, all in the open, no chasm/fort
+within 25m:
+
+| density (within 12m / total) | flee speed | outcome |
+|---|---|---|
+| 37 / 79-91 | **5.62 u/s** | within-12m 37→0 in 4.4s |
+| 36 / 90 | 4.43 u/s | within-12m 36→7 in 5.3s |
+| 53 / 134 | **5.77 u/s** | within-12m 53→4 in 5.3s |
+
+All three land at or slightly above the predicted 5.71 u/s floor and clear
+local density to near-zero inside about five seconds — including the
+task's explicit "100+ enemies, Ants and Moths" case (134 total, including
+Sugar Ant and Lamp Moth by name, both fast kinds). **The crowd floor fix
+works exactly as claimed. A crowd, even a genuinely enormous one, can no
+longer trap the player**, and the earlier zero-displacement readings were the
+harness, not the game — a fifth confirmation of the HANDOFF.md lesson that a
+system which looks broken from the bridge is usually the instrument.
+
+**Is wading now too cheap? No — it still costs real HP, measured directly.**
+Standing on `defend` while density built from 90→136 enemies (40→54 within
+12m) at threat 4.46 cost **258→123 HP, a 52% loss, in about 12 seconds**
+before I fled. In the second run's open-ground control (below), 60-73 within
+12m produced repeated single-digit-second drops of 12-16% of max HP. The
+floor prevents a permanent cage; it does not make crowds free, and a build
+that stops moving in one still bleeds.
+
+**One genuine, still-live danger the fix does not touch: stopping right after
+a successful flee.** The `assayer` run's death (369.8s) traces exactly here —
+`flee` performed correctly (53→4 within 12m in 5.3s, HP cost only ~8 points
+during the escape itself), but afterward I issued no further movement while
+reading state at 33% HP with Tack Lobbers (ranged elites) and a boss still in
+range; HP went 115→-23 over the following 11 real seconds to ranged fire, not
+melee density. The floor fixes melee encirclement; it has nothing to say
+about standing still at low HP within range of ranged attackers.
+
+**Claim 2 (first boss 168s, 9s warning): confirmed exactly, live.** Source:
+`FIRST_BOSS = 168.0`, `BOSS_INTERVAL = 115.0`, `BOSS_WARNING = 9.0` in
+`src/enemy.rs`. Live: THE STAPLER was absent at elapsed t=167.2 and present
+(`enemies.bosses: 1`) at t=169.0. Backing out the warning's timestamp through
+every LevelUp pause gap in between (the `wall` clock the pilot reports keeps
+running in real time through a pause; `elapsed` does not, so the gap between
+them at any instant is exactly the cumulative pause time) put the "SOMETHING
+IS COMING" hint at **elapsed≈159.2s** — 8.8s before landing, matching the
+design to within rounding. The *second* boss confirmed the interval
+independently: warned at t=274s, predicting a landing at 283s (168+115),
+which is exactly `BOSS_INTERVAL` later. **The early game is now
+survivable at this encounter**: the build meeting THE STAPLER at t≈168s was
+level 8-9 with 5-6 weapons (Pencil Dart, Stapler, Laser Pointer, Ruler Sweep,
+Clip Orbit) — precisely the "only about four weapons deep" profile the
+pre-fix dossier recorded dying to this exact boss at 125-141s — and this run
+survived the encounter itself outright, dying 200 seconds later to an
+unrelated dense/ranged situation. **The 9s warning is real reaction time**,
+confirmed by the second boss's announce-to-land gap holding at 9s exactly
+again. Caveat found in the same window, not a fault in the boss timer: my
+build had wandered into a fort/nest/chasm cluster right as the warning fired
+(HP crashed 152→77 in that stretch from the *fort*, not the boss) — the
+timer gives honest notice, but 9 seconds does not protect against an
+unrelated hazard already unfolding when it fires.
+
+**Claim 3 (light pools cost +0.45 threat): confirmed live, and the "is it now
+too strong" question has a real, if uncomfortable, answer.** `threat.
+from_light` read exactly `0.45` every single time sampled while
+`standing_in_it`. Ran a same-run, same-build, same-threat-dial A/B:
+
+- **In the pool** (level 6→22 build climbing through it), across 8+ separate
+  windows at threat 1.05-2.24 (reward 1.06x-2.65x) and density climbing from
+  16 to **54 within 12m / 114 total** (including a boss): HP was **pinned at
+  literally 100% of max in every single window** — the highest-density window
+  (41→54 within 12m) had HP go **93%→100%, a net increase**, while getting
+  hit continuously (nearest enemy 1.1-1.5m throughout).
+- **In the open**, same run, same weapons, same threat (2.24), **higher**
+  density (53-73 within 12m, up to 131 total): HP repeatedly dropped —
+  226→189 (-16%), 219→193 (-12%), 210→194 (-8%) inside single-digit-second
+  windows, none of which the pool comparison ever showed at equal-or-lower
+  density.
+- **But the pool is not build-independent.** A separate, deliberately
+  underpowered attempt (level 13, six low-level weapons, threat pushed to
+  4.59 — well past what the build could clear) died **inside the pool**, HP
+  178→-3 in under 10 real seconds at only 46-54 total enemies. Standing in
+  light does not rescue a matchup your weapons cannot win.
+
+**Verdict: the tax is real and it is doing about half its job.** It correctly
+gates the pool behind "your build has to already be coping" — an
+underlevelled character still dies there exactly as in the open, so it is not
+a universal safety blanket. But for any build capable of holding its own at
+all, the pool remains close to strictly dominant: it doesn't just reduce
+damage taken, it let HP climb while under sustained fire at the highest local
+density recorded this round for any strategy. A `+0.45` addition to the
+reward exponent's base is not enough to make "don't stand in the pool" a
+live decision once a run is past its shakiest early levels — whoever tunes
+this next should either raise the tax further or add a second cost (e.g. an
+explicit aggro pull, since `enemy.rs` still has no code that weights
+targeting toward light at all, confirmed again this round by grep) so the
+pool is a trade a strong build still has to weigh, not a corner it parks in.
+
+**Operational notes for whoever measures timing/position next.** (1) Do not
+issue two commands that depend on each other's outcome as separate parallel
+tool calls — the task's own instructions call this out and I violated it
+early this round, which is very likely what produced several of the "stuck"
+readings before I caught it. (2) For any speed/HP-rate measurement, write a
+single script that appends to `commands` and polls `busy`→idle in one
+process; two separate `pilot.py do`/`pilot.py raw` invocations have enough
+their own overhead to contaminate a 3-5 second window. (3) `goto` still gives
+up short fairly often near any density ("ran out of time working round
+something in the way") — pass a third argument or reissue; this happened four
+times this round, always recovered on retry. (4) `frames_per_sec` never
+dropped below ~55 in any reading this round despite six concurrent instances
+on the shared machine — no measurement here is stutter-suspect. (5) `quit`
+sent while a `LevelUp` card was open still wrote a dossier row correctly, but
+the process itself lingered several seconds past the "quit requested" log
+line before actually exiting — not investigated further, did not block
+anything.
+
+Next: whoever plays after this should (a) push the light-pool question the
+other direction — try an even *stronger* build in a pool at the threat
+dial's 8.00 ceiling and see whether HP can be held at 100% indefinitely, which
+would make the "raise the tax further" recommendation above urgent rather
+than optional; (b) the ranged-death-after-a-successful-flee pattern found
+here (Tack Lobbers finishing a run that had already escaped melee range)
+is a new failure mode nobody has named before and is worth a dedicated look —
+does `flee`/`kite` account for ranged attackers' effective range at all, or
+only melee proximity?

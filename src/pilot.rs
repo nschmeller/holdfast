@@ -824,6 +824,8 @@ struct Pilot {
     seq: u64,
     /// Updates since the run began, for the frame-rate figure.
     frames: u64,
+    /// Real seconds accumulated while the game was actually running.
+    game_wall: f32,
     since_snapshot: f32,
     wall: f32,
     prev: Previous,
@@ -855,6 +857,7 @@ impl Pilot {
             problems: Vec::new(),
             seq: 0,
             frames: 0,
+            game_wall: 0.0,
             since_snapshot: SNAPSHOT_PERIOD,
             wall: 0.0,
             prev: Previous::default(),
@@ -1048,6 +1051,9 @@ fn run_queue(
     let dt = time.delta_secs();
     pilot.wall += dt;
     pilot.frames += 1;
+    if *state.get() == AppState::Playing {
+        pilot.game_wall += dt;
+    }
 
     for key in std::mem::take(&mut pilot.tapped) {
         if !pilot.held.contains(&key) {
@@ -1438,6 +1444,17 @@ fn write_snapshot(
     // so a client watching only that stopped waiting while a forty-second kite
     // was still running and reported on a game state it had not seen yet.
     json.flag("busy", pilot.active.is_some());
+    // Game time against real time. Every `GameSet` is gated on `AppState::Playing`,
+    // so the run clock genuinely stops while a card screen is open - two reads
+    // seventy-four wall-seconds apart returned an identical `t`. A tester
+    // measuring a speed across that gap gets zero movement in zero time, which
+    // is indistinguishable from a dead movement system, and one spent six
+    // measurements chasing it.
+    json.num("wall_clock", pilot.wall);
+    json.num(
+        "game_time_frozen_for",
+        (pilot.wall - pilot.game_wall).max(0.0),
+    );
     // Frames a second, averaged over the run. A tester needs this to know
     // whether the simulation is running smoothly or stepping: an unfocused
     // window can be throttled by the platform, and a game advancing in
