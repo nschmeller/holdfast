@@ -419,6 +419,7 @@ fn rebuild_grid(
     mut grid: ResMut<EnemyGrid>,
     player: Query<&Body, With<Player>>,
     q: Query<(Entity, &Body, &Enemy)>,
+    nests: Query<(Entity, &Body, &Damageable), (With<crate::forts::Nest>, Without<Enemy>)>,
 ) {
     let center = player.iter().next().map_or(Vec2::ZERO, |b| b.pos);
     grid.rebuild(center);
@@ -428,6 +429,28 @@ fn rebuild_grid(
             pos: body.pos,
             radius: body.radius,
             is_boss: enemy.kind.is_boss(),
+        });
+    }
+    // Nests too, or they cannot be shot at all.
+    //
+    // A nest carries `Health` and a `Damageable`, and the whole design says they
+    // are cleared rather than captured - "the only way to reduce ambient
+    // pressure". But every player, ally and turret weapon finds its targets
+    // through this grid, and the grid was built solely from things with an
+    // `Enemy` component, which a nest has never had. So nothing the player owns
+    // could ever damage one, `deed:nest-cleared` was unreachable in eleven
+    // rounds of play, and I told the user spawners were destructible and gave
+    // them a health ring that nothing could ever move. Both were wrong.
+    for (entity, body, damageable) in &nests {
+        if !damageable.hostile_target {
+            continue;
+        }
+        grid.insert(GridEntry {
+            entity,
+            pos: body.pos,
+            radius: body.radius,
+            // Not a boss: weapons that prefer bosses should not prefer a nest.
+            is_boss: false,
         });
     }
 }

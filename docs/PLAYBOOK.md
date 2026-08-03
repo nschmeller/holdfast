@@ -2740,3 +2740,236 @@ before a wave-7-scale assault lands — nobody has bought it with that timing
 in mind. And the pilot-crash-vs-pilot-deadlock distinction above deserves a
 source read of `src/pilot.rs` by someone not mid-assignment, to confirm
 whether they really are two different failure paths.
+
+### cartographer — the content sweep finished, and two categories that were never completable (round 11)
+
+Assignment: drive `pilot.py todo`'s checklist from 44/63 (69.8%) as high as it
+would go, across all five worlds, and report exactly what remains and why.
+**Result: 58/63 (92.06%), and the remaining five items are dead — two
+different, fully source-verified, unfixable-by-play gaps, not a skill
+problem.** Read every world, every turret, every hazard and `dash` before
+touching a controller; the coverage arithmetic (63 total: 5 worlds + 10
+weapons + 12 enemies + 5 turrets + 4 allies + 4 factions + 4 hazards + 19
+deeds) was worked out from `coverage::expected()` directly and matches the
+game's own `fraction` field exactly at every checkpoint below.
+
+**What closed, and how:**
+- **All 5 worlds** toured (DESK already done; WILD, CITY, GRID, ARCANE
+  visited this round) — quick in-and-out via `ESC` → `BACKSPACE` → arrow →
+  `ENTER`, no need to survive long once the `world:` tag fires on deploy.
+- **All 5 turret kinds.** Only `Generator` was missing; built in Plan Mode
+  (`5`, nudge, `ENTER`) the moment `unlocks.build` (45s) allowed it, twice,
+  since a death lost the first build before it was confirmed. No research
+  gate on any turret kind — cost is Scrap only, confirmed reading
+  `command.rs::plan_actions` (`if !unlocks.build`, nothing else).
+- **All 4 hazards**, including the two the task flagged as fixed. `hazard:
+  Shock` fired just from `roam`-ing through Grid Zero — plasma conduits are
+  common enough (up to 3 per chunk, unconditional, `grid.rs:129`) that a
+  30-second wander crossed one unaided. `hazard:Font` fired the same way in
+  Arcane. Both confirmed by source before confirming live: `world.rs`'s
+  chunk-spawn path (which is what places every hazard in the infinite world,
+  DESK included) hard-codes `hurts_player: true` for every `HazardSpec`
+  regardless of kind (`world.rs:454-455`), so the coverage write in
+  `player.rs::apply_hazards_to_player` — unconditional, before the damage
+  sign is even checked — fires for Font exactly as it does for Scald.
+- **`dash` and what it actually does.** `SHIFT` (`ShiftLeft`/`ShiftRight`,
+  confirmed in `src/pilot.rs:496` and `tools/pilot.py`'s own key table) is a
+  **0.18-second burst at 3.2× current move speed, 3-second cooldown** (all in
+  `src/player.rs`: `dash.active = 0.18`, `body.vel = ddir * speed * 3.2`,
+  `dash.cooldown = stats.dash_cooldown` = 3.0 base). It carries **no i-frames
+  and no crowd-immunity** — I read `combat.rs`/`common.rs` end to end
+  looking for a dash-gated invulnerability window and found none;
+  `health.invuln` is a generic 0.35s post-hit window unrelated to dashing,
+  and the dash's own speed multiplier still gets multiplied by
+  `crowd_speed(pressing)`, so dashing out of a packed crowd is slower than
+  dashing in the open. Verdict: it is a **repositioning tool, not an escape
+  button** — closes or opens 2-3 units of distance almost instantly, useful
+  for stepping across a hazard strip in one frame of exposure or snapping
+  onto a chasm-adjacent line, useless as an "oh no" panic key against a
+  crowd already on top of you. Eleven rounds never pressed it because
+  nothing in the onboarding hints says to, and it does not look like it
+  matters until you specifically need 3 units *right now*.
+- **`research` and `war-incited`.** Bought a cheap Might-branch node the
+  moment `unlocks.research` (230s) allowed it — any node fires `deed:
+  research`, not just the Command-branch ones. Whisper Campaign (Command
+  branch, row 5 of 7 by insertion order, `ArrowRight`×3 then `ArrowDown`×5
+  from the tree's default cursor) needs 14 Cores and 2 Skill Points and only
+  sells if `powers.feuding_pair()` is `Some` — confirmed by source
+  (`screens.rs`'s `useful` check) and live (bought it the instant "A WAR CAN
+  BE INCITED NOW" showed in the digest; `WARS SWARM vs BLOOM (45s)` appeared
+  in the next tick). Cores are the bottleneck, not Skill Points — they only
+  drop from elite/boss kills (`pickups.rs`: `is_boss || is_elite ||
+  rng.chance(0.015)`) and must be *walked over*, so a pure-kite build starves
+  on them for a long time; farming zones/forts for the passive core trickle
+  (`FORT_CORES`, `held * 0.05/s` from zones) is the reliable path.
+- **`far-country` (2000 units).** Not attempted incrementally — used
+  `HOLDFAST_UNLOCK/TOUGH/RICH` devtools flags (explicitly documented in
+  `devtools.rs` as existing "so a content sweep is not a survival test") for
+  one dedicated life, then a single `goto 700 2000 600` from mid-map. Landed
+  at `(701, 1999)`, comfortably past the threshold, in one `do` call. The
+  `travel_budget` formula's `TRAVEL_SPEED=3.2` assumption (deliberately
+  conservative vs. the real ~8.4) meant the 600s ceiling was never actually
+  binding.
+- **`enemy:BossLamp`.** This is the one that cost the session. See below.
+
+**`deed:nest-cleared` is not a skill gap — it is unreachable by any current
+combat system, confirmed by reading every damage pathway in the codebase,
+not just by failing to trigger it in play.** A `Nest` (`forts.rs::
+place_nests`) is spawned with `Health`, `Damageable{hostile_target: ...}` and
+`Allegiance`, but **no `Enemy` component, ever, from any code path** —
+confirmed by `grep -rn "insert(Enemy\|Enemy {" src/*.rs`, which returns
+exactly one hit (`enemy.rs`'s own ordinary-monster spawner). Meanwhile,
+**every single player-side damage system without exception routes through
+`EnemyGrid`**, built exclusively from `Query<(Entity, &Body, &Enemy)>`
+(`combat.rs::rebuild_grid`): every weapon's aim/collision
+(`weapons.rs`, `grid.for_each_near`/`best_visible_target`), AoE splash
+(`combat.rs::move_projectiles`'s splash branch, same `grid`), and every
+turret and ally's targeting (`allies.rs::turret_think`/`ally_think`, same
+`grid.best_visible_target`/`nearest_visible`). A Nest, lacking `Enemy`,
+**never enters that grid and therefore can never be the target of a
+`DamageEvent` from the player, an ally, or a turret** — I grepped every
+`DamageEvent {` writer in the codebase (13 sites) and each is either grid-gated
+(player-side) or filtered to `hostile_target`/`With<Enemy>` (enemy-side
+contact damage, which also can't reach a Nest). `reap_nests` faithfully
+checks `health.is_dead()` every frame, but nothing can ever make that true.
+This is corroborated, not just theorized: across ten prior rounds and
+several hundred combined minutes of fort-adjacent play (many of them
+specifically testing nests — `marshal`, `viceroy`, `legate`), nobody has
+ever triggered `nest-cleared`, which a 60-HP structure sitting in the open
+should not survive by accident this consistently. I stood directly on top
+of nests point-blank multiple times this round (once at 2-9m from three
+different SWARM/VOID nests simultaneously) specifically to test this and
+confirmed it live: full engagement, zero coverage movement, every time.
+**This is the same class of bug the `tourist` round found for hazards
+(a checklist entry with no writer anywhere) — just never caught for
+Nests specifically.** Fix would be one line: give `Nest` an `Enemy`
+component (perhaps a new `EnemyKind` or a zero-XP/zero-damage variant) so it
+enters the grid, or add a Nest-specific branch to the splash/AoE damage
+paths. I did not make this change myself — it's a design decision (should
+nests be shootable by ordinary fire, or only by something dedicated?) as
+much as a bug fix, and out of scope for a coverage-sweep round.
+
+**`faction:SWARM/RUST/BLOOM/VOID` is the same story, independently
+discovered, not mentioned in this round's brief.** `coverage::expected()`
+lists four `faction:{tag}` entries (`coverage.rs:128`,
+`for faction in Faction::MONSTERS`) — but `grep -rn "\"faction:"` and every
+variation of `Seen::of("faction"` / `Seen(format!("faction:...`
+across the entire `src/` tree returns **zero hits, anywhere**. Nothing
+ever marks a faction seen — not on first sighting, not on a kill, not on a
+fort capture, not on a war being incited (which touches the same
+`Faction` type and would have been the obvious hook). I read
+`factions.rs::resolve_incitements` end to end, which is the one place a
+whole-faction event fires, and it writes `deed:war-incited` but never a
+`faction:` tag for either side of the war. This is precisely the bug
+`tourist` (round 6) found for hazards before it was fixed — a checklist
+category with an enum-derived list and no writer — just never caught for
+factions in that pass. **Maximum coverage achievable given the current
+source is 63 − 1 (nest-cleared) − 4 (faction) = 58/63 = 92.06%, and this
+round reached exactly that.**
+
+**`enemy:BossLamp` — reachable in principle, brutally hard in practice, and
+finally landed, though attribution is genuinely uncertain.** Spent the large
+majority of this round's remaining time on this single item across four
+separate lives (`cartographer-devtools-final-push`,
+`-bosslamp-focused`, `-bosslamp-manual`, `-bosslamp-turretring`), because
+the first three all failed outright with the boss's health bar visibly
+un-dented in screenshots (`THE STAPLER` sat above 90% HP after several
+hundred kills and sustained Laser Pointer fire) despite the "Giant Killer"
+(25 bosses) lifetime achievement already having fired earlier in the
+session, proving bosses genuinely do die under *some* build. Worked out why
+from source: boss HP is `s.hp (2100 base) * enemy_power(threat, clock,
+level)`, and `enemy_power = time_power * threat.power_mult() * level_power
+* opening_grace` compounds multiplicatively with **all four** of elapsed
+time, threat, and player level simultaneously — at a representative
+mid-session state (level ~25, threat ~2.8, t~420s) that multiplier is
+already ~22×, i.e. a ~46,000 HP boss, and `enemy.rs`'s `cycle_scale = 1.0 +
+boss_cycle * 0.85` adds a further +85% **every time all three boss kinds
+have cycled once**, so a Lamp met on a *later* rotation is harder again on
+top of the ambient scaling. Against that, a solo weapon kit's realistic
+single-target DPS (only `LaserPointer` guarantees boss-preference via
+`best_visible_target`'s boss-first sort in `combat.rs::best_target_where`;
+every other weapon and every turret shares that same preference but dilutes
+across the crowd) is nowhere close, which is exactly why the meta this
+playbook already documents (`fortress`/`castellan`-style turret rings) is
+necessary, not decorative. What worked: a **turret ring built at spawn
+before the boss ever arrives** (11 Tack Turrets, later thinned by attrition
+to 5-9, plus 2-4 allies on `Hold`), kept *stationary* near t=398-420s rather
+than roaming, so ambient density stayed in the low hundreds instead of the
+thousands my earlier free-roaming attempts produced. The `enemy:BossLamp`
+tag appeared in the shared coverage file by the time this life ended (quit
+at t=719s, level 64) — but I cannot swear it was *this* life's kill rather
+than a concurrent agent session's (see the concurrency finding below); I
+watched `THE DESK LAMP` spawn and never watched it die on screen. Report
+this as "closed, mechanism understood, exact moment unconfirmed" rather than
+claiming a clean kill I didn't personally witness.
+
+**A live, uncommitted fix in the working tree explains the runaway density I
+kept hitting, and is worth flagging for whoever lands it.** `git diff
+src/forts.rs` (uncommitted during this session) adds `director.alive`
+bookkeeping to fort assaults, wardens *and* nest spawns, with a comment
+reading almost exactly like my own notes: "a 25-minute run measured 713 live
+enemies against a cap of 320, still climbing... a holding now waits its turn
+like everything else." Every one of my long lives this round independently
+hit exactly that wall (1461, 786, 435+ concurrent enemies against a nominal
+`Director::cap = 320`) before I found this diff and understood why. Whoever
+lands it should re-verify boss-killability at a *properly capped* density —
+it may make solo boss kills meaningfully easier by concentrating trickle
+spawns rather than letting nests mint on top of an already-full field.
+
+**A real, small, source-confirmed asymmetry in Font (Arcane's ley hub):**
+the design comment and this round's task brief both say it "heals whoever
+stands in it, friend or foe" — true for enemies
+(`combat.rs::apply_hazards_to_enemies` has an explicit `else if hazard.dps <
+0.0 { health.heal(...) }` branch, comment: "Ley lines heal the enemy too.
+That is the whole point of contesting them") but **not true for the
+player**: `player.rs::apply_hazards_to_player` only has `if hazard.dps > 0.0
+{ damage.write(...) }` — no `else` branch at all for negative dps, so
+standing in a Font as the player does nothing (not even the coverage tag is
+gated on this; that fires unconditionally before the dps check, which is
+why `hazard:Font` was still reachable despite the healing itself being
+dead code for the player side). Cheap to fix (mirror the enemy-side branch)
+if the intent really is "friend or foe."
+
+**Two operational findings, one requested by the coordinator.** (1) The
+build's shared machine runs several concurrent agent sessions
+(`coroner`, `critic`, others seen this round) against the **same**
+`target/debug` build output, including the *same*
+`holdfast-coverage.txt` and `holdfast-runs.tsv`. Coverage is loaded once
+per-process at launch and persisted as that process's own accumulated
+superset on every new mark — two processes racing do not merge, the
+later write wins outright, so a fast-moving concurrent session can
+silently erase another's unique finds from the shared file (this is why
+BossLamp's exact attribution above is genuinely unknowable from the
+outside). `runs.tsv` picked up a dozen-plus `unstated`-labelled rows from
+another session mid-run, confirming the write contention is real, not
+theoretical. (2) Per the coordinator's request: **one instance this
+round did not exit for a long interval after `quit`** — `quit requested`
+logged immediately, but the process (a distinct PID, confirmed via `lsof`
+against my own pilot directory before touching anything) sat alive and
+`state.json` frozen at the same wall-clock value for well over two
+minutes before I killed it by PID. Every other `quit` this round (four of
+five) exited within single-digit seconds. Not the same eight-hour leak the
+coordinator described, but the same failure family — `quit` is not always
+honored promptly, and a second sighting seems worth them knowing about.
+
+**Numbers.** Coverage 44/63 (69.8%) → 58/63 (92.06%), the ceiling given
+current source. `holdfast-runs.tsv`: `cartographer-worldsweep` (three lives,
+DESK/DESK/ARCANE, up to 407s/L16/322 kills); `cartographer-devtools-
+final-push` 1304.7s/L174/2093 kills/peak threat 7.00 (devtools-assisted,
+labelled honestly); `cartographer-bosslamp-focused` 989.0s/L156/3481 kills;
+`cartographer-bosslamp-manual` 575.1s/L37/475 kills (manual card picks,
+Laser Pointer rushed); `cartographer-bosslamp-turretring` 718.8s/L64/799
+kills/5 structures/1 ally/1 zone, the life the Lamp credit landed during.
+
+**Next.** Fix the two dead-writer categories (`Nest` needs an `Enemy`
+component or a splash-damage carve-out; `faction:` needs one
+`Seen::of("faction", tag)` call, most naturally in whatever system already
+knows a faction is nearby — `NearbyPowers`'s own update loop, or
+`resolve_incitements`) and coverage becomes genuinely completable at 100%
+for the first time since the checklist existed. Once that's live: get a
+*clean, witnessed* BossLamp kill (screenshot the health bar hitting zero, not
+just the coverage tag appearing) under the now-capped density, since this
+round's finish was real but not fully verified. And give `dash` a real test
+of its claimed niche — hopping across a Grid plasma conduit or a Scald pool
+mid-fight in the single frame the 0.18s burst buys, which nobody (including
+me) has specifically tried.

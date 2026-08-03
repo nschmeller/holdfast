@@ -254,6 +254,7 @@ fn note_milestones(
     equipped: Res<crate::progress::Equipped>,
     zones: Query<&crate::allies::Zone>,
     player: Query<&crate::common::Body, With<crate::player::Player>>,
+    nearby: Query<&crate::factions::Allegiance, With<crate::enemy::Enemy>>,
     mut seen: MessageWriter<Seen>,
 ) {
     if progression.level >= 10 {
@@ -276,6 +277,15 @@ fn note_milestones(
     }
     if player.iter().any(|body| body.pos.length() >= 2000.0) {
         seen.write(Seen(String::from("deed:far-country")));
+    }
+    // Meeting a faction's monsters is what counts as having seen the faction.
+    // These four tags were on the checklist with no writer anywhere, which is
+    // the third time this exact class has capped the sweep below 100% - after
+    // the hazards and the deeds. Derived from what is actually on the field.
+    for allegiance in &nearby {
+        if allegiance.0 != Faction::Player {
+            seen.write(Seen::of("faction", allegiance.0.tag()));
+        }
     }
 }
 
