@@ -212,6 +212,35 @@ What a fort is now, since all of this is new:
 - The pilot reports `garrison` per fort, so a meter that will not move tells you
   why.
 
+**Faction wars have never once fired, and now do.** Three separate faults, each
+enough on its own:
+
+1. `resolve_incitements` ran in `GameSet::Think`, which only runs while playing.
+   The request is written by the *research screen*, which is its own state, so
+   nothing ever read it and the message expired two frames later. Buying a war
+   could only have worked if you closed the screen within about thirty
+   milliseconds.
+2. **Nothing in the ambient world had a faction.** Allegiance was stamped only by
+   forts and nests; the wave director's horde - almost every monster anyone
+   meets - had none. So "the two strongest powers nearby" could only find two
+   while standing between two nests. Every enemy now belongs to whoever owns the
+   ground it stands on, so the regions are real in ordinary play.
+3. The purchase was irreversible and the failure was a transient hint. The
+   research screen now **refuses to sell a war it cannot start** and says why on
+   the node.
+
+Verified: bought at level 10 near the landing site, `wars` read
+`SWARM vs BLOOM (44s)`, hint "THE BLOOM TURNS ON THE SWARM. They are not looking
+at you." The pilot now reports `war_available` and a `nearby` strength per
+faction, so you can see whether a war is buyable before spending on it.
+
+**A zone can now be garrisoned.** Zones decay to neutral when abandoned - that
+is deliberate, a flag in open ground is not a place - but only the player and
+allies counted as presence, and allies follow you and cap at four. So a second
+zone cost you the first. **Turrets now count at half a body**, on zones exactly
+as on forts. Two turrets hold a quiet zone; twelve monsters still take it. Nobody
+has held more than one zone at a time yet, and now it is possible.
+
 Other operational fixes:
 
 - **Arrow keys answer to any spelling** — `UP`, `ArrowUp`, `arrow_up` all work.
@@ -228,6 +257,12 @@ Other operational fixes:
 - **Research costs skill points as well as Cores** on the repeatable nodes (1)
   and on Whisper Campaign and Blood Feud (2). Skill points arrive every third
   level and previously bought nothing at all.
+- **A key delivered into a modal screen is now reported.** A `tap 3` meant for
+  structure selection is "take card three" if a level-up opened partway through
+  the batch, and the turret is silently never selected.
+- **Do not `pkill -f "target/debug/holdfast"`.** It kills every other agent's
+  instance mid-measurement - this happened three times in round 3. Send
+  `pilot.py do $PT "quit"` to your own instance instead.
 
 ## Fixed since round 2, so old measurements are stale
 
