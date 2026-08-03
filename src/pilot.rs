@@ -822,6 +822,8 @@ struct Pilot {
     /// and reported the former. These stay.
     problems: Vec<(f32, String)>,
     seq: u64,
+    /// Updates since the run began, for the frame-rate figure.
+    frames: u64,
     since_snapshot: f32,
     wall: f32,
     prev: Previous,
@@ -852,6 +854,7 @@ impl Pilot {
             events: Vec::new(),
             problems: Vec::new(),
             seq: 0,
+            frames: 0,
             since_snapshot: SNAPSHOT_PERIOD,
             wall: 0.0,
             prev: Previous::default(),
@@ -1044,6 +1047,7 @@ fn run_queue(
 ) {
     let dt = time.delta_secs();
     pilot.wall += dt;
+    pilot.frames += 1;
 
     for key in std::mem::take(&mut pilot.tapped) {
         if !pilot.held.contains(&key) {
@@ -1434,6 +1438,18 @@ fn write_snapshot(
     // so a client watching only that stopped waiting while a forty-second kite
     // was still running and reported on a game state it had not seen yet.
     json.flag("busy", pilot.active.is_some());
+    // Frames a second, averaged over the run. A tester needs this to know
+    // whether the simulation is running smoothly or stepping: an unfocused
+    // window can be throttled by the platform, and a game advancing in
+    // one-second steps would make every measurement taken from it a lie.
+    json.num(
+        "frames_per_sec",
+        if pilot.wall > 0.0 {
+            pilot.frames as f32 / pilot.wall
+        } else {
+            0.0
+        },
+    );
     match pilot.active.as_ref().and_then(|a| a.steer) {
         Some(steer) => json.text("steering", &format!("{steer:?}")),
         None => json.maybe("steering", None),

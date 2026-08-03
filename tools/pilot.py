@@ -84,6 +84,11 @@ def digest(s):
         out.append(blocked)
 
     head = f"[{s['state']}] {s['world']}  t={s['run']['elapsed']:.0f}s  kills={s['run']['kills']}"
+    fps = s.get("frames_per_sec")
+    if fps is not None and fps < 30.0:
+        # Worth shouting about: a simulation advancing in big steps makes every
+        # measurement taken from it suspect.
+        head += f"  !! ONLY {fps:.0f} FPS - measurements from this run are suspect"
     out.append(head)
 
     # At the menu there is no run, and the resources still hold the last one's
