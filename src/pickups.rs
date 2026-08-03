@@ -292,6 +292,15 @@ fn spawn_pickup(
 }
 
 /// Drops arc out, land, then home in once the player is close enough.
+/// How far away a dropped pickup will still find its way home.
+///
+/// Generous enough to cover a defended position and everything shooting from
+/// it, short enough that the far country does not quietly mail you its loot.
+const DRIFT_RANGE: f32 = 60.0;
+
+/// How fast it drifts. Well under walking pace: collecting is still faster.
+const DRIFT_SPEED: f32 = 3.2;
+
 fn magnetise(
     time: Res<Time>,
     stats: Res<PlayerStats>,
@@ -322,12 +331,26 @@ fn magnetise(
         }
 
         let to_player = player_body.pos - body.pos;
-        if pickup.settle <= 0.0 && (pickup.attracted || to_player.length_squared() <= radius_sq) {
+        if pickup.settle > 0.0 {
+            transform.translation = to_world(body.pos, alt.y);
+            continue;
+        }
+
+        let dist = to_player.length().max(0.001);
+        if pickup.attracted || dist * dist <= radius_sq {
             pickup.attracted = true;
             // Accelerating attraction feels far better than constant speed.
-            let dist = to_player.length().max(0.001);
             let speed = 9.0 + (stats.pickup_radius - dist).max(0.0) * 4.5;
             body.pos += to_player / dist * speed * dt;
+        } else if dist <= DRIFT_RANGE {
+            // Everything else drifts home slowly.
+            //
+            // Without this, anything your defences kill at range drops loot you
+            // never reach: a strategist measured that a turret ring "pays the
+            // owner nothing", which is not quite true - the orbs existed, forty
+            // metres away, and the whole point of the build is not going there.
+            // Slow on purpose, so walking to a kill is still quicker.
+            body.pos += to_player / dist * DRIFT_SPEED * dt;
         }
 
         transform.translation = to_world(body.pos, alt.y);

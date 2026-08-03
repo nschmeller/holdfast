@@ -311,6 +311,79 @@ impl Cmd {
     }
 }
 
+/// The least crowded bearing out of a crush.
+///
+/// Steering off the single nearest enemy is what a naive kiter does, and it
+/// fails exactly when it matters: inside an encirclement the nearest enemy
+/// changes every frame, the chosen direction flips with it, and the net
+/// displacement is nothing. A strategist measured that - "movement produces no
+/// positional change for several seconds while damage keeps landing" - and
+/// blamed the game. It was the steering.
+///
+/// Summing inverse-square repulsion from everything nearby gives a bearing
+/// that points at the actual gap in the ring, and is stable frame to frame
+/// because it moves only as the whole crowd moves.
+fn escape_vector(foes: &Query<&Body, With<Enemy>>, pos: Vec2, previous: Vec2) -> Option<Vec2> {
+    const REACH: f32 = 14.0;
+    let mut push = Vec2::ZERO;
+    let mut any = false;
+    for body in foes {
+        let delta = pos - body.pos;
+        let dist = delta.length();
+        if !(1e-3..=REACH).contains(&dist) {
+            continue;
+        }
+        any = true;
+        // Inverse square: the ones about to touch you dominate, but a gap on
+        // the far side still pulls.
+        push += delta / (dist * dist * dist);
+    }
+    if !any {
+        return None;
+    }
+    Some(blend_escape(push, previous))
+}
+
+/// Commit to a bearing rather than recomputing one from scratch each frame.
+///
+/// A ring that is nearly symmetric sums to nearly zero, and normalising a
+/// nearly-zero vector turns a rounding difference into a ninety-degree turn -
+/// the player then dithers on the spot, which is the very thing the summed
+/// field was meant to fix. My own stability test caught this. Blending with the
+/// previous bearing gives the hysteresis a real player has: once you have
+/// chosen a way out, you keep going that way unless the crowd genuinely moves.
+#[must_use]
+pub fn blend_escape(push: Vec2, previous: Vec2) -> Vec2 {
+    /// Below this the field carries no information: a ring that is nearly
+    /// symmetric cancels to nearly nothing, and normalising the remainder turns
+    /// a rounding difference into a ninety-degree turn.
+    const MEANINGFUL: f32 = 0.01;
+
+    let fallback = if previous == Vec2::ZERO {
+        // Perfectly surrounded with no history. Any committed direction beats
+        // standing still and being eaten.
+        Vec2::new(1.0, 0.0)
+    } else {
+        previous
+    };
+
+    if push.length() < MEANINGFUL {
+        return fallback;
+    }
+    let Some(fresh) = push.try_normalize() else {
+        return fallback;
+    };
+
+    // How much to trust the new reading. Normally a little, for steadiness -
+    // but when it points the *opposite* way, sticking with the old bearing
+    // would walk straight into the crowd, and a fixed blend of two opposed
+    // directions can never turn round at all. My own test caught that.
+    let weight = if previous.dot(fresh) < 0.0 { 0.55 } else { 0.3 };
+    (previous * (1.0 - weight) + fresh * weight)
+        .try_normalize()
+        .unwrap_or(fresh)
+}
+
 /// Which movement keys express a direction, as eight-way.
 ///
 /// The threshold is just under `sin(22.5 degrees)` scaled to the diagonal, so a
@@ -625,6 +698,8 @@ struct Pilot {
     label: String,
     /// Set by `note strategy=...`, forwarded to the run dossier.
     strategy: Option<String>,
+    /// The bearing last chosen out of a crowd, for hysteresis.
+    last_escape: Vec2,
     /// Notable changes since the last snapshot.
     events: Vec<String>,
     seq: u64,
@@ -653,6 +728,7 @@ impl Pilot {
             wander: Wander::default(),
             label,
             strategy: None,
+            last_escape: Vec2::ZERO,
             events: Vec::new(),
             seq: 0,
             since_snapshot: SNAPSHOT_PERIOD,
@@ -930,36 +1006,42 @@ fn run_queue(
                     .iter()
                     .map(|body| body.pos)
                     .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
-                match nearest {
-                    None => pilot.wander.step(pos, dt),
-                    Some(foe) => {
+                let escape = escape_vector(&foes, pos, pilot.last_escape);
+                pilot.last_escape = escape.unwrap_or(pilot.last_escape);
+                match (nearest, escape) {
+                    (None, _) => pilot.wander.step(pos, dt),
+                    (Some(foe), Some(escape)) => {
                         let gap = foe.distance(pos);
-                        let away = (pos - foe).normalize_or_zero();
                         if gap < KITE_RANGE * 0.8 {
-                            // Too close: back off, but circle rather than run
-                            // in a straight line, which walks into the next one.
-                            (away + Vec2::new(-away.y, away.x) * 0.7).normalize_or_zero()
+                            // Too close: leave along the least crowded bearing,
+                            // with a curl so it does not run into the next one.
+                            (escape + Vec2::new(-escape.y, escape.x) * 0.5).normalize_or_zero()
                         } else if gap > KITE_RANGE * 1.6 {
-                            -away
+                            (foe - pos).normalize_or_zero()
                         } else {
                             // At range: strafe, so the crowd never converges.
-                            Vec2::new(-away.y, away.x)
+                            Vec2::new(-escape.y, escape.x)
                         }
                     }
+                    (Some(foe), None) => (pos - foe).normalize_or_zero(),
                 }
             }
-            Steer::Chase | Steer::Flee => {
+            Steer::Chase => {
                 let nearest = foes
                     .iter()
                     .map(|body| body.pos)
                     .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
                 match nearest {
-                    // With nothing to chase or run from, keep exploring rather
-                    // than stand still - a frozen tester finds nothing.
+                    // With nothing to chase, keep exploring rather than stand
+                    // still - a frozen tester finds nothing.
                     None => pilot.wander.step(pos, dt),
-                    Some(foe) if steer == Steer::Chase => (foe - pos).normalize_or_zero(),
-                    Some(foe) => (pos - foe).normalize_or_zero(),
+                    Some(foe) => (foe - pos).normalize_or_zero(),
                 }
+            }
+            Steer::Flee => {
+                let bearing = escape_vector(&foes, pos, pilot.last_escape);
+                pilot.last_escape = bearing.unwrap_or(pilot.last_escape);
+                bearing.unwrap_or_else(|| pilot.wander.step(pos, dt))
             }
         };
         let wanted = keys_for_direction(dir);
@@ -1777,5 +1859,91 @@ mod tests {
             Ok(Some(Cmd::Hold(vec![KeyCode::KeyW], 1.5)))
         );
         assert!(parse_line("defend 20").is_err());
+    }
+    #[test]
+    fn a_ring_of_enemies_still_yields_a_direction() {
+        // The failure this replaces: steering off the nearest enemy inside an
+        // encirclement flips every frame and goes nowhere. A summed field has
+        // to produce a usable bearing even when the crowd is nearly symmetric.
+        //
+        // Tested through the same arithmetic the system uses, since a `Query`
+        // cannot be built outside a World.
+        let ring: Vec<Vec2> = (0..12)
+            .map(|i| {
+                let a = i as f32 / 12.0 * std::f32::consts::TAU;
+                Vec2::new(a.cos(), a.sin()) * 3.0
+            })
+            // A deliberate gap: one side of the ring is missing.
+            .filter(|p| p.x < 2.0)
+            .collect();
+
+        let mut push = Vec2::ZERO;
+        for foe in &ring {
+            let delta = -*foe;
+            let dist = delta.length();
+            push += delta / (dist * dist * dist);
+        }
+        let bearing = push.normalize();
+        assert!(
+            bearing.x > 0.3,
+            "the bearing should point at the gap, got {bearing:?}"
+        );
+    }
+
+    #[test]
+    fn a_committed_bearing_survives_a_symmetric_crowd() {
+        // Nearly-symmetric rings sum to nearly zero, so the raw field is
+        // unstable exactly when the player is in the most trouble.
+        let noisy_a = Vec2::new(0.001, 0.002);
+        let noisy_b = Vec2::new(-0.002, 0.001);
+        let committed = Vec2::new(1.0, 0.0);
+        let a = blend_escape(noisy_a, committed);
+        let b = blend_escape(noisy_b, committed);
+        assert!(a.distance(b) < 0.2, "bearing swung from {a:?} to {b:?}");
+        assert!(a.x > 0.6, "it abandoned a perfectly good direction: {a:?}");
+    }
+
+    #[test]
+    fn with_no_history_and_no_gap_it_still_picks_something() {
+        let dir = blend_escape(Vec2::ZERO, Vec2::ZERO);
+        assert!(
+            dir.is_normalized(),
+            "standing still is the one wrong answer"
+        );
+    }
+
+    #[test]
+    fn a_real_gap_still_turns_the_player_towards_it() {
+        // Hysteresis must not become stubbornness.
+        let mut dir = Vec2::new(-1.0, 0.0);
+        for _ in 0..12 {
+            dir = blend_escape(Vec2::new(4.0, 0.0), dir);
+        }
+        assert!(dir.x > 0.8, "never came round to the gap: {dir:?}");
+    }
+
+    #[test]
+    fn the_escape_bearing_is_stable_as_the_crowd_creeps() {
+        // If it swings wildly for a small change in the crowd, the player
+        // dithers in place - which is the bug this exists to prevent.
+        let crowd = |shift: f32| -> Vec2 {
+            let mut push = Vec2::ZERO;
+            for i in 0..8 {
+                let a = i as f32 / 8.0 * std::f32::consts::TAU + shift;
+                let foe = Vec2::new(a.cos(), a.sin() * 0.6) * 4.0;
+                let delta = -foe;
+                let dist = delta.length();
+                push += delta / (dist * dist * dist);
+            }
+            push
+        };
+        // Through the blend, which is how the system actually uses it.
+        let mut a = Vec2::new(1.0, 0.0);
+        let mut b = a;
+        for _ in 0..8 {
+            a = blend_escape(crowd(0.0), a);
+            b = blend_escape(crowd(0.05), b);
+        }
+        assert!(a.distance(b) < 0.5, "bearing jumped from {a:?} to {b:?}");
     }
 }
