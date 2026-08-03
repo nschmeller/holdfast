@@ -1408,3 +1408,158 @@ blurb/hint leaks and the hazard `Seen` gap first (cheap, mechanical, and they
 were found by grep, not luck); then actually stand in an Arcane ley line
 mid-fight and confirm live that the "heals the enemy too" claim changes how a
 fight there should be played, which nobody has done yet.
+
+### demolition — 283.9s and 334.7s (two attempts, same round), terrain re-tested against the credited-kill fix, and the pool+chasm compound finally measured live (round 7)
+Assignment: three things changed since `sapper` (round 6) — a chasm death only
+pays if `DeathEvent.credited` is true, a light pool now costs +0.45 threat while
+you stand in it, and `pilot.py do` finally blocks for the full duration of a
+steering verb. Re-answer, with numbers: is knockback into a chasm still a build
+once the free farm is closed, can a boss actually be shoved in, does a taxed
+light pool still pay, and what does the compound (pool + chasm + high dial)
+actually measure at.
+
+**Source read first.** `enemy.rs`'s `enemy_fall_off` sets `credited:
+enemy.pushed_recently > 0.0`, and `pushed_recently` is set to `2.5` (seconds) by
+`apply_damage` in `combat.rs` on **any** `DamageEvent` that reaches an `Enemy`
+component — player weapon, ally, turret, hazard tick, or a rival faction's hit
+during a war, not specifically a knockback hit. So the fix's real shape is
+"was this thing touched by damage in the last 2.5s", not "did the player's
+shove cause this fall" — a trash mob that takes a Pencil Dart tick and then
+wanders into a hole on its own pays in full, same as one Fan Blast puts over
+the rim directly. The old zero-engagement farm (stand across a hole, touch
+nothing, watch 16.6 kills/s) is dead either way, because nothing is credited
+without at least one hit landing first, but "is this a *knockback* build"
+should really be read as "is fighting adjacent to a chasm a build", which is a
+fair question, just a different one than the assignment's phrasing assumed.
+Confirmed live and unaffected by any of this: `Player`'s `Actor::avoids_chasms`
+stays the type default `true` (never overridden), so standing at the very rim
+still carries no self-death risk — this was re-verified by literally standing
+2-9m from the visible edge for a cumulative 90+ seconds this round without so
+much as a stagger.
+
+**Chasm-only, no pool (`demolition`, first attempt).** Built to a 5-weapon
+Fan Blast/Coffee Nova/Clip Orbit loadout by level 8-14, then `goto`'d 33m to a
+chasm and settled 5-9m out (1-6m to the visible edge) with `defend`. Across
+four measurement windows between t=140s and t=165s (threat climbing 1.28→1.45,
+reward 1.47→1.58, density 21→41 enemies with 8→25 within 12m): kills went
+55→94, **39 kills in ~25s = 1.56/s average**, and **HP was reported at 100% of
+max at every single check** (176/176 → 197/199), never once below the cap.
+This is the same flat-HP signature `sapper` found last round, now reproduced
+under the tightened credit rule — so whatever is happening at the rim (some
+kills by knock, most probably by ordinary DPS on things that also happen to be
+near the hole) is not gated away by the fix. It then **collapsed**: over the
+next 28s density spiked to a boss + 3 elites + ~40 trash with 22-23 within
+12m, and HP went 197→31 (an 84% loss) before a `flee` + a Thicker Shell card
+heal pulled it back from 7/210. This is the same density ceiling `sapper` and
+`fortress` both hit — terrain raises how much density you can eat at 100% HP,
+it does not repeal the point past which it stops mattering.
+
+**Finding a genuine overlap spot.** Desk generates a chasm 9% and a pool 11%
+per 24-unit chunk (`environments/desk.rs`), independently, so most pairs
+sampled this round (about 15, across two runs and 300+ units of travel) sat
+35-140m apart — nowhere near close enough to occupy at once. Exactly **one**
+pair was found at **13.6m centre-to-centre** (pool at (85.4,-4.3) r=6, chasm at
+(79.6,7.9) r=3.5) — close enough that standing just inside the pool's rim
+nearest the chasm puts you 4-9m from the chasm's edge, both bonuses live at
+once. This is rare, not guaranteed — worth flagging for whoever wants to
+reproduce it: it takes deliberate searching, not "walk to the first chasm you
+see".
+
+**The compound (`demolition-2`, second attempt), pool+chasm+dial together.**
+Stood in the 13.6m-pair spot from level 8 onward, pushed the dial with 5x `tap
+EQUAL` to threat 2.44 (reward 2.66-2.76x — the dial's `level` snaps to the
+target immediately, it does not ramp like the organic `floor` does, worth
+noting for anyone timing a push), then ran 14 back-to-back `defend` windows
+(each cut short by a level-up, since kill throughput was high) from t=125s to
+t=218s. **Kills climbed 59→209 (150 kills in 93s of session time ≈ 1.6/s
+average, individual windows 1.14-2.75/s), and HP was literally 100% of max at
+every single one of the ~20 checks taken** — 154/154 up through 216/216 as max
+HP grew from cards, never once below the cap, while density grew from 23 to 59
+total enemies (2-20 within 12m) **and a boss (THE STAPLER) stood inside 13m of
+the fight continuously for at least 51 seconds without dying.** No prior
+strategy in this dossier has held flat-100%-HP that long at that density —
+`sapper`'s best was "within 3%", this is exactly the cap, for the better part
+of a minute.
+
+**Boss-into-chasm: still not confirmed, and now better understood why.** THE
+STAPLER survived 51+ seconds standing 6-13m from the chasm under continuous
+6-weapon fire without falling (`enemies.bosses` stayed 1 throughout). Read
+against source: Fan Blast's `aim` locks onto `grid.nearest_visible`, which at
+that density is almost always a trash mob, not the boss specifically — only
+Laser Pointer ("snaps to the biggest threat") reliably targets it, and this
+build didn't carry one. Coffee Nova and Ruler Sweep hit *everything* in their
+(small, 5-7 unit) radius/arc regardless of target-lock, so they touch the boss
+whenever it closes to melee range, but their range is short enough that the
+boss spent most of its 51+ seconds outside it. Separately, in the open-ground
+half of the same run (no chasm within 45m), **a second boss (THE HOLE PUNCH)
+did die**, sometime between two checks 14s apart, to nothing but sustained
+6-weapon DPS in a 145-enemy melee — proving this build can and does kill a
+boss on damage alone within a comparable timeframe, which undercuts any claim
+that the chasm made the difference in either case. The mechanical claim from
+round 6 stands (uniform knockback, no boss exemption, chasm entry is
+independent of remaining HP) but two rounds running now, nobody has watched a
+boss actually go over an edge — it needs either a target-locking weapon
+(Laser Pointer) deliberately kept in the loadout, or a screenshot to confirm
+on camera, and screenshots are still the known 56997-byte blank capture in
+this environment (confirmed again this round, both attempts) so the visual
+route is closed for now too.
+
+**Does a taxed light pool still pay? Yes, unambiguously.** `threat.from_light`
+reports the flat `+0.45` exactly as documented every time the digest was
+checked while `standing_in_it`, and it folds straight into `reward_mult` — the
+2.66-2.76x reward multiplier through the compound section above has that
++0.45 baked in for free the entire time, on top of the regen and damage bonus.
+The tax is real (reward would have been lower without it) but it is a
+strictly better trade than not standing there, exactly as `sapper` concluded
+before the cost existed, just with smaller margins now.
+
+**Open-ground baseline, same run, stronger build.** After the compound
+section, walked 45+ units off any chasm or pool (confirmed via `raw`) and ran
+the same `defend`-and-measure loop from t=278s to t=325s with an *even
+stronger* build (Fan Blast now level 8/mastered vs. level 4-6 during the
+compound section). Kills climbed 234→304 (70 in 47s ≈ 1.5/s, comparable rate),
+but **HP fell from 226 (100%) to a floor of 139-163 (58-72% of max) and
+stayed there**, under admittedly much higher density (106-162 total enemies,
+up to 49 within 12m, 2 bosses concurrently, vs. 23-59 total at the compound
+spot) — the comparison isn't perfectly clean (density and time both differ),
+but a *stronger* build losing 30-40% of its HP pool where the *weaker* build
+held 100% flat is a real, sourced-in-the-data gap, not noise.
+
+**Both runs died the identical way, and it was never the terrain.** Neither
+death happened near a chasm or pool. `demolition` died fleeing in the open to
+THE HOLE PUNCH's shockwave ring (5 hits, 11-28 damage each, in 3.3s, hint
+literally warned "stand close or far, not mid" seconds beforehand).
+`demolition-2` died fleeing a 145-162-enemy open-ground crowd: HP 137→-16 in
+20 seconds of continuous `flee`, in ~20-21 damage ticks roughly every 1-1.5s —
+the exact uninterruptible-attrition signature every round since the first has
+logged. Terrain raised the density ceiling substantially; it did not move the
+ceiling's existence.
+
+**Numbers.** `demolition`: died 283.9s, level 15, 153 kills, peak threat 2.08,
+449 Scrap/12 Cores unspent, 0 structures/allies/zones/forts/wars (terrain was
+the whole assignment this round, territory wasn't touched).
+`demolition DESK 283.9 15 153 0 0 0 0 0 2.08 204 21744 449 12 0.270`.
+`demolition-2`: died 334.7s, level 27, 304 kills, peak threat 2.44, 963
+Scrap/15 Cores unspent (worse than the first attempt — kill-rate outpaced
+spending rhythm even harder at this power level).
+`demolition-2 DESK 334.7 27 304 0 0 0 0 0 2.44 148 18495 963 15 0.317`.
+
+**Operational notes.** (1) `pilot.py do "kite/flee/defend/goto N"` genuinely
+blocks for the full duration now, confirmed directly — no more stale-state
+reports from returning early. (2) The dial's `level` snaps to the `EQUAL`/
+`MINUS` target on the very next tick; only the organic `floor` ramps slowly.
+(3) Screenshot capture is still the known flat-56997-byte failure on this
+machine, both attempts, so any future "watch it fall on camera" test needs
+either a fixed capture path or a different verification method entirely.
+
+**Takeaway: fighting next to a chasm, inside a light pool, at a pushed dial is
+still the strongest measured position in this dossier** — 100%-flat HP for
+50+ continuous seconds at 2.4-2.7x reward against a boss and rising density is
+a result nothing else here has matched — but it is a **rare, found** position
+(one 13.6m pool/chasm pair out of ~15 sampled), not something you can always
+walk to, and the boss-into-a-hole sub-claim is now *twice* unconfirmed live
+despite being mechanically airtight in source. Next: repeat the compound test
+carrying Laser Pointer specifically so a target-locking weapon is guaranteed to
+threaten the boss while it's near the rim, and fix or route around the
+screenshot capture bug so a fall can finally be confirmed on camera instead of
+inferred from a count going quiet.

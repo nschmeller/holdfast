@@ -246,7 +246,19 @@ fn read_move_input(
 /// without ever having made a mistake they could have avoided. Shoving through
 /// a mass of monsters has to be *expensive* - slow enough that walking into one
 /// is a real decision - but it must always be possible.
-const CROWD_FLOOR: f32 = 0.58;
+///
+/// It was 0.58, which put a maximally-crowded player at 4.87 units a second
+/// against an Ant that rolls up to 4.97 - so the fastest monster in the game
+/// outran them, by two per cent, and a crowd of Ants could not be escaped at
+/// all. Every round of playtesting reported the same thing: an uninterruptible
+/// attrition spiral while fleeing a large crowd, HP draining with nothing the
+/// player could do. It was read as an encirclement bug three times and I twice
+/// explained it away as something else.
+///
+/// The floor is now set from the monster table rather than by feel, with a
+/// margin, and `crowd_never_traps_the_player` fails if a new monster is ever
+/// added that can outrun it.
+const CROWD_FLOOR: f32 = 0.68;
 
 /// How much each overlapping body drags on the player.
 const CROWD_DRAG: f32 = 0.11;
@@ -433,5 +445,46 @@ fn player_regen(
         if health.current > 0.0 {
             health.heal(rate * dt);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_crowd_never_traps_the_player() {
+        // The design promise, asserted against the actual monster table: a
+        // player at maximum crowd slow has to be able to walk away from the
+        // fastest thing that can chase them. At a floor of 0.58 they could not -
+        // an Ant at the top of its speed variance was two per cent faster - and
+        // that is the "uninterruptible attrition spiral while fleeing" that every
+        // round of playtesting reported. It was read as an encirclement bug three
+        // times, and I twice explained it away as something else.
+        const SPEED_VARIANCE: f32 = 1.08;
+        let crawling = BASE_SPEED * crowd_speed(u32::MAX);
+        for kind in crate::enemy::EnemyKind::ALL {
+            if kind.is_boss() {
+                // Bosses are meant to be faced or out-positioned rather than
+                // outpaced, and they are slow enough that it does not arise.
+                continue;
+            }
+            let fastest = kind.stats().speed * SPEED_VARIANCE;
+            assert!(
+                crawling > fastest,
+                "{kind:?} runs at {fastest:.2} and a crowded player only makes {crawling:.2}"
+            );
+        }
+    }
+
+    #[test]
+    fn wading_through_a_crowd_still_costs_most_of_your_speed() {
+        // The floor exists to stop a cage forming, not to make crowds free.
+        assert!(crowd_speed(u32::MAX) < 0.75, "a crowd barely slows anyone");
+        assert!(crowd_speed(0) > 0.99, "slowed by an empty field");
+        assert!(
+            crowd_speed(3) < crowd_speed(1),
+            "not monotone in the crowd size"
+        );
     }
 }

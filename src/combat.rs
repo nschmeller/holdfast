@@ -840,8 +840,17 @@ fn apply_damage(
             vs.pulse = 1.0;
         }
 
-        // Being hit is what makes a subsequent fall the player's doing.
-        if let Some(mut enemy) = pushed {
+        // Being hit by your side is what makes a subsequent fall your doing.
+        //
+        // Any damage used to arm this, including a rival faction's hit during a
+        // war - so a monster killed in somebody else's fight and then falling in
+        // a hole was credited to the player. `Hazard` still counts, because most
+        // hazard damage in a run comes from the player's own weapons and the
+        // pipeline cannot tell those from a vent; that residual is deliberate and
+        // small, where crediting an enemy's work was not.
+        if ev.source != DamageSource::Enemy
+            && let Some(mut enemy) = pushed
+        {
             enemy.pushed_recently = 2.5;
         }
 

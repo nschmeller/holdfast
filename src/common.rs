@@ -192,6 +192,13 @@ pub struct DeathEvent {
     /// death nobody brought about, which in practice means an enemy that walked
     /// into a chasm on its own.
     ///
+    /// A chasm fall reads this off `Enemy::pushed_recently`, which is armed by
+    /// any hit from the player's side within 2.5 seconds - not by knockback
+    /// specifically. So the rule a player experiences is "a fall counts if you
+    /// were fighting the thing", which is the right rule but not the one the
+    /// name suggests; a strategist had to read the source to establish that, and
+    /// it is written down here so nobody has to again.
+    ///
     /// Was `by_player`, which was written at three sites and read at none, so
     /// every chasm death paid in full. Enemies deliberately do not avoid holes,
     /// so standing across one from a nest was an unlimited zero-risk farm - a
