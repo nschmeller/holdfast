@@ -12,10 +12,17 @@ what to try next. Numbers beat adjectives.
 
 ## What is known
 
-**The record, as of the last round played, is 374.4 seconds** (fortress,
-level 34, 331 kills, peak threat 8.00 — the dial's hard ceiling, reached and
-held with the player at full HP for the entire climb). Up from 337.7s
-(turtle, round 2), up from a starting baseline of 148s. See `fortress` below.
+**The record, as of the last round played, is 430.7 seconds** (siege, round 4,
+level 50, 1166 kills, peak threat 3.24, `forts=1` in the dossier — a fort
+captured, joining `warlord`'s two captures earlier the same round). Up from
+374.4s (fortress, round 3, level 34, 331 kills, peak threat 8.00 — the dial's
+hard ceiling, reached and held with the player at full HP for the entire
+climb). Up from 337.7s (turtle, round 2), up from a starting baseline of
+148s. See `siege` and `fortress` below. **Fort capture itself is no longer
+the open question — `warlord` (this round) and `siege` (this round) both
+did it. What nobody has done yet is hold one: both `siege` and one of
+`warlord`'s two captures ended in death within seconds of the flip; the
+other ended in the fort being lost back to its original owner.**
 
 ### Confirmed by measurement
 
@@ -588,3 +595,102 @@ away that the player's own 1.0 presence can't be contributing, then check
 whether `capture` still climbs. The war fix, for whoever tries it: hold a
 ring capable of tanking 40+ enemies, walk it to a spot where two factions'
 nests are both within ~30-40 units, and buy the node there.
+
+### siege — 430.7s, new record, first fort capture by this instance (round 4)
+Hypothesis: the travel-verb fix means a fort is finally reachable in a real
+run. Build a modest arsenal near home, travel to the *nearest* fort (weakest
+per the distance-scaling rule), clear its garrison from inside the ring, take
+it, then see whether it can be held.
+
+**Two early deaths reproduced the encirclement-freeze death spiral exactly,
+underlevelled.** Attempt 1 engaged THE STAPLER boss plus a growing crowd
+~70-140 units from home with only 3-4 weapons; density hit 16 within 12m and
+`kite`/`flee` produced no positional change for 20+ real seconds while HP
+free-fell 154→-10 in about 14 seconds. Died **141.5s, level 8, 63 kills**:
+`siege DESK 141.5 8 63 0 0 0 0 0 1.30 137 17559 136 4 0.175`. Attempt 2 walked
+into a BLOOM nest cluster (one nest at 3-10m) that kept the local crowd
+resupplied faster than it could be cleared; same pattern, same boss, same
+freeze. Died **124.7s, level 9, 74 kills**:
+`siege DESK 124.7 9 74 0 0 0 0 0 1.19 153 11448 193 6 0.222`. **Both deaths
+trace to the same root cause as every prior round's freeze reports: once
+enemies-within-12m crosses roughly 10-15, `kite`/`flee`/`goto` stop producing
+any positional change at all, regardless of build strength** — confirmed
+this round at both a weak build (attempts 1-2) and later at an extremely
+strong one (attempt 3, see below), so it is not a "you were undergeared"
+problem, it is a mechanic (or a bug) that triggers on local density alone.
+
+**Attempt 3 built a real arsenal before engaging, and it changed everything.**
+Farmed cautiously (short `kite` bursts, breaking off whenever enemies-within-
+12m exceeded ~10) until level 15-20 with 6 weapons (Pencil Dart, Laser
+Pointer, Stapler, Ruler Sweep, Coffee Nova, Fan Blast), a full 4/4 squad, and
+several hundred Scrap banked. Survived a density spike that would have killed
+either earlier attempt outright: **137 simultaneous enemies (later peaking
+past 200, with up to 12 elites and 2-3 bosses at once) and 88 enemies within
+12m at the low point**, HP cratering to **12 out of 521** at one point and to
+single digits again later — and recovered *both* times without dying, purely
+by retreating ~50-70 units from the crowd and, in Plan Mode, building a small
+turret ring (7 Tack Turrets + 1 Shocker) plus recruiting allies. **HP climbed
+from single digits back to full (500+) within about 15-20 real seconds each
+time** — the clearest confirmation yet that Plan Mode plus a cheap turret
+ring is a genuine emergency brake, not just a planning tool, and that
+retreat-and-rebuild beats trying to fight through an active density spike.
+
+**Fort capture mechanics, observed in detail for the first time by this
+instance.** Targeted a BLOOM fort at (134, 30.6), 137.5 units from spawn — at
+the low end of the distance-scaling range and confirmed weaker than a
+89-unit-further sibling fort (which showed `garrison: 19` on approach vs. this
+one's baseline 0-4). Standing at 2-8m from the fort core with garrison > 0
+held `capture` pinned at exactly **-1.0, "[taking 0%]"** for a sustained
+period regardless of how long the ring was held — garrison genuinely stalls
+the meter rather than slowly reversing it, matching the design doc. Garrison
+on this single fort was observed swinging between **0 and 27** within a
+~60-second window, evidently resupplied by four nests planted 4-40 units
+away faster than they could be killed at moderate personal DPS. The one time
+garrison held at a sustained 0 (after the ring had been fought over for
+several minutes and the nests presumably exhausted), `capture` went from
+**-1.0 to +1.0 in about 3 real seconds** (-1.0 → 0.461 → 0.605 → 1.0) — a
+near step-function unlock once the garrison-stall condition lifts, not a
+gradual climb. Also confirmed: **capture decays back toward -1.0 within
+under 70 real seconds of leaving the ring uncontested** (was at -0.713 when
+we retreated to rebuild HP; was back to -1.0 on return).
+
+**The fort was taken. The player died in the same instant.** The exact tick
+`capture` reached 1.0, the log read `FORT TAKEN: It works for you now - and
+they will come for it.` and the fort's `owner` field flipped to `YOU` — and a
+single 39-damage hit landed in the same tick, taking HP from 20 to -18.
+`state` went `Playing → GameOver` one line later. So this run answers
+"can a fort be taken" with a clean yes (confirmed independently by `warlord`
+earlier the same round, so this instance is not the first — see the record
+note above), but leaves "can it be held" exactly as open as before: there
+was no surviving tick between the flip and death to observe the newly-owned
+fort's own (weaker) gun firing for us, whether wardens stop spawning, or
+whether allies/turrets left nearby would have defended it. Final result:
+**430.7s, level 50, 1166 kills, forts=1**, holding 4079 Scrap and 8 Cores
+unspent:
+`siege DESK 430.7 50 1166 5 1 0 1 0 3.24 212 23643 4079 8 0.540`.
+
+**Operational notes.** `goto` and `kite` both still "give up"/overshoot or
+freeze in place whenever local density is high, exactly as documented in
+prior rounds — this held true even at the strongest build tested to date, so
+whoever automates travel next should plan to alternate short bursts with
+density checks rather than trusting a single long-duration command near any
+fort or nest cluster. Threat only reached 3.24 here (via floor drift over
+431 seconds plus one held zone) — the dial itself was never touched
+deliberately (a single `MINUS` press was swallowed mid-`LevelUp`), so
+`reward_mult` climbing to 2.95-2.95x came entirely from surviving a long time
+at a high level, not from pulling the escalation lever on purpose. `defend
+x y r` reliably re-approaches and holds within `r` of a point even through
+dense crowds once already in range, and is the right verb for standing in a
+capture ring (as opposed to `goto`, which is for closing distance from far
+away and is the one that stalls).
+
+**Takeaway: build the arsenal first, then go to the fort, not the other way
+around** — the same fort, same nests, same boss types that killed two
+underleveled attempts outright were survived comfortably by a 6-weapon,
+full-squad build, right up to and past the previous all-time density/kill
+records. **Fort-taking is now proven twice over in one round; fort-*holding*
+is the next frontier** — whoever tries next should assume the moment of
+capture is dangerous (both `siege` and one `warlord` capture died at or near
+that instant) and should have HP banked well above 50% and a turret/ally
+presence already established *at* the ring, not just personal HP, before the
+garrison count is allowed to hit zero.

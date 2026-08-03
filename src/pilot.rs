@@ -911,6 +911,18 @@ impl Plugin for PilotPlugin {
     }
 }
 
+/// The keys that drive the player, either spelling.
+const MOVEMENT_KEYS: [KeyCode; 8] = [
+    KeyCode::KeyW,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::ArrowUp,
+    KeyCode::ArrowDown,
+    KeyCode::ArrowLeft,
+    KeyCode::ArrowRight,
+];
+
 /// Note a key delivered into a screen that reads it as something else.
 ///
 /// Only the keys that collide: a `W` during a level-up is ignored and harmless,
@@ -1133,6 +1145,30 @@ fn run_queue(
                 });
             }
             Cmd::Steer(steer, mut secs) => {
+                // A steering verb owns movement. A key still down from an
+                // earlier `press` is re-pressed every frame and cannot be
+                // released by the steering code, so `press w` followed by
+                // `kite` left W fighting the S the escape wanted: the two
+                // cancelled in `read_move_input` and the player did not move at
+                // all. That is the "encirclement freezes movement" reported in
+                // every round - HP falling to nothing over twenty seconds of
+                // zero positional change - and it was the tester's own earlier
+                // command sabotaging this one.
+                let stuck: Vec<KeyCode> = MOVEMENT_KEYS
+                    .into_iter()
+                    .filter(|k| pilot.held.contains(k))
+                    .collect();
+                if !stuck.is_empty() {
+                    for key in &stuck {
+                        pilot.held.remove(key);
+                        keys.release(*key);
+                    }
+                    pilot.problem(format!(
+                        "let go of {stuck:?}, still held from an earlier press - \
+                         a steering verb drives, so a held movement key would \
+                         cancel it"
+                    ));
+                }
                 if let (Steer::Goto(target), Some(pos)) = (steer, hero_pos) {
                     if secs <= TRAVEL_BUDGET_UNKNOWN {
                         secs = travel_budget(pos.distance(target));
@@ -1988,6 +2024,43 @@ mod tests {
         );
         assert!(parse_line("goto 3").is_err());
         assert!(parse_line("roam").is_err());
+    }
+
+    #[test]
+    fn a_held_movement_key_and_a_steering_verb_cancel_each_other_out() {
+        // The arithmetic behind "encirclement freezes movement": `read_move_input`
+        // sums the keys that are down, so W held from an earlier `press` plus the
+        // S a `kite` wants comes to nothing at all, and the player stands still
+        // while a crowd eats them. This is why a steering verb lets go of them.
+        let both_down = |keys: &[KeyCode]| {
+            let mut dir = Vec2::ZERO;
+            if keys.contains(&KeyCode::KeyW) {
+                dir.y -= 1.0;
+            }
+            if keys.contains(&KeyCode::KeyS) {
+                dir.y += 1.0;
+            }
+            dir
+        };
+        assert_eq!(both_down(&[KeyCode::KeyW, KeyCode::KeyS]), Vec2::ZERO);
+        assert_ne!(both_down(&[KeyCode::KeyS]), Vec2::ZERO);
+    }
+
+    #[test]
+    fn the_movement_keys_cover_both_spellings() {
+        for key in [
+            KeyCode::KeyW,
+            KeyCode::ArrowUp,
+            KeyCode::KeyD,
+            KeyCode::ArrowRight,
+        ] {
+            assert!(MOVEMENT_KEYS.contains(&key), "{key:?}");
+        }
+        // Not a movement key, and a steer must not steal it - a tester holding
+        // SHIFT to dash or a digit to build should keep it.
+        for key in [KeyCode::ShiftLeft, KeyCode::Digit1, KeyCode::Space] {
+            assert!(!MOVEMENT_KEYS.contains(&key), "{key:?}");
+        }
     }
 
     #[test]
