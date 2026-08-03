@@ -118,6 +118,29 @@ seeders, four monster factions with regional territory and player-incited
 wars, save and resume, the web/iOS/Android builds, achievements and lifetime
 stats, and the optional LLM tactician.
 
+**Everything in the fort/faction spec below now works and has been played.** As
+of rounds 3 to 6 of the playtest loop: forts are captured, held, lost and
+retaken in live runs; a faction war measurably relieves pressure (enemies within
+12m went 48 to 0 in nine seconds); four zones have been held at once with one
+turret each for +54% rewards; and the whole thing survives the threat dial's
+8.00 ceiling. Records: 498s at level 67 with 1312 kills.
+
+**Read `docs/PLAYBOOK.md` before touching gameplay.** It is the accumulated
+record of every strategy tried and every measurement taken, and it is now the
+most valuable file in the repo after the source.
+
+The one lesson worth carrying forward above all others: **four times in a row, a
+system that looked broken or untouched turned out to be the instrument, not the
+game.** Forts were unreachable because `goto` gave up after a flat thirty
+seconds. Faction wars never fired because their resolver ran only in
+`AppState::Playing` while the request came from the research screen. Zones could
+not be held because turrets did not count as presence. Light pools and chasms
+were "untestable" because the bridge never reported them - there is a chasm 36
+units from the default landing site. And "encirclement freezes movement",
+reported in every single round, was a `press w` left down fighting the `kite`
+that wanted the opposite key. Check what the harness can do to produce a symptom
+before believing a gameplay explanation of it.
+
 What is left:
 
 1. **Touch controls.** iOS and Android build, but a keyboard-only game does not
@@ -128,7 +151,12 @@ What is left:
 3. **The native model bridges.** `holdfast_set_model_bridge` is written and
    tested; the Swift and Kotlin sides that would call it are not.
 4. **A longer balance pass.** The level-linked difficulty curve is new and has
-   only been checked over short runs.
+   only been checked over short runs. The one balance problem the dossier has
+   actually proved is fixed: run length was bimodal on the first boss, which
+   arrived at 115s on the same clock as every boss after it, and ten of
+   twenty-five runs died between 80 and 150 seconds while everything past it
+   reached 340 seconds or more. The first boss now lands at 168s and is
+   announced nine seconds ahead.
 
 ## Forts, spawners and the faction war (the spec, in full)
 
