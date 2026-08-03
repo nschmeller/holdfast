@@ -392,20 +392,54 @@ fn build_art(
 mod tests {
     use super::*;
 
+    /// A real guard, unlike the one this replaces.
+    ///
+    /// The previous test iterated `Glow::ALL` and asserted a property of `ALL`
+    /// against itself, so the enum's variant set was never consulted: appending a
+    /// nineteenth variant would compile, pass, and panic at `glow()` exactly as
+    /// `Friend` did. An audit caught it, and it is worth naming the failure -
+    /// a test shaped like a guard that guards nothing is worse than no test,
+    /// because it stops anyone looking.
+    ///
+    /// This match is exhaustive with no wildcard, so **adding a variant fails to
+    /// compile until it is listed here**, and the assertion then checks it is in
+    /// `ALL` too. The compiler does the work the last test only appeared to.
     #[test]
     fn every_glow_variant_is_in_all() {
-        // `ALL` drives the material registry, and a variant missing from it
-        // panics at the first use with "glow material registered at startup" -
-        // which takes the whole schedule down, so recruiting and building simply
-        // stop working. This is the guard for that.
-        let mut seen = std::collections::HashSet::new();
+        // Exhaustive, no wildcard: a new variant fails to compile here first.
+        fn name(g: Glow) -> &'static str {
+            match g {
+                Glow::Xp => "Xp",
+                Glow::Heal => "Heal",
+                Glow::Scrap => "Scrap",
+                Glow::Gear => "Gear",
+                Glow::PlayerShot => "PlayerShot",
+                Glow::EnemyShot => "EnemyShot",
+                Glow::Beam => "Beam",
+                Glow::Screen => "Screen",
+                Glow::Lamp => "Lamp",
+                Glow::Neon => "Neon",
+                Glow::Plasma => "Plasma",
+                Glow::Elite => "Elite",
+                Glow::Boss => "Boss",
+                Glow::Ally => "Ally",
+                Glow::Friend => "Friend",
+                Glow::Zone => "Zone",
+                Glow::ZoneHeld => "ZoneHeld",
+                Glow::Warning => "Warning",
+            }
+        }
+        // Everything the match knows about must also be registered, and nothing
+        // may be registered twice.
+        let mut listed = std::collections::HashSet::new();
         for g in Glow::ALL {
-            assert!(seen.insert(g), "{g:?} listed twice in Glow::ALL");
+            assert!(listed.insert(name(g)), "{} is in ALL twice", name(g));
         }
         assert_eq!(
-            seen.len(),
-            Glow::ALL.len(),
-            "Glow::ALL has duplicates, so something else is missing"
+            listed.len(),
+            18,
+            "the match enumerates 18 variants; ALL holds {} of them",
+            listed.len()
         );
     }
 

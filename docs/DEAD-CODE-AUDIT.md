@@ -164,7 +164,7 @@ drops it from the coverage checklist.
 - **Consequence:** the level-8 payoff advertised on the upgrade card as
   *"MASTERY: the beam burns everything it crosses"* (`weapons.rs:205`) is a
   no-op. A player who takes the Highlighter to mastery gets nothing for it.
-  Every other mastery works — `CoffeeNova`'s at `weapons.rs:512` spawns a real
+  Every other mastery works — `CoffeeNova`'s at `weapons.rs:513` spawns a real
   `SpawnHazard`, which is what the Highlighter should probably do too.
 - **Confidence: confirmed.** Every use site of `Projectile.burn`,
   `SpawnShot.burn` and `apply_burn` read.
@@ -215,7 +215,7 @@ drops it from the coverage checklist.
   `audio.rs:441`.
 - **Should play it:** nothing. It is the **only one of 27 `Sfx` variants with no
   emission site outside `audio.rs`** (all 26 others were checked individually).
-  `tick_waves` (`threat.rs:371-405`) raises no `SfxEvent` at all — it sets
+  `tick_waves` (`threat.rs:372-405`) raises no `SfxEvent` at all — it sets
   `cycle.announce = 2.5` for the visual banner and nothing else.
 - **Consequence:** the assault beginning — the loudest recurring beat in the
   game loop, and the one the player must react to — has a banner and no sound.
@@ -253,7 +253,7 @@ drops it from the coverage checklist.
   (`enemy.rs:234`) is called from this one line and nowhere else, so the whole
   12-kind × 5-world tint table is dead data.
 - **Consequence:** every enemy in every world renders with the same
-  `art.solid` material (`enemy.rs:787`). The module's opening premise —
+  `art.solid` material (`enemy.rs:786`). The module's opening premise —
   `enemy.rs:4`, *"The same twelve archetypes appear in every environment,
   renamed and retinted"* — is half-implemented. Renamed yes (`EnemyKind::name`
   is wired). Retinted no. A Dust Bunny and a Thorn Sprite are visually
@@ -454,9 +454,9 @@ No achievement is unearnable.
 ## 17. `Hazard.life` and five `Hazard` constructors
 
 - `Hazard.life: Option<f32>` (`arena.rs:273`) is set at all three construction
-  sites (`combat.rs:601` `Some(h.life)`, `world.rs:456` `None`,
-  `mod.rs:548` `None`) and **read nowhere** (compiler-confirmed). Expiry is
-  handled by `Ephemeral::new(h.life)` (`combat.rs:604`), which works.
+  sites (`combat.rs:602` `Some(h.life)`, `world.rs:454` `None`,
+  `mod.rs:547` `None`) and **read nowhere** (compiler-confirmed). Expiry is
+  handled by `Ephemeral::new(h.life)` (`combat.rs:607`), which works.
 - `Hazard::scald`, `Hazard::sticky`, `with_life`, `enemies_only`, `player_only`
   (`arena.rs:279-317`) are all unused in production; the three real construction
   sites build the struct literally. `arena.rs:638-647` tests them.
@@ -492,8 +492,8 @@ but two carry doc comments that are now false.
 
 **Doc comments that lie:**
 - `EnemyGrid::best_target` (`combat.rs:194`) — *"Turrets and the laser use this"*.
-  They use `best_visible_target` (`combat.rs:203`). `EnemyGrid::nearest`
-  (`combat.rs:153`) is likewise superseded by `nearest_visible`.
+  They use `best_visible_target` (`combat.rs:199`). `EnemyGrid::nearest`
+  (`combat.rs:153`) is likewise superseded by `nearest_visible` (`combat.rs:162`).
 - `weapons::friendly_damageable()` (`weapons.rs:724`) — *"Structures and allies
   both need…"*. Neither calls it; the struct is built inline at `allies.rs:565`,
   `allies.rs:657` and `player.rs:180`.

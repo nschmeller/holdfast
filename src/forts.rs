@@ -1165,6 +1165,7 @@ fn tick_forts(
     clock: Res<RunClock>,
     progression: Res<crate::progress::Progression>,
     mut rng: ResMut<Rng>,
+    mut director: ResMut<crate::enemy::Director>,
     mut forts: Query<(Entity, &mut Fort, &Allegiance, &Body)>,
     loiter: Res<Loiter>,
     player: Query<&Body, With<Player>>,
@@ -1212,6 +1213,7 @@ fn tick_forts(
                     power * fort.strength * 1.35,
                     &mut rng,
                 );
+                director.alive += 1;
                 commands.entity(warden).insert((
                     Allegiance(owner.0),
                     Objective {
@@ -1231,7 +1233,9 @@ fn tick_forts(
         if fort.assault <= 0.0 {
             fort.assault = rng.range(16.0, 26.0) / temperament.garrison.max(0.3);
             fort.launch = 1.0;
-            let count = 2 + rng.below(3);
+            // Never past the cap, however many it wanted to throw.
+            let room = director.cap.saturating_sub(director.alive);
+            let count = (2 + rng.below(3)).min(room as usize);
             for _ in 0..count {
                 let offset = rng.in_disc(FORT_RADIUS + 2.0).truncate();
                 let kind = assault_kind(&mut rng, clock.elapsed / 60.0);
@@ -1246,6 +1250,7 @@ fn tick_forts(
                     &mut rng,
                 );
                 commands.entity(spawned).insert(Allegiance(owner.0));
+                director.alive += 1;
             }
         }
 
@@ -1341,6 +1346,7 @@ fn tick_nests(
     clock: Res<RunClock>,
     progression: Res<crate::progress::Progression>,
     mut rng: ResMut<Rng>,
+    mut director: ResMut<crate::enemy::Director>,
     mut nests: Query<(&mut Nest, &Allegiance, &Body)>,
     loiter: Res<Loiter>,
     player: Query<&Body, With<Player>>,
@@ -1359,6 +1365,16 @@ fn tick_nests(
         if nest.timer > 0.0 {
             continue;
         }
+        // The cap gated only the director's own spawns: `director.alive` was
+        // never incremented by a nest, a fort assault or a warden, so holdings
+        // minted enemies outside it without limit. A 25-minute run measured 713
+        // live enemies against a cap of 320, still climbing, which is the
+        // accumulation behind a process disappearing at high level with nothing
+        // logged. A holding now waits its turn like everything else.
+        if director.alive >= director.cap {
+            nest.timer = 2.0;
+            continue;
+        }
         nest.timer =
             rng.range(12.0, 19.0) / owner.0.temperament().expansion.max(0.3) / loiter.urgency();
         let kind = assault_kind(&mut rng, clock.elapsed / 60.0);
@@ -1374,6 +1390,7 @@ fn tick_nests(
             &mut rng,
         );
         commands.entity(spawned).insert(Allegiance(owner.0));
+        director.alive += 1;
     }
 }
 
