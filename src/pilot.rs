@@ -897,6 +897,7 @@ struct Sheet<'w> {
 
 #[derive(SystemParam)]
 struct Meta<'w> {
+    coverage: Res<'w, crate::coverage::Coverage>,
     fog: Res<'w, crate::fog::FogMap>,
     war: Res<'w, crate::forts::WarRoom>,
     diplomacy: Res<'w, crate::factions::Diplomacy>,
@@ -966,6 +967,19 @@ fn write_snapshot(
     json.text("state", &format!("{:?}", pacing.state.get()));
     json.text("world", env.title());
     json.count("queued", pilot.queue.len());
+
+    // Content coverage: what of the game this session has actually exercised,
+    // and what is left. Turns "go and see everything" into a task with an
+    // answer rather than an instruction to keep playing.
+    json.obj("coverage");
+    json.num("fraction", meta.coverage.fraction());
+    json.count("seen", meta.coverage.count());
+    json.arr("missing");
+    for tag in meta.coverage.missing() {
+        json.push_text(&tag);
+    }
+    json.end();
+    json.end();
 
     json.obj("fog");
     json.num("explored_area", meta.fog.explored_area());

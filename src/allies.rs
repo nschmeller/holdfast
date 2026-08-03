@@ -465,6 +465,7 @@ pub struct ZoneRing(pub Vec2);
 fn handle_recruit(
     mut commands: Commands,
     art: Res<GameArt>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     stats: Res<PlayerStats>,
     mut economy: ResMut<Economy>,
     mut squad: ResMut<Squad>,
@@ -524,11 +525,14 @@ fn handle_recruit(
             RunEntity,
         ));
 
+        seen.write(crate::coverage::Seen(format!("ally:{:?}", req.kind)));
+        seen.write(crate::coverage::Seen(String::from("deed:recruit")));
         sfx.write(SfxEvent::new(crate::audio::Sfx::Recruit));
     }
 }
 
 fn handle_build(
+    mut seen: MessageWriter<crate::coverage::Seen>,
     mut commands: Commands,
     art: Res<GameArt>,
     stats: Res<PlayerStats>,
@@ -558,6 +562,8 @@ fn handle_build(
             );
         }
 
+        seen.write(crate::coverage::Seen(format!("turret:{:?}", req.kind)));
+        seen.write(crate::coverage::Seen(String::from("deed:build")));
         commands.spawn((
             Turret {
                 kind: req.kind,

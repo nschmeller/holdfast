@@ -312,6 +312,7 @@ fn fire_weapons(
     mut bursts: MessageWriter<BurstEvent>,
     mut sfx: MessageWriter<SfxEvent>,
     mut statuses: Query<&mut StatusEffects, With<Enemy>>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
 ) {
     let dt = time.delta_secs();
     let Some((body, facing)) = player.iter().next() else {
@@ -326,6 +327,7 @@ fn fire_weapons(
     let facing_dir = Vec2::new(facing.yaw.sin(), facing.yaw.cos());
 
     for slot in &mut loadout.slots {
+        seen.write(crate::coverage::Seen(format!("weapon:{:?}", slot.kind)));
         let kind = slot.kind;
         if kind == WeaponKind::ClipOrbit {
             continue; // Persistent; handled by the orbiter systems.

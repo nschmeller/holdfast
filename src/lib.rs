@@ -11,6 +11,7 @@ pub mod camera;
 pub mod combat;
 pub mod command;
 pub mod common;
+pub mod coverage;
 pub mod devtools;
 pub mod enemy;
 pub mod environments;
@@ -211,7 +212,8 @@ pub fn run() {
             .in_set(GameSet::Input),
     );
 
-    // Split in two: `Plugins` is only implemented for tuples up to 15 wide.
+    // Split up: `Plugins` is only implemented for tuples up to 15 wide.
+    // Grouped by what they are, not by where the boundary fell.
     app.add_plugins((
         art::ArtPlugin,
         audio::AudioFxPlugin,
@@ -235,7 +237,11 @@ pub fn run() {
         fx::FxPlugin,
         hud::HudPlugin,
         screens::ScreensPlugin,
+    ));
+    // Persistence, telemetry and the harnesses.
+    app.add_plugins((
         save::SavePlugin,
+        coverage::CoveragePlugin,
         stats::StatsPlugin,
         tactician::TacticianPlugin,
         devtools::DevToolsPlugin,

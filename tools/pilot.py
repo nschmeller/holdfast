@@ -10,6 +10,7 @@ glance.
     pilot.py raw  <dir>              the whole report as JSON
     pilot.py do   <dir> "cmd" ...    append command lines and wait them out
     pilot.py log  <dir> [n]          the last n log lines (default 25)
+    pilot.py todo <dir>              content not yet seen this session
     pilot.py shot <dir> <file.png>   screenshot, waits for the file to appear
     pilot.py keys                    the game's controls
 
@@ -118,6 +119,13 @@ def digest(s):
         f"{e['within_12m']} within 12m  nearest {near}"
     )
     out.append(f"        {kinds}")
+
+    cov = s.get("coverage")
+    if cov:
+        out.append(
+            f"CONTENT SEEN {cov['fraction']:.0%} ({cov['seen']}) - "
+            f"`pilot.py todo <dir>` lists what is left"
+        )
 
     f = s.get("fog")
     if f:
@@ -263,6 +271,24 @@ def main():
 
     if verb == "raw":
         print(json.dumps(read_state(path), indent=1))
+        return 0
+
+    if verb == "todo":
+        state = read_state(path)
+        cov = (state or {}).get("coverage")
+        if not cov:
+            print("no coverage data")
+            return 1
+        missing = cov["missing"]
+        print(
+            f"COVERAGE {cov['fraction']:.0%}  ({cov['seen']} seen, {len(missing)} to go)"
+        )
+        groups = {}
+        for tag in missing:
+            head, _, rest = tag.partition(":")
+            groups.setdefault(head, []).append(rest)
+        for head in sorted(groups):
+            print(f"  {head:8} {', '.join(groups[head])}")
         return 0
 
     if verb == "log":

@@ -396,6 +396,7 @@ fn capture_forts(
     mut economy: ResMut<crate::allies::Economy>,
     mut hints: ResMut<crate::onboarding::HintQueue>,
     mut records: MessageWriter<crate::stats::Record>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     mut sfx: MessageWriter<SfxEvent>,
 ) {
     let dt = time.delta_secs();
@@ -454,6 +455,7 @@ fn capture_forts(
                     crate::stats::stat::FORTS_LOST,
                     1.0,
                 ));
+                seen.write(crate::coverage::Seen(String::from("deed:fort-lost")));
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Lost));
             }
         } else if toward_player.abs() > 0.01 {
@@ -479,6 +481,7 @@ fn capture_forts(
                     crate::stats::stat::FORTS_TAKEN,
                     1.0,
                 ));
+                seen.write(crate::coverage::Seen(String::from("deed:fort-taken")));
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Capture));
             }
         }
@@ -586,6 +589,7 @@ fn tick_seeders(
     time: Res<Time>,
     mut seeders: Query<(Entity, &mut Seeder, &Body, &Allegiance)>,
     mut nests: MessageWriter<SpawnNest>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     mut bursts: MessageWriter<BurstEvent>,
 ) {
     let dt = time.delta_secs();
@@ -602,6 +606,7 @@ fn tick_seeders(
             faction: owner.0,
             home: seeder.home,
         });
+        seen.write(crate::coverage::Seen(String::from("deed:seeder-planted")));
         bursts.write(BurstEvent {
             pos: body.pos,
             height: 0.6,
@@ -666,6 +671,7 @@ fn reap_nests(
     mut forts: Query<&mut Fort>,
     mut deaths: MessageWriter<DeathEvent>,
     mut records: MessageWriter<crate::stats::Record>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     mut bursts: MessageWriter<BurstEvent>,
 ) {
     for (entity, nest, health, body, owner) in &nests {
@@ -691,6 +697,7 @@ fn reap_nests(
             crate::stats::stat::NESTS_CLEARED,
             1.0,
         ));
+        seen.write(crate::coverage::Seen(String::from("deed:nest-cleared")));
         deaths.write(DeathEvent {
             entity,
             pos: body.pos,

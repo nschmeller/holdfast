@@ -14,6 +14,8 @@
 //! | `HOLDFAST_SPEED=4` | Run the simulation at 4x |
 //! | `HOLDFAST_UNLOCK=1` | Turn on every subsystem immediately |
 //! | `HOLDFAST_AUTOPICK=1` | Auto-choose upgrade cards so a run never stalls |
+//! | `HOLDFAST_TOUGH=1` | Survive anything, so a content sweep is not a survival test |
+//! | `HOLDFAST_RICH=1` | Keep Scrap and Cores topped up, for the same reason |
 //! | `HOLDFAST_MONITOR=1` | Open the window centred on monitor 1 |
 //! | `HOLDFAST_MONITOR_NAME=DELL` | Pick the monitor by name instead of by index |
 //! | `HOLDFAST_TILE=0:2` | Take slot 0 of 2 side-by-side slots on that monitor |
@@ -41,6 +43,15 @@ pub struct DevConfig {
     pub speed: Option<f32>,
     pub unlock_all: bool,
     pub autopick: bool,
+    /// Take no damage.
+    ///
+    /// For coverage sweeps. Reaching the research tree takes four minutes and
+    /// a faction war takes longer still; without this, "go and see all the
+    /// content" is really "get good enough to survive to it", which is a
+    /// different task and not the one being asked.
+    pub tough: bool,
+    /// Keep the wallet full, so the sweep is not gated on economy either.
+    pub rich: bool,
     /// Monitor index to centre the window on. Useful when the game needs to be
     /// watched on one screen while a terminal stays visible on another.
     pub monitor: Option<usize>,
@@ -93,6 +104,8 @@ impl DevConfig {
             speed: env::var("HOLDFAST_SPEED").ok().and_then(|v| v.parse().ok()),
             unlock_all: truthy("HOLDFAST_UNLOCK"),
             autopick: truthy("HOLDFAST_AUTOPICK"),
+            tough: truthy("HOLDFAST_TOUGH"),
+            rich: truthy("HOLDFAST_RICH"),
             monitor: env::var("HOLDFAST_MONITOR")
                 .ok()
                 .and_then(|v| v.parse().ok()),
@@ -113,6 +126,8 @@ impl DevConfig {
             || self.speed.is_some()
             || self.unlock_all
             || self.autopick
+            || self.tough
+            || self.rich
             || self.monitor.is_some()
             || self.tile.is_some()
             || self.resolution.is_some()
@@ -172,7 +187,7 @@ impl Plugin for DevToolsPlugin {
             .init_resource::<WindowPlaced>()
             // Startup, not PreStartup: the primary window has to exist first.
             .add_systems(Startup, place_window)
-            .add_systems(Update, (tile_window, force_unlocks, tick_dev))
+            .add_systems(Update, (tile_window, force_unlocks, tick_dev, sustain))
             .add_systems(Update, autopick_card.run_if(in_state(AppState::LevelUp)));
     }
 }
@@ -473,6 +488,34 @@ fn autopick_card(
     progression.pending_levels = progression.pending_levels.saturating_sub(1);
     offer.cards.clear();
     next.set(AppState::Playing);
+}
+
+/// Keep a sweep alive and solvent.
+///
+/// Two separate switches because they answer two separate objections: a sweep
+/// should not end because the player died, and it should not stall because
+/// they could not afford the thing being tested.
+fn sustain(
+    config: Res<DevConfig>,
+    mut economy: ResMut<crate::allies::Economy>,
+    mut players: Query<&mut crate::common::Health, With<crate::player::Player>>,
+) {
+    if config.tough {
+        for mut health in &mut players {
+            health.current = health.max;
+            health.invuln = health.invuln.max(1.0);
+        }
+    }
+    if config.rich {
+        let scrap_short = 400.0 - economy.scrap;
+        if scrap_short > 0.0 {
+            economy.gain_scrap(scrap_short);
+        }
+        let cores_short = 40.0 - economy.cores;
+        if cores_short > 0.0 {
+            economy.gain_cores(cores_short);
+        }
+    }
 }
 
 fn tick_dev(

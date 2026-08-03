@@ -370,6 +370,7 @@ fn resolve_incitements(
     mut diplomacy: ResMut<Diplomacy>,
     mut hints: ResMut<crate::onboarding::HintQueue>,
     mut records: MessageWriter<crate::stats::Record>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
     player: Query<&crate::common::Body, With<crate::player::Player>>,
     monsters: Query<(&crate::common::Body, &Allegiance)>,
 ) {
@@ -392,6 +393,7 @@ fn resolve_incitements(
                 crate::stats::stat::WARS_STARTED,
                 1.0,
             ));
+            seen.write(crate::coverage::Seen(String::from("deed:war-incited")));
         } else {
             hints.push(
                 "NOBODY TO TURN",

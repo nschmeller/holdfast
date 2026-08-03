@@ -52,6 +52,15 @@ impl Plugin for PickupPlugin {
     }
 }
 
+/// The two write-only channels that record what happened rather than change
+/// it. Grouped because `handle_deaths` was one parameter over the limit and
+/// because these two are the same kind of thing.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Telemetry<'w> {
+    records: MessageWriter<'w, crate::stats::Record>,
+    seen: MessageWriter<'w, crate::coverage::Seen>,
+}
+
 /// Everything that happens when something dies: drops, bookkeeping, feedback.
 #[allow(clippy::too_many_arguments)]
 fn handle_deaths(
@@ -71,7 +80,7 @@ fn handle_deaths(
     mut sfx: MessageWriter<SfxEvent>,
     mut shakes: MessageWriter<ShakeEvent>,
     mut next_state: ResMut<NextState<AppState>>,
-    mut records: MessageWriter<crate::stats::Record>,
+    mut telemetry: Telemetry,
     players: Query<Entity, With<Player>>,
 ) {
     // One multiplier, computed once, applied to every reward this frame.
@@ -99,12 +108,31 @@ fn handle_deaths(
         let is_boss = enemy.rank == Rank::Boss;
         let is_elite = enemy.rank == Rank::Elite;
 
-        records.write(crate::stats::Record::add(crate::stats::stat::KILLS, 1.0));
+        telemetry
+            .records
+            .write(crate::stats::Record::add(crate::stats::stat::KILLS, 1.0));
+        telemetry
+            .seen
+            .write(crate::coverage::Seen(format!("enemy:{:?}", enemy.kind)));
         if is_boss {
-            records.write(crate::stats::Record::add(crate::stats::stat::BOSSES, 1.0));
+            telemetry
+                .seen
+                .write(crate::coverage::Seen(String::from("deed:boss-killed")));
         }
         if is_elite {
-            records.write(crate::stats::Record::add(crate::stats::stat::ELITES, 1.0));
+            telemetry
+                .seen
+                .write(crate::coverage::Seen(String::from("deed:elite-killed")));
+        }
+        if is_boss {
+            telemetry
+                .records
+                .write(crate::stats::Record::add(crate::stats::stat::BOSSES, 1.0));
+        }
+        if is_elite {
+            telemetry
+                .records
+                .write(crate::stats::Record::add(crate::stats::stat::ELITES, 1.0));
         }
 
         // -- experience -----------------------------------------------------

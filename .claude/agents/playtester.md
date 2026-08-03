@@ -99,6 +99,24 @@ research ~240s, threat dial ~300s.
 - **Write numbers down.** "Scrap went 40 -> 38 after a kill" is a finding.
   "Economy felt off" is not.
 
+## Content coverage
+
+The digest reports what fraction of the game this session has actually
+exercised, and `pilot.py todo <dir>` lists exactly what is left, grouped by
+kind - which weapons have never fired, which monsters have never been fought,
+which worlds are unvisited, which deeds are undone.
+
+If your brief is a **coverage sweep**, that list is your task list: read it,
+pick the nearest missing thing, go and do it, read it again. Your instance
+will have been launched with `HOLDFAST_TOUGH=1 HOLDFAST_RICH=1
+HOLDFAST_UNLOCK=1`, which means you cannot die and cannot run out of money -
+so a sweep is a navigation problem, not a survival one. Do not report
+difficulty findings from a sweep run; the difficulty has been switched off.
+
+Reaching the far end of the list needs deliberate travel: forts, nests,
+seeders and factions only exist more than 130 units from where you land, and
+`goto 200 0` gets you there faster than roaming will.
+
 ## Recording as you go
 
 Keep running notes in `$PT/FINDINGS.md` - create it, append as you play, do
