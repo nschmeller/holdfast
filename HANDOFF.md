@@ -60,8 +60,8 @@ and appends events to `<dir>/log.txt`. Drive it with `tools/pilot.py`:
 Launch two side by side on the external monitor:
 
     S=-520,-1440,2560,1440
-    HOLDFAST_SCREEN=$S HOLDFAST_PILOT=$PT/a HOLDFAST_TILE=0:2 ./target/debug/holdfast &
-    HOLDFAST_SCREEN=$S HOLDFAST_PILOT=$PT/b HOLDFAST_TILE=1:2 ./target/debug/holdfast &
+    HOLDFAST_SCREEN=$S HOLDFAST_PILOT=$PT/a HOLDFAST_TILE=0:2 ./target/debug/holdfast-app &
+    HOLDFAST_SCREEN=$S HOLDFAST_PILOT=$PT/b HOLDFAST_TILE=1:2 ./target/debug/holdfast-app &
 
 Screenshots occasionally come back solid black at exactly 56997 bytes. That is
 a capture race, not a rendering bug - retry and the same scene appears.

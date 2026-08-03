@@ -139,7 +139,7 @@ the game has died. Relaunch with your own slot:
 
     cd /Users/nschmeller/desk-free-for-all && \
       HOLDFAST_PILOT=$PT HOLDFAST_MONITOR=0 HOLDFAST_TILE=<your slot> \
-      ./target/debug/holdfast > $PT/stdout.log 2>&1 &
+      ./target/debug/holdfast-app > $PT/stdout.log 2>&1 &
 
 Then read `$PT/stdout.log`, find the panic, and **quote it verbatim** in your
 findings along with exactly what you were doing. Keep playing afterwards.
