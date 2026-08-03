@@ -337,6 +337,28 @@ pub struct BossBarTarget;
 
 // -- the director -----------------------------------------------------------
 
+/// When the first boss arrives.
+///
+/// It used to be 115 seconds, the same as every boss after it, and that is where
+/// the dossier's deaths pile up: ten of twenty-five runs ended between 80 and
+/// 150 seconds at level 4 to 9 with three or four weapons, and two of them died
+/// to this boss by name. Past it the distribution jumps straight to 340 seconds
+/// and beyond - so the run length was bimodal on a single encounter, which is
+/// the shape of a wall rather than a curve.
+///
+/// One more wave cycle of build-up turns the first boss from an ambush into a
+/// milestone you arrive at with a build.
+const FIRST_BOSS: f32 = 168.0;
+
+/// And every boss after it.
+const BOSS_INTERVAL: f32 = 115.0;
+
+/// How long before a boss lands that it is announced.
+///
+/// Telegraphs are long on purpose in this game. A boss that announces itself as
+/// it arrives is not a telegraph, it is a caption.
+const BOSS_WARNING: f32 = 9.0;
+
 /// Decides what spawns and when. Reads `Threat` for pressure, `RunClock` for
 /// the unlock schedule, and keeps its own budget so bursts feel authored rather
 /// than uniformly random.
@@ -345,6 +367,8 @@ pub struct Director {
     pub spawn_accum: f32,
     pub elite_timer: f32,
     pub boss_timer: f32,
+    /// Set once the incoming boss has been announced, cleared when it lands.
+    pub boss_warned: bool,
     pub boss_index: usize,
     pub boss_cycle: u32,
     /// Live count, maintained incrementally to avoid a full query every frame.
@@ -358,7 +382,8 @@ impl Default for Director {
         Self {
             spawn_accum: 0.0,
             elite_timer: 32.0,
-            boss_timer: 115.0,
+            boss_timer: FIRST_BOSS,
+            boss_warned: false,
             boss_index: 0,
             boss_cycle: 0,
             alive: 0,
@@ -417,6 +442,7 @@ fn direct_spawns(
     env: Res<EnvKind>,
     art: Res<GameArt>,
     mut rng: ResMut<Rng>,
+    mut hints: ResMut<crate::onboarding::HintQueue>,
     player: Query<&Body, With<Player>>,
 ) {
     let dt = time.delta_secs();
@@ -425,6 +451,15 @@ fn direct_spawns(
 
     // -- boss ---------------------------------------------------------------
     director.boss_timer -= dt;
+    if !director.boss_warned && director.boss_timer <= BOSS_WARNING {
+        director.boss_warned = true;
+        let next = EnemyKind::BOSSES[director.boss_index % EnemyKind::BOSSES.len()];
+        hints.push(
+            "SOMETHING IS COMING",
+            format!("{} is on its way. Get ready.", next.name(*env)),
+            crate::onboarding::HintTone::Discovery,
+        );
+    }
     if director.boss_timer <= 0.0 {
         let kind = EnemyKind::BOSSES[director.boss_index % EnemyKind::BOSSES.len()];
         director.boss_index += 1;
@@ -447,7 +482,8 @@ fn direct_spawns(
             &mut rng,
         );
         director.alive += 1;
-        director.boss_timer = 115.0;
+        director.boss_timer = BOSS_INTERVAL;
+        director.boss_warned = false;
 
         let title = if director.boss_cycle > 0 {
             format!("{} +{}", kind.name(*env), director.boss_cycle)
@@ -1268,6 +1304,45 @@ mod tests {
     }
 
     // -- status effects -----------------------------------------------------
+
+    #[test]
+    fn the_first_boss_gives_more_room_than_the_rest() {
+        // Ten of twenty-five runs in the dossier ended between 80 and 150
+        // seconds, two of them to this boss by name, while the runs that got
+        // past it jumped straight to 340 seconds and beyond. A bimodal run
+        // length on one encounter is a wall, not a curve.
+        // Read off a fresh Director, which is what the run actually uses.
+        let first = Director::default().boss_timer;
+        let later = Director {
+            boss_timer: BOSS_INTERVAL,
+            ..Director::default()
+        }
+        .boss_timer;
+        assert!(
+            first > later,
+            "the first boss arrives on the same clock as the rest"
+        );
+        // But not so much room that the pacing sags before it.
+        assert!(first < later * 2.0, "{first}s is a lull, not a build-up");
+    }
+
+    #[test]
+    fn a_boss_is_announced_before_it_lands() {
+        // Telegraphs are long on purpose. A boss announced as it arrives is a
+        // caption, not a warning.
+        let fresh = Director::default();
+        let warning = BOSS_WARNING;
+        assert!(warning > 5.0, "{warning}s is not a telegraph");
+        assert!(
+            warning < fresh.boss_timer,
+            "the warning would already have fired at the start of the run"
+        );
+        assert!(!fresh.boss_warned, "warned before the run started");
+        assert!(
+            fresh.boss_timer > BOSS_WARNING,
+            "already inside the warning"
+        );
+    }
 
     #[test]
     fn a_clean_status_block_does_not_slow_anything() {
