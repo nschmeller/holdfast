@@ -38,6 +38,14 @@ pub struct Threat {
     /// `territory` so the HUD and the dossier can tell a zone-holder from a
     /// fort-holder.
     pub holdings: f32,
+    /// Contribution from standing in a pool of light.
+    ///
+    /// A pool multiplies damage and heals you, and its documented downside -
+    /// that it draws attention - did not exist anywhere in the code. So it was
+    /// pure upside, which no other system in this game is. Bright ground is now
+    /// loud ground: the same trade as territory, and it raises rewards along
+    /// with the danger, so standing in one is a lever rather than a trap.
+    pub light: f32,
     /// Purely for the HUD: flashes when the value changed.
     pub flash: f32,
 }
@@ -53,6 +61,7 @@ impl Default for Threat {
             streak: 0.0,
             territory: 0.0,
             holdings: 0.0,
+            light: 0.0,
             flash: 0.0,
         }
     }
@@ -70,7 +79,7 @@ impl Threat {
 
     /// The value every other system multiplies against.
     pub fn effective(&self) -> f32 {
-        self.level + self.streak * 0.5 + self.territory + self.holdings
+        self.level + self.streak * 0.5 + self.territory + self.holdings + self.light
     }
 
     pub fn surging(&self) -> bool {
@@ -584,6 +593,35 @@ mod tests {
     #[test]
     fn a_fresh_run_has_no_streak() {
         assert_eq!(RunClock::default().best_streak, 0);
+    }
+
+    #[test]
+    fn every_source_of_strength_is_also_a_source_of_pressure() {
+        // The one rule the whole difficulty design rests on. A light pool used
+        // to break it: a quarter more damage and 1.4 health a second, for
+        // nothing at all.
+        let base = Threat::default().effective();
+        for loud in [
+            Threat {
+                territory: 0.2,
+                ..Threat::default()
+            },
+            Threat {
+                holdings: 0.35,
+                ..Threat::default()
+            },
+            Threat {
+                light: crate::player::LIGHT_THREAT,
+                ..Threat::default()
+            },
+        ] {
+            assert!(
+                loud.effective() > base,
+                "a source of strength that costs nothing"
+            );
+            // And it pays, because the reward multiplier reads the same figure.
+            assert!(loud.reward_mult() > Threat::default().reward_mult());
+        }
     }
 
     #[test]

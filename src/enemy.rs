@@ -1131,14 +1131,14 @@ fn enemy_fall_off(
             alt.y += alt.vy * dt;
             if alt.y < -12.0 {
                 // Knocking something into a hole is a kill the player set up
-                // and should be paid for. Walking into one on its own is not,
-                // and paying for it turned chasms into a farm: a run reached
-                // 16.6 kills a second with a single enemy anywhere near the
-                // player.
+                // and is paid for in full - it is the whole point of fighting
+                // beside one. Walking in unaided is not, and paying for it made
+                // chasms a farm: a run measured 16.6 kills a second with no
+                // enemy anywhere near the player.
                 deaths.write(DeathEvent {
                     entity,
                     pos: body.pos,
-                    by_player: enemy.pushed_recently > 0.0,
+                    credited: enemy.pushed_recently > 0.0,
                 });
                 commands.entity(entity).try_insert(Doomed);
             }

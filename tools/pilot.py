@@ -9,6 +9,8 @@ glance.
     pilot.py see  <dir>              one-screen digest of the situation
     pilot.py raw  <dir>              the whole report as JSON
     pilot.py do   <dir> "cmd" ...    append command lines and wait them out
+                                     (including the steering verbs - `do` does
+                                     not return until the game is idle again)
     pilot.py log  <dir> [n]          the last n log lines (default 25)
     pilot.py todo <dir>              content not yet seen this session
     pilot.py shot <dir> <file.png>   screenshot, waits for the file to appear
@@ -218,7 +220,8 @@ def digest(s):
         where = "STANDING IN IT" if pool.get("standing_in_it") else f"{pool['dist']:.0f}m away"
         out.append(
             f"LIGHT POOL {where}, radius {pool['radius']:.0f}, "
-            f"x{pool['damage_mult_inside']:.2f} damage inside"
+            f"x{pool['damage_mult_inside']:.2f} damage and +{pool['regen_inside']:.1f} hp/s "
+            f"inside, for +{pool['threat_inside']:.2f} threat while you stand there"
         )
     for hole in (s.get("chasms") or [])[:2]:
         out.append(
@@ -260,8 +263,30 @@ def is_blank(path):
         return False
 
 
+# Steering verbs and where their duration sits in the arguments. `goto` and
+# `defend` take a position first, so their time is optional and third.
+STEER_SECONDS_AT = {
+    "roam": 1,
+    "chase": 1,
+    "flee": 1,
+    "kite": 1,
+    "goto": 3,
+    "defend": 3,
+}
+
+# What `goto` and `defend` fall back to when no time is given. `goto` budgets
+# itself from the distance, which can be minutes, so waiting on a guess is
+# worse than not waiting - the caller is told to sleep instead.
+DEFEND_DEFAULT = 20.0
+
+
 def duration_of(lines):
-    """How long the queued commands will take, so `do` can wait them out."""
+    """How long the queued commands will take, so `do` can wait them out.
+
+    Steering verbs used to count as zero, so `do "kite 40"` returned at once
+    and every caller had to know to sleep afterwards - which nobody did, so
+    reports were written about a game state forty seconds in the past.
+    """
     total = 0.0
     for line in lines:
         parts = line.split("#")[0].split()
@@ -275,6 +300,14 @@ def duration_of(lines):
                 pass
         elif verb in ("tap", "shot", "screenshot"):
             total += 0.1
+        elif verb in STEER_SECONDS_AT:
+            at = STEER_SECONDS_AT[verb]
+            try:
+                total += float(parts[at])
+            except (IndexError, ValueError):
+                # `goto` with no limit budgets itself from the distance; the
+                # wait loop stops on an empty queue anyway, so lean long.
+                total += DEFEND_DEFAULT if verb == "defend" else 90.0
     return total
 
 
@@ -337,12 +370,27 @@ def main():
             for line in lines:
                 handle.write(line.rstrip("\n") + "\n")
             handle.flush()
-        # Wait for the queue to drain so the digest that follows describes the
-        # world after the action rather than during it.
-        time.sleep(duration_of(lines) + 0.45)
-        for _ in range(60):
+        # Wait for the queue to drain AND the last command to finish, so the
+        # digest that follows describes the world after the action rather than
+        # partway through it. `queued` alone goes to zero as soon as the last
+        # command becomes the active one, which is why a `kite 40` used to
+        # return immediately.
+        # First give the game a moment to notice the append. Without this the
+        # very first poll sees an idle pilot - it has not read the file yet -
+        # and returns instantly, which is the bug this is here to avoid.
+        pickup = time.time() + 2.0
+        while time.time() < pickup:
             state = read_state(path)
-            if state is None or state.get("queued", 0) == 0:
+            if state and (state.get("busy") or state.get("queued", 0) > 0):
+                break
+            time.sleep(0.15)
+        # Then wait for it to go idle again.
+        deadline = time.time() + duration_of(lines) + 20.0
+        while time.time() < deadline:
+            state = read_state(path)
+            if state is None:
+                break
+            if state.get("queued", 0) == 0 and not state.get("busy", False):
                 break
             time.sleep(0.25)
         print(digest(read_state(path)))

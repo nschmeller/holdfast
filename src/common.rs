@@ -185,7 +185,18 @@ pub enum DamageSource {
 pub struct DeathEvent {
     pub entity: Entity,
     pub pos: Vec2,
-    pub by_player: bool,
+    /// Whether this death pays out: XP, loot and a tick on the kill counter.
+    ///
+    /// True for anything that died to damage, whoever dealt it - a burn the
+    /// player lit, a turret, an ally, a rival faction in a war. False only for a
+    /// death nobody brought about, which in practice means an enemy that walked
+    /// into a chasm on its own.
+    ///
+    /// Was `by_player`, which was written at three sites and read at none, so
+    /// every chasm death paid in full. Enemies deliberately do not avoid holes,
+    /// so standing across one from a nest was an unlimited zero-risk farm - a
+    /// run measured 16.6 kills a second with no enemy near the player.
+    pub credited: bool,
 }
 
 /// Request a screen shake. Amplitude is in world units.

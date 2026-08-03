@@ -1060,7 +1060,7 @@ fn reap_nests(
         deaths.write(DeathEvent {
             entity,
             pos: body.pos,
-            by_player: true,
+            credited: true,
         });
         commands.entity(entity).try_insert(Doomed);
     }

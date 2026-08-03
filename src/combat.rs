@@ -871,7 +871,7 @@ fn apply_damage(
             deaths.write(DeathEvent {
                 entity: ev.target,
                 pos: body.pos,
-                by_player: ev.source == DamageSource::Player,
+                credited: true,
             });
         }
     }

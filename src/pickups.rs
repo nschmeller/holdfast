@@ -102,6 +102,18 @@ fn handle_deaths(
         };
 
         director.alive = director.alive.saturating_sub(1);
+
+        // A death nobody brought about pays nothing and does not count. In
+        // practice this is an enemy that walked into a chasm unaided: they
+        // deliberately do not avoid holes, so standing across one from a nest
+        // was an unlimited zero-risk farm. One knocked in by the player, a
+        // turret or an ally is credited in full, because setting that up is the
+        // entire point of fighting beside a hole.
+        if !death.credited {
+            commands.entity(death.entity).try_insert(Doomed);
+            continue;
+        }
+
         clock.kills += 1;
         threat.note_kill();
         clock.note_kill();

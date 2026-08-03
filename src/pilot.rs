@@ -502,8 +502,11 @@ fn key_from_name(name: &str) -> Option<KeyCode> {
         "DOWN" | "ARROWDOWN" | "ARROW_DOWN" | "DOWNARROW" => KeyCode::ArrowDown,
         "LEFT" | "ARROWLEFT" | "ARROW_LEFT" | "LEFTARROW" => KeyCode::ArrowLeft,
         "RIGHT" | "ARROWRIGHT" | "ARROW_RIGHT" | "RIGHTARROW" => KeyCode::ArrowRight,
-        "MINUS" => KeyCode::Minus,
-        "EQUAL" | "PLUS" => KeyCode::Equal,
+        // The literal characters too. The controls list prints "MINUS lowers
+        // the dial", and a reader who types the key that is actually on the
+        // keyboard should not be refused.
+        "MINUS" | "-" | "DASH" | "HYPHEN" => KeyCode::Minus,
+        "EQUAL" | "PLUS" | "=" | "+" => KeyCode::Equal,
         _ => return None,
     })
 }
@@ -1406,6 +1409,14 @@ fn write_snapshot(
     json.text("state", &format!("{:?}", pacing.state.get()));
     json.text("world", env.title());
     json.count("queued", pilot.queue.len());
+    // `queued` goes to zero the moment the last command becomes the active one,
+    // so a client watching only that stopped waiting while a forty-second kite
+    // was still running and reported on a game state it had not seen yet.
+    json.flag("busy", pilot.active.is_some());
+    match pilot.active.as_ref().and_then(|a| a.steer) {
+        Some(steer) => json.text("steering", &format!("{steer:?}")),
+        None => json.maybe("steering", None),
+    }
 
     // Content coverage: what of the game this session has actually exercised,
     // and what is left. Turns "go and see everything" into a task with an
@@ -1465,6 +1476,7 @@ fn write_snapshot(
     // - and this was invisible, so a fort-holder could not tell what its
     // holdings were costing it.
     json.num("from_forts", pacing.threat.holdings);
+    json.num("from_light", pacing.threat.light);
     json.flag("surging", pacing.threat.surging());
     json.flag("surge_ready", pacing.threat.can_surge());
     json.end();
@@ -1778,6 +1790,10 @@ fn write_war(json: &mut Json, meta: &Meta, holdings: &Holdings, hero: Vec2) {
         json.num("radius", pool.radius);
         json.num("damage_mult_inside", 1.0 + pool.damage_bonus);
         json.flag("standing_in_it", *dist <= pool.radius);
+        json.num("regen_inside", crate::player::LIGHT_REGEN);
+        // Bright ground is loud ground. Reported so the trade is visible rather
+        // than something a reader has to infer from the threat number moving.
+        json.num("threat_inside", crate::player::LIGHT_THREAT);
         json.end();
     }
     json.end();
@@ -2150,6 +2166,18 @@ mod tests {
         }
         for name in ["DOWN", "ArrowDown", "LEFT", "ArrowLeft", "RIGHT"] {
             assert!(key_from_name(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_threat_dial_answers_to_the_keys_that_are_on_the_keyboard() {
+        // The controls list says "MINUS lowers the dial", so a reader typing
+        // the actual character was refused and reported a dead key.
+        for name in ["MINUS", "-", "dash"] {
+            assert_eq!(key_from_name(name), Some(KeyCode::Minus), "{name}");
+        }
+        for name in ["EQUAL", "=", "+", "plus"] {
+            assert_eq!(key_from_name(name), Some(KeyCode::Equal), "{name}");
         }
     }
 

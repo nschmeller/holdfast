@@ -161,9 +161,31 @@ simultaneously, for well over a hundred seconds of cumulative ownership.**
   exactly, verified at threat 2.2 through the dial's hard ceiling of 8.0. A
   fortress able to tank threat 8 earns roughly 6.8-6.9x the base reward per
   kill, for free, the whole time it holds.
-- Is knockback beside a chasm strong enough to build around? Still untested —
-  no chasm was encountered in six runs across three rounds.
-- Do light pools pay for the attention they draw? Still untested.
+- **Answered, mostly: is knockback beside a chasm strong enough to build
+  around?** Yes on the mechanics, yes on early live measurement, unconfirmed
+  on the specific "does it kill a boss" claim. See `sapper` below: fighting
+  0.5-8m from a chasm rim held HP at/near max for entire multi-wave stretches
+  (including a boss present) at 0.5-1.2 kills/sec, and the source code shows
+  no enemy kind is exempt from knockback and the player cannot fall in
+  (`Actor::avoids_chasms` defaults `true` and is only ever set `false` for
+  `Enemy`). Nobody has yet watched a specific boss actually go over the edge
+  on camera — the enemy-count telemetry can't distinguish a fall-kill from a
+  DPS-kill, so that specific sub-claim is still open for whoever plays next.
+- **Answered: do light pools pay for the attention they draw?** Yes, but the
+  mechanism is not the one anyone expected. See `sapper` below: kills/sec
+  inside a pool was not clearly higher than outside (1.0-1.55/s inside vs.
+  2.0/s in one outside control, muddied by weapon-level confounds), but HP
+  stayed pinned at or near 100% every window recorded inside a pool, while an
+  outside-control window at comparable density lost 31% of max HP in 6
+  seconds. Source dig explains it: `player_regen` in `src/player.rs` adds a
+  flat **+1.4 HP/s** while standing in any `LightPools::contains` area, on top
+  of the 1.25x damage multiplier the pilot already reports — and that regen
+  bonus appears nowhere in the in-game hints or the pilot's `raw` output, only
+  in a source comment. Also checked and found absent: no code anywhere
+  (`enemy.rs`, `director`) actually pulls enemy aggro toward light pools —
+  the "draws attention" framing does not correspond to any targeting-weight
+  system found in this codebase; enemies already beeline the player
+  regardless of light.
 - **Does a turret ring plateau or genuinely hold indefinitely?** Better
   answered but not fully settled: a 25-structure ring at threat 8.0 held the
   *player* at full HP through 100+ simultaneous enemies for a sustained
@@ -1072,3 +1094,156 @@ Blood Feud successfully yet (every attempt this session either lacked the
 chasms remain the only two systems in the entire game nobody has ever
 observed, for lack of a bridge-side distance field rather than for lack of
 trying.
+
+### sapper — 214.9s, first live look at chasms and light pools (round 6)
+Assignment: terrain as a weapon. The bridge now reports `light_pools`
+(`standing_in_it`, `damage_mult_inside`) and `chasms` (`to_edge`), fixed
+specifically so this round could look at what every prior round could only
+theorize about. Three questions: is knockback beside a chasm a build, do
+light pools pay for the attention they draw, and does stacking both with the
+threat dial compound into the strongest position in the game.
+
+**Source-code findings, checked before spending any playtime, because they
+answer "does this even work" faster than combat does.** `grep -rn
+"\.by_player" src/*.rs` returns nothing outside the two write-sites in
+`combat.rs`/`enemy.rs` — `DeathEvent.by_player` (set when a falling enemy was
+hit by the player within the last 2.5s) is computed and stored but **never
+read anywhere**, meaning `handle_deaths` in `pickups.rs` pays full XP/Scrap/
+Core reward for a chasm death whether the player pushed the enemy in or it
+simply wandered in on its own. The in-source comment on `enemy_fall_off`
+claims self-walked chasm kills were deliberately made to *not* pay, citing a
+past exploit that "reached 16.6 kills a second" — but nothing in the current
+code enforces that; if the guard exists it isn't here. Separately,
+`enemy_think`'s obstacle-avoidance only steers around `ObstacleField` (props),
+which chasms are never added to, and `Enemy`'s `Actor::avoids_chasms` is
+explicitly `false` ("deliberately careless") — so enemies beeline straight
+through/into a chasm if it sits between them and the player, with zero
+special-casing. The player's own `Actor::avoids_chasms` is the type default,
+`true`, and nothing ever overrides it for `Player` — the player cannot be
+knocked into a hole, full stop, so testing at the very rim (down to 0.5m to
+the visible edge) carries no self-death risk. And knockback force itself
+(`apply_damage` in `combat.rs`) is `knockback_force * stats.knockback` where
+`stats` is the *player's* `PlayerStats` for every non-player target — there is
+no per-enemy-kind knockback resistance anywhere, so mechanically a boss is
+exactly as shoveable as a Dust Bunny, just proportionally harder to move
+per-hit because nothing in the impulse system scales by body size either.
+Catalogued weapon knockback forces for whoever wants to build around this:
+Fan Blast `34 + level*4` (explicitly commented "shove things off the edge" —
+this is the designed chasm weapon), Coffee Nova `18`, Ruler Sweep `14`,
+Stapler `~11.2`, Pencil Dart/Rubber Band `~8` (baseline multiplier), Clip
+Orbit `7`, Laser Pointer `4` (weakest, a precision weapon not meant to push).
+
+**Live chasm test.** Farmed to a 5-6 weapon build (Pencil Dart, Stapler, Tack
+Mines, Coffee Nova, Fan Blast, Heavy Hands' +25% knockback card) then used
+`kite` — not `goto`, which kept stalling/giving up short even at modest
+density, see operational notes below — to settle 4-8m from a chasm (down to
+0.5m from the visible edge at closest). Held that ground with `defend` through
+several waves and a full encounter with THE STAPLER boss. Measured across
+four ~10-20s windows: kills/sec ranged **0.49 to 1.19**, and **HP stayed at
+or within 3% of max in every single window** (168-210 HP band, out of a
+similar max) even as local density climbed to 20-28 enemies within 12m and 1
+boss present concurrently. This is a genuinely strong result — no other
+strategy in the playbook has held that HP-flat a line at that density this
+early (level 9-14) without a turret ring. **What I could not confirm: whether
+the boss itself ever actually fell in**, as opposed to being ground down by
+DPS — THE STAPLER remained alive (count still 1) at every check across an
+80-second stretch near the pit, and the aggregate `enemies.total`/`by_kind`
+telemetry can't distinguish a fall-kill from a melee-kill for a specific
+entity. Given the source-level proof above (uniform knockback, no boss
+exemption), the mechanical claim stands, but nobody has watched it happen to
+a named boss yet — that needs a slower, more deliberate lure-to-the-lip test.
+
+**Live light pool test.** Found via `goto`/`kite` toward the reported pool
+coordinates; confirmed the desk arena's terrain is chunk-generated on the
+fly (`src/environments/desk.rs`: 9% chasm / 11% pool chance *per chunk*, not
+two fixed instances) — new pool/chasm pairs kept appearing as I explored,
+including one only ~12 units apart at ~65-90 units from spawn, much closer
+than the ~36m/~91m pair visible at spawn. Measured kills/sec standing in a
+pool across three windows: 1.25, 1.55, 1.0 per second, versus **2.0/s** in one
+outside-the-pool control window at comparable density — so the pool did *not*
+clearly raise kill rate (confounded by weapon levels changing between
+windows, so take this as suggestive, not clean). The much cleaner signal was
+survivability: **HP held flat at 100% of max in every window recorded while
+standing in the pool** (across density climbing 26→51 enemies), while the one
+control window taken ~11-12m outside it saw HP fall from 149 to 103 (**-31%
+in 6 seconds**) at similar-or-lower density. Source dig explains the gap:
+`player_regen` in `src/player.rs` adds a flat **+1.4 HP/s** while
+`LightPools::contains(player.pos)` is true, on top of the 1.25x damage
+multiplier the pilot already surfaces — and this regen bonus is in neither
+the in-game hint text nor the pilot's `raw` output, only a source comment.
+Also checked: `grep -rn LightPools src/enemy.rs` returns nothing — no code
+anywhere pulls enemy aggro toward a pool. The "draws attention" framing in
+the design doc doesn't correspond to any targeting-weight system that exists
+in this codebase; enemies already beeline the player regardless of light, so
+a pool's cost is exactly its price of admission (walking there), not some
+extra lure effect.
+
+**The compound: pool + rising threat dial.** Stood in a pool and tapped
+`EQUAL` (not `=` — the pilot rejects the literal glyph, `tap MINUS`/`tap
+EQUAL` are the actual key names) repeatedly, pushing threat 1.0 → 1.7 while
+density climbed to 116 total enemies, 37 within 12m, 3 elites + 1 boss
+concurrently. Held HP at 85-95% of max for a genuinely long stretch (roughly
+60-90 seconds) at that density and threat — reward_mult climbing to 1.6-1.7x
+on top of the pool's own multiplier and its hidden regen. **It is not free,
+though, and the reason is instructive rather than surprising**: this
+particular pool happened to sit 2-9m from a cluster of 5-6 active BLOOM
+nests, and once threat and density stacked high enough, that nest cluster
+fed faster than the (mid-tier, mostly L1-L2) build could clear even with the
+pool's bonuses — HP cratered from 85% to 30% in about 15 seconds. `flee`
+resolved it cleanly (full separation and +65 HP recovered in 8 seconds), so
+the position itself wasn't a trap, but it shows **a light pool amplifies
+whatever position you're already in — it doesn't fix a bad one** (nests
+nearby are still nests nearby). The run ultimately died about a minute later,
+away from the pool entirely, to the exact same encirclement-freeze pattern
+documented every round since the first: `within_12m` crossed into the
+30s, HP went 156→-3 in under 45 real seconds with one `LevelUp` gap in the
+middle, and the final `flee` (HP 61→-3) landed 2.5 seconds too late once the
+tick rate hit 14-23 damage every 0.4-0.6s. The terrain compound raises the
+*ceiling* of survivable density substantially over open ground — it does not
+repeal the encirclement ceiling once local density crosses somewhere in the
+low-to-mid 30s within 12m.
+
+**Numbers.** Died **214.9s, level 19, 288 kills, best streak 204, peak
+threat 1.78** (dial pushed to ~1.7 plus streak/floor drift), zones/forts/
+allies/wars all 0 (never attempted — the assignment was terrain, not
+territory), 397 Scrap and 8 Cores unspent at death. Result:
+`sapper DESK 214.9 19 288 0 0 0 0 0 1.78 116 12996 397 8 0.238`.
+
+**Operational notes for whoever drives next.** (1) `tools/pilot.py`'s `do`
+only waits out `hold`/`wait`/`tap`/`shot` durations (`duration_of` in
+`pilot.py` only sums those four verbs) — a `defend x y r 60` or `kite 20`
+returns from `do` almost immediately after the command is queued, *not*
+after 60/20 seconds of play. Follow every steering verb with a real
+(bash-side) `sleep` if you actually want it to run its course before the
+next check; otherwise consecutive `do` calls just re-read the same instant.
+(2) The threat dial keys must be sent as `tap MINUS` / `tap EQUAL` (`PLUS`
+also maps to Equal) — a literal `tap "="` or `tap "-"` is rejected with
+`rejected: unknown key`. (3) This instance's `holdfast` process was
+**silently killed twice this session with zero error output or crash log** —
+`ps aux` simply stopped listing it between one command and the next, no
+`AppExit`, no panic in `stdout.log`. This happened while 4-5 other agents'
+`holdfast`/`cargo` processes were alive concurrently on the same machine
+(physical memory was down to ~1.5GB free of 24GB at the time) — almost
+certainly the OS silently reclaiming a backgrounded/occluded GUI process
+under memory pressure, not a game bug. Relaunching with the identical env
+recovered cleanly and reproduced the *exact same* chasm/pool coordinates
+(the desk seed is deterministic), so no measurement was lost, just time.
+Whoever configures concurrent rounds on shared hardware should expect this
+above 4 simultaneous instances and budget for at least one silent relaunch.
+
+**Takeaway: terrain is a real, working build, not scenery.** A chasm rim
+sustains combat at flat-100%-HP density levels that open ground cannot, and a
+light pool's real value is hidden regen, not the advertised damage bonus.
+Both compound with the threat dial for a genuinely higher ceiling than either
+alone — but neither is a substitute for reading local density, since the
+same encirclement-freeze wall that ends every other strategy in this file
+still ends this one once `within_12m` climbs into the 30s. Next: (1) a
+patient, deliberate test that lures a *named* boss to the very lip and
+confirms on camera (or via a tighter enemy-count diff) that it actually falls
+rather than dies to DPS; (2) build a turret ring *at* a chasm rim the way
+`castellan` built one at a fort, and see whether turret presence plus
+knockback pushes the ~90-within-12m collapse ceiling higher than either
+system alone; (3) deliberately seek out one of the closer chasm/pool pairs
+(they exist, ~12 units apart was found this round) and fight from the
+single tile that is simultaneously in the pool and at the rim, rather than
+treating them as two separate stops the way this round did for lack of time.

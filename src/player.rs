@@ -392,21 +392,35 @@ fn apply_hazards_to_player(
     }
 }
 
+/// What standing in a pool of light adds to the threat floor.
+///
+/// The pool's documented downside - that it draws attention - existed in two
+/// comments and nowhere in the code, so bright ground was pure upside: a quarter
+/// more damage and 1.4 health a second for nothing. Nothing else in this game
+/// works that way. It is now the same trade as territory, and because the floor
+/// feeds `Threat::effective`, it raises rewards along with the danger - so a
+/// pool is a lever the player pulls rather than a corner they hide in.
+pub const LIGHT_THREAT: f32 = 0.45;
+
+/// Extra health a second inside a pool.
+pub const LIGHT_REGEN: f32 = 1.4;
+
 fn player_regen(
     time: Res<Time>,
     stats: Res<PlayerStats>,
     pools: Res<crate::world::LightPools>,
+    mut threat: ResMut<crate::threat::Threat>,
     mut q: Query<(&mut Health, &Body), With<Player>>,
 ) {
     let dt = time.delta_secs();
     for (mut health, body) in &mut q {
         health.invuln = (health.invuln - dt).max(0.0);
         let mut rate = stats.regen;
-        // Standing in a pool of light heals faster: a reason to contest the
-        // bright ground the director is already aiming elites at.
-        if pools.contains(body.pos) {
-            rate += 1.4;
+        let lit = pools.contains(body.pos);
+        if lit {
+            rate += LIGHT_REGEN;
         }
+        threat.light = if lit { LIGHT_THREAT } else { 0.0 };
         if health.current > 0.0 {
             health.heal(rate * dt);
         }
