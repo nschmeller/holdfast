@@ -6,7 +6,7 @@
 //! of RAM and nothing at all in download size, which matters a great deal for
 //! a web build.
 
-use bevy::audio::{PlaybackMode, Volume};
+use bevy::audio::{GlobalVolume, PlaybackMode, Volume};
 use bevy::prelude::*;
 
 use crate::common::SfxEvent;
@@ -113,9 +113,46 @@ pub struct AudioFxPlugin;
 
 impl Plugin for AudioFxPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, build_bank)
-            .add_systems(Update, (play_sfx, reap_one_shots));
+        // Silent by default under the pilot bridge. Several unattended instances
+        // on one desk is a lot of noise, nobody is listening to an agent's game,
+        // and the person whose desk it is should not have to ask twice.
+        // `HOLDFAST_MUTE=0` turns the sound back on if a run is ever worth
+        // hearing.
+        let truthy = |v: String| {
+            let v = v.trim().to_ascii_lowercase();
+            !(v.is_empty() || v == "0" || v == "false")
+        };
+        let start_muted = match std::env::var("HOLDFAST_MUTE") {
+            Ok(v) => truthy(v),
+            Err(_) => std::env::var("HOLDFAST_PILOT").is_ok(),
+        };
+        app.insert_resource(Muted(start_muted))
+            .add_systems(Startup, build_bank)
+            .add_systems(Update, (toggle_mute, play_sfx, reap_one_shots));
+        if start_muted {
+            app.insert_resource(GlobalVolume::new(Volume::Linear(0.0)));
+        }
     }
+}
+
+/// Whether the game is silent. `M` toggles it, `HOLDFAST_MUTE=1` starts that way.
+#[derive(Resource, Debug, Default)]
+pub struct Muted(pub bool);
+
+/// `M` mutes and unmutes.
+///
+/// Not gated on any state, so it works at the menu, mid-run and on the results
+/// screen - a mute you have to be in the right screen to reach is not a mute.
+fn toggle_mute(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut muted: ResMut<Muted>,
+    mut volume: ResMut<GlobalVolume>,
+) {
+    if !keys.just_pressed(KeyCode::KeyM) {
+        return;
+    }
+    muted.0 = !muted.0;
+    volume.volume = Volume::Linear(if muted.0 { 0.0 } else { 1.0 });
 }
 
 // -- synthesis --------------------------------------------------------------

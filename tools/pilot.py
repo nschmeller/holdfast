@@ -41,6 +41,7 @@ HOLDFAST CONTROLS (keyboard only)
                 sets Follow. G cycles the squad stance Follow -> Hold -> Guard;
                 Hold anchors them where they stand, which is what garrisons a
                 fort. Guard sends them to zones only.
+  MUTE        M toggles sound. Pilot-driven instances start silent.
   LEVEL UP    1 2 3 pick a card, R rerolls once
   RESEARCH    T opens the tree, arrows navigate, ENTER buys, T or ESC closes
   CAMERA      Q and E rotate the overlook

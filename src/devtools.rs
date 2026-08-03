@@ -9,6 +9,7 @@
 //! | --- | --- |
 //! | `HOLDFAST_ARENA=forest` | Start in a named arena |
 //! | `HOLDFAST_AUTOSTART=1` | Skip the menu |
+//! | `HOLDFAST_MUTE=1` | Start silent. On by default whenever `HOLDFAST_PILOT` is set |
 //! | `HOLDFAST_SHOT=out.png@12` | Screenshot after 12 seconds |
 //! | `HOLDFAST_EXIT=20` | Quit after 20 seconds |
 //! | `HOLDFAST_SPEED=4` | Run the simulation at 4x |
