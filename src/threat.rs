@@ -158,6 +158,16 @@ pub struct RunClock {
 }
 
 impl RunClock {
+    /// Remember the highest kill streak reached.
+    ///
+    /// `best_streak` was saved, loaded, reported by the pilot and shown on the
+    /// results screen while nothing ever assigned it - every dump read zero
+    /// after thousands of kills.
+    pub fn note_streak(&mut self, streak: f32) {
+        let peak = u32::try_from(streak.max(0.0) as u64).unwrap_or(u32::MAX);
+        self.best_streak = self.best_streak.max(peak);
+    }
+
     /// Time-driven difficulty, independent of the dial. Compounding, so minute
     /// 20 is meaningfully worse than minute 10 rather than merely twice as busy.
     pub fn time_power(&self) -> f32 {

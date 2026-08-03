@@ -484,7 +484,7 @@ fn handle_recruit(
         if squad.count >= squad.cap {
             hints.push(
                 "SQUAD FULL",
-                "Build a Beacon or promote what you have.",
+                "Four is the cap. Keep them alive.",
                 crate::onboarding::HintTone::Tip,
             );
             continue;

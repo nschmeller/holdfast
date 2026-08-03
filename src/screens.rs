@@ -448,6 +448,7 @@ fn levelup_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     env: Res<EnvKind>,
+    unlocks: Res<Unlocks>,
     mut offer: ResMut<CardOffer>,
     mut progression: ResMut<Progression>,
     mut stats: ResMut<PlayerStats>,
@@ -462,7 +463,7 @@ fn levelup_input(
 ) {
     // Reroll.
     if keys.just_pressed(KeyCode::KeyR) && offer.reroll_available {
-        offer.cards = build_offer(&mut rng, &loadout, &boosts, *env);
+        offer.cards = build_offer(&mut rng, &loadout, &boosts, *env, &unlocks);
         offer.reroll_available = false;
         sfx.write(SfxEvent::at(crate::audio::Sfx::Tick, 1.0));
         // Rebuild the screen with the new offer.

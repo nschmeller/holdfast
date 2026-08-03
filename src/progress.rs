@@ -120,6 +120,21 @@ pub enum StatBoost {
 }
 
 impl StatBoost {
+    /// Whether this boost does anything yet.
+    ///
+    /// Offering "+20% ally damage" a hundred seconds before allies exist is a
+    /// dead card, and a tester's level-four offer was two of three dead.
+    #[must_use]
+    pub fn useful_yet(self, unlocks: &crate::onboarding::Unlocks) -> bool {
+        match self {
+            Self::AllyPower => unlocks.allies,
+            Self::StructurePower | Self::BuildDiscount => unlocks.build,
+            Self::CaptureRate => unlocks.territory,
+            Self::Income => unlocks.build || unlocks.territory,
+            _ => true,
+        }
+    }
+
     pub const ALL: [Self; 18] = [
         Self::MaxHp,
         Self::MoveSpeed,
@@ -722,6 +737,7 @@ fn reset_progress(
 /// Opens the level-up screen when levels are banked.
 fn check_level_up(
     env: Res<EnvKind>,
+    unlocks: Res<crate::onboarding::Unlocks>,
     progression: Res<Progression>,
     offer: Res<CardOffer>,
     loadout: Res<Loadout>,
@@ -733,7 +749,7 @@ fn check_level_up(
     if progression.pending_levels == 0 || !offer.cards.is_empty() {
         return;
     }
-    let cards = build_offer(&mut rng, &loadout, &boosts, *env);
+    let cards = build_offer(&mut rng, &loadout, &boosts, *env, &unlocks);
     commands.insert_resource(CardOffer {
         cards,
         reroll_available: true,
@@ -748,6 +764,7 @@ pub fn build_offer(
     loadout: &Loadout,
     boosts: &AppliedBoosts,
     env: EnvKind,
+    unlocks: &crate::onboarding::Unlocks,
 ) -> Vec<Card> {
     let mut pool: Vec<Card> = Vec::new();
 
@@ -776,7 +793,17 @@ pub fn build_offer(
         }
     }
 
+    // How many of the interesting cards made it in. Refinements only appear
+    // once weapons have run out, which is what "the pool is thin" means.
+    let weapon_cards = pool.len();
+
+    // Cards for systems that have not come online yet are dead on arrival.
+    // A tester's level-four offer was two ally-and-structure cards out of
+    // three, a hundred seconds before either existed.
     for boost in StatBoost::ALL {
+        if !boost.useful_yet(unlocks) {
+            continue;
+        }
         pool.push(Card {
             title: boost.title().to_string(),
             detail: boost.detail().to_string(),
@@ -798,8 +825,13 @@ pub fn build_offer(
         rarity: 1,
     });
 
-    // Once the pool is thin, Refinements keep the offer meaningful forever.
-    if pool.len() < 6 {
+    // Refinements keep the offer meaningful once the interesting cards are
+    // gone. The old test for "thin" was `pool.len() < 6`, which could never be
+    // true: eighteen stat boosts and two economy cards are always in the pool,
+    // so this branch was dead and the endless-progression promise in DESIGN.md
+    // was unimplemented. Thinness is about *weapons* running out, which is the
+    // thing that actually stops being offered.
+    if weapon_cards == 0 {
         pool.push(Card {
             title: format!("Refinement {}", boosts.refinements + 1),
             detail: "+4% to damage, health, fire rate and income.".to_string(),
@@ -808,9 +840,32 @@ pub fn build_offer(
         });
     }
 
-    rng.shuffle(&mut pool);
-    pool.truncate(3);
-    pool
+    // Weighted, not shuffled.
+    //
+    // A uniform draw over thirty cards gave the "level up a weapon" card a 10%
+    // chance per level-up, so testers finished long runs with every weapon
+    // still at level one - and a maxed weapon is nearly six times a level-one
+    // one. The pool was actively pushing breadth over depth while the numbers
+    // rewarded the opposite. `rarity` was decorative; it now decides how often
+    // a card is seen.
+    let mut offer = Vec::with_capacity(3);
+    for _ in 0..3 {
+        if pool.is_empty() {
+            break;
+        }
+        let total: f32 = pool.iter().map(card_weight).sum();
+        let mut roll = rng.range(0.0, total.max(f32::EPSILON));
+        let mut picked = pool.len() - 1;
+        for (i, card) in pool.iter().enumerate() {
+            roll -= card_weight(card);
+            if roll <= 0.0 {
+                picked = i;
+                break;
+            }
+        }
+        offer.push(pool.swap_remove(picked));
+    }
+    offer
 }
 
 pub fn apply_card(
@@ -838,6 +893,24 @@ pub fn apply_card(
 ///
 /// Enough to disengage from anything, not enough to make contact impossible.
 const MAX_SPEED_RATIO: f32 = 2.4;
+
+/// How often a card should be seen, relative to the others.
+///
+/// Depth beats breadth in this game's own arithmetic, so the cards that deepen
+/// a build are seen more often than the ones that widen it.
+fn card_weight(card: &Card) -> f32 {
+    match card.kind {
+        // The strongest card in the game by a wide margin: a mastered weapon is
+        // nearly six times a level-one one.
+        CardKind::LevelWeapon(_) => 4.0,
+        // A new weapon or a Refinement both widen rather than deepen, and are
+        // worth about the same.
+        CardKind::NewWeapon(_) | CardKind::Refinement => 2.0,
+        CardKind::Stat(_) => 1.0,
+        // A one-off lump of currency is the weakest thing in the pool.
+        CardKind::FreeScrap(_) | CardKind::FreeCores(_) => 0.8,
+    }
+}
 
 /// Health multiplier from levels alone.
 #[must_use]
@@ -956,6 +1029,19 @@ pub fn recruit_hint(economy: &Economy, env: EnvKind) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every system online, which is what a card-pool test wants unless it is
+    /// specifically about the unlock gate.
+    fn everything_unlocked() -> crate::onboarding::Unlocks {
+        crate::onboarding::Unlocks {
+            build: true,
+            territory: true,
+            allies: true,
+            research: true,
+            threat_dial: true,
+            ..crate::onboarding::Unlocks::default()
+        }
+    }
 
     fn rng() -> Rng {
         Rng::seeded(0xC0FFEE)
@@ -1234,7 +1320,13 @@ mod tests {
         let mut loadout = Loadout::default();
         loadout.reset();
         let boosts = AppliedBoosts::default();
-        let cards = build_offer(&mut rng, &loadout, &boosts, EnvKind::Desk);
+        let cards = build_offer(
+            &mut rng,
+            &loadout,
+            &boosts,
+            EnvKind::Desk,
+            &everything_unlocked(),
+        );
         assert_eq!(cards.len(), 3);
         assert!(cards.iter().all(|c| !c.title.is_empty()));
         assert!(cards.iter().all(|c| c.rarity <= 3));
@@ -1247,7 +1339,13 @@ mod tests {
         loadout.reset();
         let boosts = AppliedBoosts::default();
         for _ in 0..200 {
-            let cards = build_offer(&mut rng, &loadout, &boosts, EnvKind::Desk);
+            let cards = build_offer(
+                &mut rng,
+                &loadout,
+                &boosts,
+                EnvKind::Desk,
+                &everything_unlocked(),
+            );
             let mut titles: Vec<_> = cards.iter().map(|c| c.title.clone()).collect();
             titles.sort();
             let before = titles.len();
@@ -1268,7 +1366,13 @@ mod tests {
             }
         }
         let boosts = AppliedBoosts::default();
-        let cards = build_offer(&mut rng, &loadout, &boosts, EnvKind::Desk);
+        let cards = build_offer(
+            &mut rng,
+            &loadout,
+            &boosts,
+            EnvKind::Desk,
+            &everything_unlocked(),
+        );
         assert_eq!(cards.len(), 3, "the pool must never run dry");
     }
 
@@ -1455,5 +1559,97 @@ mod tests {
             ceiling < crate::enemy::fastest_enemy_speed() * 3.0,
             "a threefold lead is what made the late game inert"
         );
+    }
+    #[test]
+    fn the_offer_favours_deepening_a_build_over_widening_it() {
+        // A uniform draw gave the level-a-weapon card a 10% chance, so testers
+        // finished long runs with every weapon still at level one - while a
+        // maxed weapon is nearly six times a level-one one. The pool was
+        // pushing the opposite of what the numbers reward.
+        let mut rng = Rng::seeded(9);
+        let mut loadout = Loadout::default();
+        loadout.reset();
+        loadout.add(WeaponKind::Stapler);
+        let boosts = AppliedBoosts::default();
+
+        let mut level_cards = 0;
+        let mut draws = 0;
+        for _ in 0..300 {
+            for card in build_offer(
+                &mut rng,
+                &loadout,
+                &boosts,
+                EnvKind::Desk,
+                &everything_unlocked(),
+            ) {
+                draws += 1;
+                if matches!(card.kind, CardKind::LevelWeapon(_)) {
+                    level_cards += 1;
+                }
+            }
+        }
+        let share = f64::from(level_cards) / f64::from(draws);
+        assert!(
+            share > 0.12,
+            "only {share:.3} of cards deepened a build; uniform was ~0.07"
+        );
+    }
+
+    #[test]
+    fn cards_for_locked_systems_are_not_offered() {
+        // A tester's level-four offer was two ally-and-structure cards out of
+        // three, a hundred seconds before either system existed.
+        let mut rng = Rng::seeded(4);
+        let mut loadout = Loadout::default();
+        loadout.reset();
+        let boosts = AppliedBoosts::default();
+        let nothing = crate::onboarding::Unlocks::default();
+
+        for _ in 0..200 {
+            for card in build_offer(&mut rng, &loadout, &boosts, EnvKind::Desk, &nothing) {
+                if let CardKind::Stat(boost) = card.kind {
+                    assert!(
+                        boost.useful_yet(&nothing),
+                        "{} offered with nothing unlocked",
+                        card.title
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn refinements_appear_once_the_weapons_run_out() {
+        // The old condition was `pool.len() < 6`, which eighteen stat cards
+        // made permanently false, so the endless-progression promise in
+        // DESIGN.md was never implemented.
+        let mut rng = Rng::seeded(11);
+        let mut loadout = Loadout::default();
+        loadout.reset();
+        for kind in WeaponKind::ALL {
+            loadout.add(kind);
+            for _ in 0..12 {
+                loadout.level_up(kind);
+            }
+        }
+        let boosts = AppliedBoosts::default();
+
+        let mut seen = false;
+        for _ in 0..80 {
+            if build_offer(
+                &mut rng,
+                &loadout,
+                &boosts,
+                EnvKind::Desk,
+                &everything_unlocked(),
+            )
+            .iter()
+            .any(|c| matches!(c.kind, CardKind::Refinement))
+            {
+                seen = true;
+                break;
+            }
+        }
+        assert!(seen, "a fully mastered loadout never gets a Refinement");
     }
 }

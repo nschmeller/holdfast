@@ -16,11 +16,18 @@ use crate::{AppState, GameSet, RunSetup};
 
 /// When each subsystem comes online, in run-seconds. Ordered so the player is
 /// only ever learning one new verb at a time.
+///
+/// The threat dial used to be last, at 300 seconds. Measured median survival
+/// across every recorded run is about 145 seconds, and the best run anyone has
+/// managed reached the dial at 318 - so the game's *central* claim, that the
+/// player owns the throttle, was something almost nobody ever got to do. It is
+/// now the second thing they learn, right after building, which is also the
+/// first moment they have anything to spend the extra rewards on.
 pub const UNLOCK_BUILD: f32 = 45.0;
-pub const UNLOCK_TERRITORY: f32 = 100.0;
+pub const UNLOCK_THREAT: f32 = 75.0;
+pub const UNLOCK_TERRITORY: f32 = 110.0;
 pub const UNLOCK_ALLIES: f32 = 165.0;
-pub const UNLOCK_RESEARCH: f32 = 240.0;
-pub const UNLOCK_THREAT: f32 = 300.0;
+pub const UNLOCK_RESEARCH: f32 = 230.0;
 
 // Five independent feature switches. A bitfield would be smaller and far less
 // readable at every call site, and these are read far more often than stored.
