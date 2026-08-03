@@ -305,6 +305,30 @@ and the two things that slow them floor out at 0.58 (a crowd) and 0.15 (a
 hazard). The worst case is still three quarters of a unit a second. Zero was
 only ever reachable through the bridge.
 
+**Fixed after round 8 — two of these change how the whole game plays:**
+
+- **Monsters more than 165 units away are now released.** Nothing was ever culled,
+  so every monster a run passed followed it forever and travel dragged an
+  accumulating horde. That is the attrition spiral that ended nearly every run in
+  the dossier, and it made the game's own advice - go out past 130 units - into a
+  trap. Bosses are exempt. **Wide exploration should now be viable; it was not
+  before, and any measurement of travel from before round 8 is void.**
+- **A reclaim now lifts.** Up to four factions committed to a held fort's ring
+  permanently, because a player-held fort is always the most attractive prize on
+  the board. A faction that presses for 42 seconds without progress regroups for
+  34. **Holding a fort unattended should now be possible; nobody has managed more
+  than 90 seconds, and that was why.**
+- **Standing in the light draws elites 2.2x faster.** The pool's +0.45 threat was
+  measured as about half of what standing in one is worth, so it now has a cost
+  that mounts the longer you stay.
+- The digest reports `frames_per_sec` (it shouts under 30) and
+  **`game_time_frozen_for`** - every `GameSet` is gated on `AppState::Playing`, so
+  the run clock genuinely stops on a card screen. Two `raw` reads 74 wall-seconds
+  apart can return an identical `t`. A speed measured across that gap is zero
+  movement in zero time, which looks exactly like a dead movement system; it cost
+  round 8 six measurements. **Check that line before believing a zero.**
+- `Stance::Hold` garrisons allies at a fort. `Guard` only targets zones.
+
 **Fixed after round 5:**
 
 - **Light pools and chasms are finally visible.** They were never reported by the
