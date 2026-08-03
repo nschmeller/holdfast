@@ -275,6 +275,21 @@ pub struct FortFlare;
 #[derive(Debug, Component)]
 pub struct FortBanner;
 
+/// The inner ring that says only friend or foe.
+///
+/// Faction colour alone was not enough. A fresh-eyes tester could tell whose a
+/// fort was *only* from the pilot digest - "on-screen they appear as coloured
+/// geometric structures without obvious faction markings" - which is the user's
+/// original question, still open after the outer ring and the flag. The reason is
+/// that identity and allegiance are different questions: VOID's blue and the
+/// player's green are both cool colours, and a player should not have to memorise
+/// four faction hues to answer "can this hurt me".
+///
+/// So the outer ring keeps saying *who*, and this one says *whether*: green for
+/// yours, hot amber for anyone else. One bit, learned once, true everywhere.
+#[derive(Debug, Component)]
+pub struct FortAllegianceRing;
+
 /// The ring under a nest, which shrinks as the nest is shot.
 ///
 /// Nests have 60 health and are a legal target for both sides, and nothing
@@ -754,6 +769,17 @@ fn place_forts(
                 Mesh3d(art.fort_banner.clone()),
                 MeshMaterial3d(art.banner(owner)),
                 Transform::IDENTITY,
+            ));
+            // The inner band: friend or foe, independent of faction.
+            kids.spawn((
+                FortAllegianceRing,
+                Mesh3d(art.ring.clone()),
+                MeshMaterial3d(art.glow(crate::art::Glow::Warning)),
+                Transform::from_translation(Vec3::new(0.0, 0.05, 0.0)).with_scale(Vec3::new(
+                    FORT_RADIUS * 1.15 / FORT_MODEL_SCALE,
+                    1.0,
+                    FORT_RADIUS * 1.15 / FORT_MODEL_SCALE,
+                )),
             ));
             // The ground ring: where you have to stand to contest it.
             kids.spawn((
@@ -1689,6 +1715,7 @@ fn holding_visuals(
             Without<FortRing>,
             Without<FortFlare>,
             Without<FortBanner>,
+            Without<FortAllegianceRing>,
         ),
     >,
     mut rings: Query<
@@ -1702,6 +1729,7 @@ fn holding_visuals(
             Without<Fort>,
             Without<FortFlare>,
             Without<FortBanner>,
+            Without<FortAllegianceRing>,
         ),
     >,
     mut flares: Query<
@@ -1715,12 +1743,24 @@ fn holding_visuals(
             Without<Fort>,
             Without<FortRing>,
             Without<FortBanner>,
+            Without<FortAllegianceRing>,
+        ),
+    >,
+    mut allegiance_rings: Query<
+        (&ChildOf, &mut MeshMaterial3d<StandardMaterial>),
+        (
+            With<FortAllegianceRing>,
+            Without<Fort>,
+            Without<FortRing>,
+            Without<FortFlare>,
+            Without<FortBanner>,
         ),
     >,
     mut banners: Query<
         (&ChildOf, &mut MeshMaterial3d<StandardMaterial>),
         (
             With<FortBanner>,
+            Without<FortAllegianceRing>,
             Without<Fort>,
             Without<FortRing>,
             Without<FortFlare>,
@@ -1734,6 +1774,7 @@ fn holding_visuals(
             Without<FortRing>,
             Without<FortFlare>,
             Without<FortBanner>,
+            Without<FortAllegianceRing>,
         ),
     >,
     nest_health: Query<&Health, With<Nest>>,
@@ -1743,6 +1784,7 @@ fn holding_visuals(
             With<Nest>,
             Without<NestHealthRing>,
             Without<FortBanner>,
+            Without<FortAllegianceRing>,
             Changed<Allegiance>,
             Without<Fort>,
             Without<FortRing>,
@@ -1826,6 +1868,16 @@ fn holding_visuals(
         });
         transform.scale = Vec3::splat(size.max(0.001));
         transform.translation.y = FLARE_HEIGHT + look.launch * 0.5;
+    }
+
+    for (parent, mut material) in &mut allegiance_rings {
+        if let Some(look) = look_of(parent.parent()) {
+            material.0 = art.glow(if look.owner == Faction::Player {
+                crate::art::Glow::Friend
+            } else {
+                crate::art::Glow::Warning
+            });
+        }
     }
 
     for (parent, mut material) in &mut banners {
