@@ -40,6 +40,12 @@ pub const FORT_RADIUS: f32 = 3.2;
 /// Stand inside this to contest a fort.
 pub const FORT_CAPTURE_RADIUS: f32 = 7.5;
 /// Seconds of uncontested presence to flip a fort.
+///
+/// Flip, not half-flip. Ownership runs from -1 to +1, so the rate below covers
+/// the whole span in this many seconds. It used to be applied per unit, which
+/// made the real figure twenty-two seconds of standing alone and unchallenged
+/// inside a seven-unit ring in the middle of enemy ground - a thing no player
+/// has ever managed, across every run in the dossier.
 const FORT_CAPTURE_SECONDS: f32 = 11.0;
 /// Footprint of a nest.
 pub const NEST_RADIUS: f32 = 1.3;
@@ -62,6 +68,11 @@ pub struct Fort {
     /// faction sit at -1 and the faction is carried in `Allegiance`.
     pub progress: f32,
     pub contested: bool,
+    /// Monsters loyal to the owner standing in the ring right now.
+    ///
+    /// Surfaced to the pilot: a capture meter that will not move is otherwise
+    /// indistinguishable from a broken one.
+    pub garrison: u32,
     pub assault: f32,
     pub seeding: f32,
     /// Nests this fort has planted and not yet lost.
@@ -74,6 +85,7 @@ impl Default for Fort {
         Self {
             progress: -1.0,
             contested: false,
+            garrison: 0,
             // Staggered so a cluster of forts does not fire in lockstep.
             assault: 18.0,
             seeding: 26.0,
@@ -393,6 +405,18 @@ fn place_nests(mut commands: Commands, art: Res<GameArt>, mut requests: MessageR
 
 // -- capture ----------------------------------------------------------------
 
+/// How much of the -1..=1 span one second of single-body presence covers.
+fn capture_step(dt: f32) -> f32 {
+    const SPAN: f32 = 2.0;
+    SPAN * dt / FORT_CAPTURE_SECONDS
+}
+
+/// What one monster in the ring is worth against a capture.
+///
+/// Three of them stall a lone player outright, which is the intent: clear the
+/// garrison, then hold the ground. A squad or a cleared ring makes it quick.
+const DEFENDER_WEIGHT: f32 = 0.34;
+
 /// Presence decides who owns a fort.
 ///
 /// Deliberately not damage: allies have to be able to take one without the
@@ -433,21 +457,23 @@ fn capture_forts(
             }
             let side = allegiance.map_or(Faction::Swarm, |a| a.0);
             if side == owner.0 {
-                defenders += 0.34;
+                defenders += DEFENDER_WEIGHT;
             } else {
-                rivals += 0.34;
+                rivals += DEFENDER_WEIGHT;
             }
         }
 
         let toward_player = friendly - defenders;
         fort.contested = friendly > 0.0 && defenders > 0.0;
+        // Reported so a tester standing in a ring that will not flip can see
+        // why. Without it the only reading is "capture: -1.0" and no cause.
+        fort.garrison = u32::try_from((defenders / DEFENDER_WEIGHT).round() as i64).unwrap_or(0);
 
         if owner.0 == Faction::Player {
             // The player holds it; monsters of any stripe push it back.
             let pressure = defenders.max(rivals);
             let net = friendly - pressure;
-            fort.progress = (fort.progress
-                + net.signum() * net.abs().min(3.0) * dt / FORT_CAPTURE_SECONDS)
+            fort.progress = (fort.progress + net.signum() * net.abs().min(3.0) * capture_step(dt))
                 .clamp(-1.0, 1.0);
             if fort.progress <= -0.999 {
                 // Whoever pushed hardest inherits it.
@@ -474,7 +500,7 @@ fn capture_forts(
             fort.progress = (fort.progress
                 + toward_player.signum()
                     * toward_player.abs().min(3.0)
-                    * (dt / FORT_CAPTURE_SECONDS)
+                    * capture_step(dt)
                     * stats.zone_capture_rate)
                 .clamp(-1.0, 1.0);
             if fort.progress >= 0.999 {
@@ -941,6 +967,43 @@ fn holding_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fort_flips_in_the_advertised_time() {
+        // The constant says "seconds of uncontested presence to flip a fort".
+        // Applied per unit of a two-unit span it meant twice that, which is
+        // why the dossier has no captured fort in it anywhere.
+        let mut progress = -1.0f32;
+        let dt = 1.0 / 60.0;
+        let mut seconds = 0.0;
+        while progress < 1.0 && seconds < 120.0 {
+            progress = (progress + capture_step(dt)).clamp(-1.0, 1.0);
+            seconds += dt;
+        }
+        assert!(
+            (seconds - FORT_CAPTURE_SECONDS).abs() < 0.5,
+            "took {seconds:.1}s, advertised {FORT_CAPTURE_SECONDS}s"
+        );
+    }
+
+    #[test]
+    fn a_squad_takes_a_fort_faster_than_one_body() {
+        // Allies count towards presence, so a squad should be worth bringing.
+        let dt = 1.0 / 60.0;
+        assert!(capture_step(dt) * 3.0 > capture_step(dt));
+    }
+
+    #[test]
+    fn three_defenders_stall_a_lone_player() {
+        // The intended shape: clear the ring first. Any weaker and a fort is
+        // taken by walking through it; any stronger and it cannot be taken.
+        let stalls = |monsters: u32| {
+            let defenders: f32 = (0..monsters).map(|_| DEFENDER_WEIGHT).sum();
+            1.0 - defenders <= 0.0
+        };
+        assert!(!stalls(2), "two defenders should not stall a lone player");
+        assert!(stalls(3), "three should - a fort is not walked through");
+    }
 
     /// No model attached, which is what every assertion about the built-in
     /// director should be made against.

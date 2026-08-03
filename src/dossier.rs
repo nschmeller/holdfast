@@ -232,11 +232,11 @@ mod tests {
         // Read off the lifetime ledger, this column printed the same personal
         // best on every row and could not tell a tester who crossed 900 units
         // from one who never left the landing site.
-        let mut clock = crate::threat::RunClock::default();
+        let mut clock = RunClock::default();
         clock.note_distance(420.0);
         clock.note_distance(90.0);
         assert!((clock.furthest - 420.0).abs() < 1e-3);
-        assert!((crate::threat::RunClock::default().furthest - 0.0).abs() < 1e-3);
+        assert!((RunClock::default().furthest - 0.0).abs() < 1e-3);
     }
 
     #[test]

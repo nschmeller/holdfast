@@ -579,12 +579,15 @@ fn parse_line(line: &str) -> Result<Option<Cmd>, String> {
         "goto" => {
             let x = number(&verb, rest.first())?;
             let z = number(&verb, rest.get(1))?;
-            // The duration is a safety net, not the goal: arriving ends it.
-            let limit = rest.get(2).map_or(Ok(30.0), |v| number(&verb, Some(v)))?;
-            Ok(Some(Cmd::Steer(
-                Steer::Goto(Vec2::new(x, z)),
-                limit.clamp(0.0, 600.0),
-            )))
+            // A distance is known; a duration has to be guessed from it. An
+            // explicit third argument still wins.
+            // The sentinel must survive: clamping it to zero would give a
+            // bare `goto` no budget at all and stop it on the spot.
+            let limit = match rest.get(2) {
+                Some(v) => number(&verb, Some(v))?.clamp(0.0, 600.0),
+                None => TRAVEL_BUDGET_UNKNOWN,
+            };
+            Ok(Some(Cmd::Steer(Steer::Goto(Vec2::new(x, z)), limit)))
         }
         other => Err(format!("unknown command {other:?}")),
     }
@@ -601,6 +604,100 @@ fn seconds(verb: &str, arg: Option<&&str>) -> Result<f32, String> {
 }
 
 // -- the channel ------------------------------------------------------------
+
+/// Sentinel meaning "work the budget out from how far it actually is".
+///
+/// The distance is not known at parse time - the player's position is not a
+/// parser input - so the budget is filled in when the command becomes active.
+const TRAVEL_BUDGET_UNKNOWN: f32 = -1.0;
+
+/// Assumed travel speed when budgeting a `goto`, in units per second.
+///
+/// Deliberately well under the player's ~8.5: the real journey is slowed by
+/// crowds, deflected by scenery and interrupted by a level-up screen. Budget
+/// for the bad case, because the cost of over-budgeting is a few idle seconds
+/// and the cost of under-budgeting is that the tester silently stops in the
+/// empty middle of the map and never learns it did not arrive.
+const TRAVEL_SPEED: f32 = 3.2;
+
+/// Slack on top, for the level-up screens and the fights on the way.
+const TRAVEL_SLACK: f32 = 12.0;
+
+/// The safety net for walking `distance` units.
+fn travel_budget(distance: f32) -> f32 {
+    (distance / TRAVEL_SPEED + TRAVEL_SLACK).clamp(TRAVEL_SLACK, 600.0)
+}
+
+/// Getting round whatever is in the way.
+///
+/// Walking at a target is only a strategy on open ground. Press one key at a
+/// wall and the player grinds against it until the budget runs out, having
+/// travelled nothing - and the log looks identical to a journey through a
+/// crowd. So travel notices when it has stopped making ground and sidesteps,
+/// alternating sides so a corner is escaped rather than paced.
+#[derive(Debug)]
+struct Travel {
+    /// Where we were when progress was last measured.
+    last: Vec2,
+    since_check: f32,
+    /// Time left sidestepping, and which way.
+    detour: f32,
+    side: f32,
+}
+
+impl Default for Travel {
+    fn default() -> Self {
+        Self {
+            last: Vec2::ZERO,
+            since_check: 0.0,
+            detour: 0.0,
+            side: 1.0,
+        }
+    }
+}
+
+impl Travel {
+    /// How long to give up on a bearing that is not working.
+    const PATIENCE: f32 = 1.5;
+    /// Ground that counts as having made progress in that time.
+    const PROGRESS: f32 = 1.2;
+    /// How long to commit to a sidestep before re-checking.
+    const DETOUR: f32 = 1.1;
+
+    /// The bearing to walk, given where we are and where we want to be.
+    fn step(&mut self, pos: Vec2, target: Vec2, dt: f32) -> Vec2 {
+        let direct = (target - pos).normalize_or_zero();
+
+        if self.detour > 0.0 {
+            self.detour -= dt;
+            // Along the wall rather than straight at it, with a lean towards
+            // the target so the detour still ends up somewhere useful.
+            let along = Vec2::new(-direct.y, direct.x) * self.side;
+            return (along + direct * 0.35).normalize_or_zero();
+        }
+
+        self.since_check += dt;
+        if self.since_check >= Self::PATIENCE {
+            if self.last.distance(pos) < Self::PROGRESS {
+                self.detour = Self::DETOUR;
+                // The other way next time: one side of an obstacle is a
+                // detour, both sides is a search.
+                self.side = -self.side;
+            }
+            self.since_check = 0.0;
+            self.last = pos;
+        }
+        direct
+    }
+
+    /// Called when a new `goto` starts, so the first check measures this
+    /// journey rather than the previous one.
+    fn begin(&mut self, pos: Vec2) {
+        self.last = pos;
+        self.since_check = 0.0;
+        self.detour = 0.0;
+    }
+}
 
 /// A timed command currently occupying the queue head.
 #[derive(Debug)]
@@ -694,6 +791,7 @@ struct Pilot {
     /// Movement keys the current steering command is holding down.
     steering: Vec<KeyCode>,
     wander: Wander,
+    travel: Travel,
     /// Name for this instance, so a report says which window it came from.
     label: String,
     /// Set by `note strategy=...`, forwarded to the run dossier.
@@ -726,6 +824,7 @@ impl Pilot {
             tapped: Vec::new(),
             steering: Vec::new(),
             wander: Wander::default(),
+            travel: Travel::default(),
             label,
             strategy: None,
             last_escape: Vec2::ZERO,
@@ -865,8 +964,25 @@ fn run_queue(
             _ => false,
         };
         if active.remaining <= 0.0 || arrived {
+            // A `goto` that runs out of budget has to say so. Silently
+            // stopping is how four subsystems went unexercised for three
+            // rounds: the testers were told to walk out past 130 units to
+            // where the forts are, the walk quietly ended a third of the way
+            // there, and nothing in the report distinguished that from having
+            // arrived.
+            let abandoned = match (active.steer, hero_pos) {
+                (Some(Steer::Goto(target)), Some(pos)) if !arrived => Some((target, pos)),
+                _ => None,
+            };
             let release = std::mem::take(&mut active.release);
             pilot.active = None;
+            if let Some((target, pos)) = abandoned {
+                let short = pos.distance(target);
+                pilot.record(format!(
+                    "gave up walking to ({:.0},{:.0}) - stopped {short:.0} units short",
+                    target.x, target.y
+                ));
+            }
             for key in release {
                 pilot.held.remove(&key);
                 keys.release(key);
@@ -937,12 +1053,23 @@ fn run_queue(
                     steer: None,
                 });
             }
-            Cmd::Steer(steer, secs) => {
+            Cmd::Steer(steer, mut secs) => {
+                if let (Steer::Goto(target), Some(pos)) = (steer, hero_pos) {
+                    if secs <= TRAVEL_BUDGET_UNKNOWN {
+                        secs = travel_budget(pos.distance(target));
+                    }
+                    pilot.travel.begin(pos);
+                }
                 pilot.record(match steer {
                     Steer::Roam => format!("roaming for {secs:.0}s"),
                     Steer::Chase => format!("chasing for {secs:.0}s"),
                     Steer::Flee => format!("fleeing for {secs:.0}s"),
-                    Steer::Goto(t) => format!("walking to ({:.0},{:.0})", t.x, t.y),
+                    Steer::Goto(t) => {
+                        format!(
+                            "walking to ({:.0},{:.0}), giving up after {secs:.0}s",
+                            t.x, t.y
+                        )
+                    }
                     Steer::Hold(t) => format!("holding ({:.0},{:.0})", t.x, t.y),
                     Steer::Kite => format!("kiting for {secs:.0}s"),
                 });
@@ -983,7 +1110,7 @@ fn run_queue(
     if let (Some(steer), Some(pos)) = (pilot.active.as_ref().and_then(|a| a.steer), hero_pos) {
         let dir = match steer {
             Steer::Roam => pilot.wander.step(pos, dt),
-            Steer::Goto(target) => (target - pos).normalize_or_zero(),
+            Steer::Goto(target) => pilot.travel.step(pos, target, dt),
             Steer::Hold(anchor) => {
                 // Drift back towards the post, but step away from whatever is
                 // closest. Holding ground is not standing still.
@@ -1460,6 +1587,7 @@ fn write_war(json: &mut Json, meta: &Meta, holdings: &Holdings, hero: Vec2) {
         json.vec2("pos", *pos);
         json.num("capture", fort.progress);
         json.flag("contested", fort.contested);
+        json.count("garrison", fort.garrison);
         json.count("nests_planted", fort.planted);
         json.end();
     }
@@ -1748,9 +1876,14 @@ mod tests {
             parse_line("flee 4.5"),
             Ok(Some(Cmd::Steer(Steer::Flee, 4.5)))
         );
+        // No third argument means "budget it from the distance", which the
+        // parser cannot know - the player's position is not a parser input.
         assert_eq!(
             parse_line("goto -12 6"),
-            Ok(Some(Cmd::Steer(Steer::Goto(Vec2::new(-12.0, 6.0)), 30.0)))
+            Ok(Some(Cmd::Steer(
+                Steer::Goto(Vec2::new(-12.0, 6.0)),
+                TRAVEL_BUDGET_UNKNOWN
+            )))
         );
         assert_eq!(
             parse_line("goto 3 4 12"),
@@ -1758,6 +1891,101 @@ mod tests {
         );
         assert!(parse_line("goto 3").is_err());
         assert!(parse_line("roam").is_err());
+    }
+
+    #[test]
+    fn a_long_walk_is_given_time_to_finish() {
+        // A flat thirty-second budget covered about 150 units of real travel,
+        // and forts start at 130 and cluster past 200. Every tester told to
+        // walk out to the war stopped in the empty middle, and the report did
+        // not distinguish that from arriving.
+        assert!(
+            travel_budget(250.0) > 60.0,
+            "{}s for 250 units",
+            travel_budget(250.0)
+        );
+        assert!(
+            travel_budget(0.0) >= TRAVEL_SLACK,
+            "no slack for a short hop"
+        );
+        assert!(travel_budget(1e9) <= 600.0, "unbounded budget");
+        // Monotone, or a further target could get less time than a nearer one.
+        assert!(travel_budget(400.0) > travel_budget(200.0));
+    }
+
+    /// Frames at a fixed position, returning the last bearing.
+    ///
+    /// A frame past the requested span, because ninety sixtieths of a second
+    /// does not add up to 1.5 in binary and the window would never trip.
+    fn pinned(travel: &mut Travel, pos: Vec2, target: Vec2, seconds: f32) -> Vec2 {
+        const FRAME: f32 = 1.0 / 60.0;
+        let frames = (seconds / FRAME).ceil() as u32 + 1;
+        let mut last = Vec2::ZERO;
+        for _ in 0..frames {
+            last = travel.step(pos, target, FRAME);
+        }
+        last
+    }
+
+    #[test]
+    fn travel_sidesteps_when_it_stops_making_ground() {
+        let mut travel = Travel::default();
+        let pos = Vec2::new(0.0, 0.0);
+        let target = Vec2::new(100.0, 0.0);
+        travel.begin(pos);
+        // Pinned against something for less than the patience window.
+        let direct = pinned(&mut travel, pos, target, Travel::PATIENCE * 0.5);
+        assert!(direct.x > 0.9, "should head straight at first: {direct}");
+        let detour = pinned(&mut travel, pos, target, Travel::PATIENCE);
+        assert!(
+            detour.y.abs() > 0.5,
+            "should sidestep after making no ground: {detour}"
+        );
+    }
+
+    #[test]
+    fn a_detour_tries_the_other_side_next_time() {
+        // One side of an obstacle is a detour; both sides is a search. Pacing
+        // the same side forever is how a tester dies in a corner.
+        const FRAME: f32 = 1.0 / 60.0;
+        let mut travel = Travel::default();
+        let pos = Vec2::ZERO;
+        let target = Vec2::new(100.0, 0.0);
+        travel.begin(pos);
+
+        let mut left = false;
+        let mut right = false;
+        // Long enough for several patience windows to come and go.
+        for _ in 0..600 {
+            let bearing = travel.step(pos, target, FRAME);
+            // Only a sidestep has a lateral component; the direct bearing at
+            // this target is exactly +x.
+            if bearing.y < -0.5 {
+                left = true;
+            }
+            if bearing.y > 0.5 {
+                right = true;
+            }
+        }
+        assert!(
+            left && right,
+            "only ever went one way: left {left} right {right}"
+        );
+    }
+
+    #[test]
+    fn travel_walks_straight_at_a_target_it_is_reaching() {
+        const FRAME: f32 = 1.0 / 60.0;
+        let mut travel = Travel::default();
+        let target = Vec2::new(100.0, 0.0);
+        let mut pos = Vec2::ZERO;
+        travel.begin(pos);
+        for _ in 0..600 {
+            let dir = travel.step(pos, target, FRAME);
+            assert!(dir.x > 0.9, "detoured while making ground: {dir}");
+            // A real walking pace, so every patience window sees ground gained.
+            pos += dir * 8.0 * FRAME;
+        }
     }
 
     #[test]
