@@ -94,6 +94,14 @@ def digest(s):
         # across one gets zero movement in zero time and concludes the movement
         # system is dead.
         head += f"  (game time has been stopped for {frozen:.0f}s of real time)"
+    pop = s.get("population")
+    if pop:
+        # Shouted about only when it looks like a leak, so it is not noise.
+        if pop["all_entities"] > 6000 or pop["projectiles"] > 1200:
+            head += (
+                f"  !! POPULATION {pop['all_entities']} entities"
+                f" ({pop['projectiles']} shots) - possible leak, say so in your report"
+            )
     fps = s.get("frames_per_sec")
     if fps is not None and fps < 30.0:
         # Worth shouting about: a simulation advancing in big steps makes every

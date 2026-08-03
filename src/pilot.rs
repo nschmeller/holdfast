@@ -1392,6 +1392,22 @@ struct Sheet<'w> {
     equipped: Res<'w, Equipped>,
 }
 
+/// Live entity counts, for diagnosing a silent disappearance.
+///
+/// Three sightings of a process vanishing with no panic - a run at level 154 with
+/// no death, an agent's game mid-LevelUp, and two that lingered nine hours after
+/// quitting - all look like an abort or an out-of-memory kill rather than a Rust
+/// panic. That points at accumulation, and these are the candidates.
+#[derive(SystemParam)]
+struct Population<'w, 's> {
+    enemies: Query<'w, 's, (), With<Enemy>>,
+    projectiles: Query<'w, 's, (), With<crate::combat::Projectile>>,
+    pickups: Query<'w, 's, (), With<crate::pickups::Pickup>>,
+    nests: Query<'w, 's, (), With<crate::forts::Nest>>,
+    forts: Query<'w, 's, (), With<crate::forts::Fort>>,
+    everything: Query<'w, 's, ()>,
+}
+
 #[derive(SystemParam)]
 struct Meta<'w> {
     coverage: Res<'w, crate::coverage::Coverage>,
@@ -1448,6 +1464,7 @@ fn write_snapshot(
     meta: Meta,
     field: Field,
     holdings: Holdings,
+    counts: Population,
 ) {
     pilot.since_snapshot += time.delta_secs();
     if pilot.since_snapshot < SNAPSHOT_PERIOD {
@@ -1491,6 +1508,19 @@ fn write_snapshot(
     // whether the simulation is running smoothly or stepping: an unfocused
     // window can be throttled by the platform, and a game advancing in
     // one-second steps would make every measurement taken from it a lie.
+    // Entity counts, so the next silent disappearance is diagnosable. A run
+    // vanished at level 154 with no death and no panic logged, an agent's process
+    // vanished mid-LevelUp the same way, and two more lingered for nine hours
+    // after quitting - all consistent with an abort or an out-of-memory kill
+    // rather than a Rust panic, which points at something accumulating.
+    json.obj("population");
+    json.count("enemies", counts.enemies.iter().count());
+    json.count("projectiles", counts.projectiles.iter().count());
+    json.count("pickups", counts.pickups.iter().count());
+    json.count("nests", counts.nests.iter().count());
+    json.count("forts", counts.forts.iter().count());
+    json.count("all_entities", counts.everything.iter().count());
+    json.end();
     json.num(
         "frames_per_sec",
         if pilot.wall > 0.0 {
