@@ -878,6 +878,7 @@ fn fort_guns(
     obstacles: Res<crate::arena::ObstacleField>,
     mut forts: Query<(&mut Fort, &Allegiance, &Body)>,
     player: Query<&Body, With<Player>>,
+    friends: Query<&Body, (With<crate::allies::Ally>, Without<Fort>)>,
     mut shots: MessageWriter<crate::combat::SpawnShot>,
 ) {
     let dt = time.delta_secs();
@@ -901,12 +902,34 @@ fn fort_guns(
         let emplacement = fort.next_gun % guns;
 
         // A fort shoots at whoever it is not. The player's forts shoot
-        // monsters; everyone else's shoot the player.
+        // monsters; everyone else's shoot whoever is contesting them - which
+        // means allies as well as the player. Targeting the player alone made an
+        // ally standing in an enemy fort's ring structurally immune to its
+        // fourteen damage a second, so "send the squad and walk away" was a
+        // risk-free capture. That is the same hole as taking a fort by placing
+        // turrets from outside gun range, and a fort has to answer whoever is
+        // actually taking it.
         let target = if ours {
             grid.best_visible_target(body.pos, GUN_RANGE, &obstacles)
                 .map(|t| t.pos)
         } else {
-            hero.filter(|p| p.distance(body.pos) <= GUN_RANGE)
+            let nearest = |a: Option<Vec2>, b: Option<Vec2>| match (a, b) {
+                (Some(x), Some(y)) => Some(if x.distance(body.pos) <= y.distance(body.pos) {
+                    x
+                } else {
+                    y
+                }),
+                (found, None) | (None, found) => found,
+            };
+            let closest_ally = friends
+                .iter()
+                .map(|b| b.pos)
+                .filter(|p| p.distance(body.pos) <= GUN_RANGE)
+                .min_by(|a, b| a.distance(body.pos).total_cmp(&b.distance(body.pos)));
+            nearest(
+                hero.filter(|p| p.distance(body.pos) <= GUN_RANGE),
+                closest_ally,
+            )
         };
         let Some(target) = target else {
             continue;
@@ -1609,6 +1632,22 @@ mod tests {
         // Structures deliberately absent: they hold ground, they do not storm it.
         let _ = turrets;
         friendly
+    }
+
+    #[test]
+    fn a_fort_answers_whoever_is_taking_it() {
+        // Allies count towards a capture, so a fort that shot only the player
+        // left "send the squad and walk away" a risk-free capture - the same
+        // hole as taking one by placing turrets from beyond gun range.
+        let fort = Vec2::ZERO;
+        let in_range = |p: Vec2| p.distance(fort) <= GUN_RANGE;
+        // An ally can only contest from inside the ring, which is well inside
+        // the guns, so there is nowhere for it to stand that they cannot reach.
+        let furthest_contesting = Vec2::new(FORT_CAPTURE_RADIUS, 0.0);
+        assert!(
+            in_range(furthest_contesting),
+            "a body can contest from {FORT_CAPTURE_RADIUS} but the guns stop at {GUN_RANGE}"
+        );
     }
 
     #[test]

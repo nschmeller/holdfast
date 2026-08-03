@@ -37,7 +37,10 @@ HOLDFAST CONTROLS (keyboard only)
   THREAT      MINUS lowers the dial, EQUAL raises it. Higher = harder and
                 far richer. O triggers an Overclock surge when ready.
   CALL WAVE   ENTER during prep starts the assault early for a bonus
-  SQUAD       F cycles stance (Follow/Hold/Guard), G guards here, R regroups
+  SQUAD       R recruits (costs Cores, cap 4). F rallies everyone to you and
+                sets Follow. G cycles the squad stance Follow -> Hold -> Guard;
+                Hold anchors them where they stand, which is what garrisons a
+                fort. Guard sends them to zones only.
   LEVEL UP    1 2 3 pick a card, R rerolls once
   RESEARCH    T opens the tree, arrows navigate, ENTER buys, T or ESC closes
   CAMERA      Q and E rotate the overlook

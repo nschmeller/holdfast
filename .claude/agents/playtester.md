@@ -63,7 +63,7 @@ Decide in a sentence and act. Do not deliberate between turns.
     THREAT DIAL MINUS lowers, EQUAL raises. Higher is harder AND much richer.
                 O fires an Overclock surge when it is ready.
     CALL WAVE   ENTER during Prep starts the assault early for a reward bonus
-    SQUAD       F cycles stance, G guard here, R regroup
+    SQUAD       R recruit, F rally to you, G cycle stance (Follow/Hold/Guard)
     LEVEL UP    at state LevelUp press 1 / 2 / 3 to take a card, R rerolls once
     RESEARCH    T opens the tree, arrows navigate, ENTER buys, T or ESC closes
     CAMERA      Q and E rotate the overlook

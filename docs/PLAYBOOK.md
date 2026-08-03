@@ -2254,6 +2254,144 @@ of `raw`'s `forts` list entirely, then returning to check whether `owner`
 and `capture` came back as `YOU`/`1.0` or reset to the original hostile
 faction at `-1.0`.
 
+### legate — nine lives on "can allies alone take a fort," settled by source, not fully closed live; plus a harness deadlock that turned out not to be one (round 10)
+
+Assignment: does an ally squad capture a fort with the player elsewhere? Nine
+lives (`legate-ally-fort-capture` through `-v9`), all died before the single
+clean shot — recruit four, plant them in an uncontested ring, walk the player
+away, watch it finish — completed. But the mechanical question is answered
+with certainty anyway, because `src/forts.rs` and `src/enemy.rs` settle it in
+the source and every live number this round measured matches what the source
+predicts to the decimal.
+
+**The mechanics, read directly and confirmed live:**
+
+- **Allies count 0.7 presence each toward *taking* a fort, not just keeping
+  one** (`capture_forts`, `friendly += allies.iter()... * 0.7`) — unconditional,
+  unlike `STRUCTURE_WEIGHT` which only applies `if owner.0 == Faction::Player`.
+  This is the design working exactly as advertised: presence is presence,
+  regardless of whose body it is.
+- **An enemy-owned fort's gun targets only the player.** `fort_guns`'s target
+  selection for a non-player-owned fort is `hero.filter(|p| p.distance(...) <=
+  GUN_RANGE)` — there is no query against allies anywhere in that function. An
+  ally standing in the ring of a fort you do not own is **structurally immune
+  to the one weapon that makes a solo siege dangerous** (~14 dps aggregate per
+  the assignment's own numbers). Nothing else in the source contradicts this;
+  I read the function twice specifically looking for an ally branch.
+- **Wardens hunt the player, not the ring.** A warden spawns with
+  `Objective{kind: HuntPlayer, pos: hero, ...}`, and `assign_objectives`
+  refreshes that `pos` to the player's live position every review cycle. If
+  the player is not near the fort, the wardens the fort spawns while contested
+  walk *away* from the ring, toward wherever the player actually is. Only the
+  faction-committed share of ordinary monsters tagged `TakeFort`/`DefendFort`
+  (via the war-room's `Plan.commitment`, itself capped by `tuning.cohesion`)
+  actually path to the fort's position and can reach allies standing there.
+  Garrison and reclaim pressure are real; the fort's own designed deterrent
+  (guns, wardens) is not what would threaten a lone squad.
+- Net effect worked out on paper: send four allies (2.8 presence) at a fort
+  whose garrison is at or below 8 (0.34×8=2.72), and the meter moves in your
+  favour with zero player presence and zero exposure to the gun. This is
+  exactly the "allies have to be able to finish a capture alone" claim the
+  design states outright, and nothing in the code hedges it.
+
+**What actually happened live, across nine lives.** Every single life reached
+the same shape: level near spawn until the 2:45 ally-unlock timer (confirmed
+again, not level-gated), recruit, travel to a scouted low-garrison fort (this
+seed's deterministic — the same `BLOOM@(153.9,33.3)`, `VOID@(129.1,-31.3)` and
+several more turned up at identical coordinates across all nine restarts),
+and get within the 7.5-unit ring. Four separate times the capture meter was
+directly observed moving in the friendly direction while contested — `taking
+1%`/`3%` in the digest, `capture` climbing from `-1.0` toward `-0.947`,
+`-0.99`, `-0.9`, with `contested: true` and (once) `BLOOM:Defend(38%)` in the
+`factions` line, meaning the owning faction had actually committed a share of
+its monsters to defend the ring, exactly as `decide`/`assign_objectives`
+describe. **Nobody ever saw it cross zero.** The reason every time was the
+same: a fort's nests (this seed plants up to four per fort) refeed its
+garrison faster than a lone player plus one or two allies can grind it down —
+garrison was watched swinging from 0 to 10 in under a minute at the more
+heavily-nested targets, matching the "nests runaway-feed a garrison" finding
+from earlier rounds — and meanwhile the *ambient* wave director, completely
+unrelated to the fort, kept adding enemies and (repeatedly) two simultaneous
+bosses to the same ground, because every life this round spent 250-350+ real
+seconds in one general area rather than doing the hard break the 165-unit
+forget-distance is built for. Every death was to that ambient pile — HP
+dropping from full to zero in two or three `do` calls once 40-70 enemies plus
+a boss were standing on top of us — not to a fort gun, which by the source can
+never have been the cause since we were never it the target of the source
+target-filter. Allies died the same way: recruited healthy (150-1100 HP
+depending on kind, boosted further once Drill Sergeant was taken), followed,
+fought, and were ground down by the ambient crowd in the same handful of
+seconds the player was, well before four of them were ever alive and
+stationary in a ring at once.
+
+**Numbers.** Best individual lives this round: `v7` 354.5s/level 36/715 kills/
+peak threat 2.47, `v9` 294.1s/level 21/236 kills/peak threat 2.14 — both ended
+by the same ambient-crowd-plus-boss death, both with `forts=0` in the dossier
+despite the capture meter having moved in the friendly direction earlier in
+the same life. No life this round closed a capture, so `allies`/`forts`
+columns read 0 or 1 (whichever ally happened to still be alive at the death
+tick) across the board; see `holdfast-runs.tsv` rows
+`legate-ally-fort-capture` through `-v9`.
+
+**Answering the assignment's specific questions directly:**
+- *Does it work at all?* Yes, by source and by four independent live
+  observations of the meter moving with zero-to-partial player presence and
+  partial ally presence contesting a fort whose garrison was thin enough.
+  Never observed closing (crossing to `1.0`) in this dossier.
+- *How long compared to doing it yourself?* Can't compare timings honestly
+  yet — no life reached a completed capture either way this round.
+- *Do allies survive the fort's guns?* The guns never got the chance to try —
+  they cannot target allies by construction. What kills allies is the same
+  ambient density/contact-damage that kills the player, and against that
+  they are not specially protected (contact damage in `enemy_contact` treats
+  any `Damageable{hostile_target: true}` the same).
+- *Is "recruit four, soften, send, walk away" better than standing in the
+  ring?* Given allies are gun-immune and the player is not, it should be
+  strictly safer *if* you can survive long enough near the fort to plant them
+  — which is the part this round could not do reliably. The failure mode
+  observed nine times running was not the fort; it was staying in one place
+  too long against the ambient director.
+
+**A harness finding that cost two restarts before I understood it: the
+"kite-stuck" deadlock is not permanent.** `src/pilot.rs`'s `run_queue` used to
+risk exactly the deadlock the assignment's brief describes (a steering verb's
+timer frozen forever behind a modal, blocking every later command including
+the `tap` that would close the modal) — but the *current* source already
+fixes it with a suspend/resume mechanism (`pilot.suspended`), not a frozen
+timer: when a modal opens with a steer active, that steer is pulled entirely
+out of `pilot.active` (which goes back to `None`) and stashed, so the queue
+keeps moving and a queued `tap` fires normally; the steer resumes once the
+modal clears and nothing new has taken the active slot. I read an older
+version of this function first, concluded (wrongly) that two lives were
+permanently stuck, and killed and restarted the process twice before testing
+patience/a follow-up `tap` and finding it self-resolves. Anyone who hits
+`raw`'s `"steering": "Kite"` while `state` is blocked should send one more
+`tap N` before assuming the run is dead — it almost certainly is not. Also:
+the assignment brief's claim that "`F` cycles stance… `G` guards the current
+spot" is backwards from the actual source (confirmed in `src/command.rs`)
+and matches `tools/pilot.py`'s own stale `keys` help text instead — the real
+bindings are `R` recruit, `F` rally-everyone-to-Follow, `G` cycles
+Follow→Hold→Guard (and anchors the squad at its current spot the moment it
+lands on `Hold`). The in-game hint text (`onboarding.rs`: "R to recruit... F
+rallies them, G cycles stance") agrees with the source, not the brief.
+
+**What to try next.** The blocker is not the fort mechanic, which is now
+settled by source and partially confirmed live — it is surviving long enough
+near one to plant a squad. Whoever plays next should: (1) scout a fort with
+`raw`, note its position, then do the *entire* approach in one continuous
+`kite`/`hold` push rather than idling nearby for XP — idling is exactly what
+let ambient density and bosses stack this round; (2) accept a weaker
+character (lower level, fewer cards) in exchange for arriving with the ally
+timer barely elapsed and immediately planting, rather than farming for
+minutes next to the target fort; (3) once four allies are anchored via `G`
+(Follow→Hold), physically retreat the player past the fort's own
+`ASSAULT_RANGE` (66 units) so its assault/warden/seeding cycle stops entirely
+for that fort, and watch `raw`'s `capture`/`garrison` from a safe distance
+rather than sitting in the ring; (4) if the capture still stalls, kill the
+fort's nests *first* from range before ever entering the ring — this round's
+repeated 0→10 garrison swings were driven entirely by nests, not by the
+ambient director.
+
 ### warden — the chunk-persistence fix, watched working live (round 10)
 
 Assignment: a prior session (`1de2bc8`) wrote a fix for the round-9 audit's
