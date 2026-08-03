@@ -735,8 +735,10 @@ mod tests {
     fn the_opening_is_easier_than_the_same_moment_later() {
         let t = Threat::default();
         let early = RunClock::default();
-        let mut later = RunClock::default();
-        later.elapsed = 120.0;
+        let later = RunClock {
+            elapsed: 120.0,
+            ..RunClock::default()
+        };
         assert!(enemy_power(&t, &early, 1) < enemy_power(&t, &later, 1));
     }
 }
