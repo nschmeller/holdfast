@@ -911,6 +911,50 @@ impl Plugin for PilotPlugin {
     }
 }
 
+/// Note a key delivered into a screen that reads it as something else.
+///
+/// Only the keys that collide: a `W` during a level-up is ignored and harmless,
+/// but a `3` is "take card three" and an `ENTER` buys a research node. Warning
+/// about every key would bury the ones that matter.
+fn warn_modal(pilot: &mut Pilot, modal: Option<&'static str>, keys: &[KeyCode]) {
+    let Some(screen) = modal else {
+        return;
+    };
+    for key in keys {
+        let collides = matches!(
+            key,
+            KeyCode::Digit1
+                | KeyCode::Digit2
+                | KeyCode::Digit3
+                | KeyCode::Digit4
+                | KeyCode::Digit5
+                | KeyCode::Enter
+                | KeyCode::NumpadEnter
+                | KeyCode::KeyR
+                | KeyCode::KeyT
+                | KeyCode::Escape
+        );
+        if collides {
+            pilot.problem(format!(
+                "{key:?} was delivered while {screen} was open, and read as a {screen} key"
+            ));
+        }
+    }
+}
+
+/// The screen a key is about to be delivered into, when it is one that steals
+/// keys the play state also uses.
+fn modal_screen(state: AppState) -> Option<&'static str> {
+    match state {
+        AppState::LevelUp => Some("LEVELUP"),
+        AppState::SkillTree => Some("RESEARCH"),
+        AppState::Paused => Some("PAUSED"),
+        AppState::GameOver => Some("GAMEOVER"),
+        AppState::Menu => Some("MENU"),
+        AppState::Playing => None,
+    }
+}
+
 /// Pull any newly appended bytes out of the command file.
 fn read_commands(mut pilot: ResMut<Pilot>) {
     let path = pilot.commands_path();
@@ -963,6 +1007,7 @@ fn read_commands(mut pilot: ResMut<Pilot>) {
 fn run_queue(
     mut pilot: ResMut<Pilot>,
     time: Res<Time<Real>>,
+    state: Res<State<AppState>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
@@ -979,6 +1024,12 @@ fn run_queue(
     }
 
     let hero_pos = hero.iter().next().map(|body| body.pos);
+    // A modal screen eats digits and ENTER. A batch aimed at the play state
+    // that runs into a level-up has its `tap 3` read as "take card three", and
+    // the tester's structure never gets selected - which is a silent
+    // corruption of whatever it was measuring. This cannot be guessed away
+    // (answering the modal is also a `tap 3`), so it is reported instead.
+    let modal = modal_screen(*state.get());
 
     if let Some(active) = pilot.active.as_mut() {
         active.remaining -= dt;
@@ -1025,6 +1076,7 @@ fn run_queue(
         let stop = cmd.consumes_frame();
         match cmd {
             Cmd::Press(list) => {
+                warn_modal(&mut pilot, modal, &list);
                 for key in list {
                     pilot.held.insert(key);
                 }
@@ -1041,6 +1093,7 @@ fn run_queue(
                 }
             }
             Cmd::Tap(list) => {
+                warn_modal(&mut pilot, modal, &list);
                 // Held for a few frames, not one.
                 //
                 // A single-frame press races Bevy's state transitions: if the
@@ -1062,6 +1115,7 @@ fn run_queue(
                 });
             }
             Cmd::Hold(list, secs) => {
+                warn_modal(&mut pilot, modal, &list);
                 for key in &list {
                     pilot.held.insert(*key);
                 }
@@ -1924,6 +1978,34 @@ mod tests {
         );
         assert!(parse_line("goto 3").is_err());
         assert!(parse_line("roam").is_err());
+    }
+
+    #[test]
+    fn only_the_modal_screens_steal_keys() {
+        assert!(modal_screen(AppState::Playing).is_none());
+        for state in [
+            AppState::LevelUp,
+            AppState::SkillTree,
+            AppState::Paused,
+            AppState::GameOver,
+            AppState::Menu,
+        ] {
+            assert!(modal_screen(state).is_some(), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn a_colliding_key_in_a_modal_is_reported_and_a_harmless_one_is_not() {
+        // A `3` during a level-up is "take card three" - the tester's turret
+        // never gets selected and whatever it was measuring is quietly wrong.
+        // A `W` is ignored, and warning about it would bury the ones that count.
+        let mut pilot = Pilot::new(PathBuf::from("/dev/null"));
+        warn_modal(&mut pilot, Some("LEVELUP"), &[KeyCode::KeyW]);
+        assert!(pilot.problems.is_empty(), "warned about a harmless key");
+        warn_modal(&mut pilot, Some("LEVELUP"), &[KeyCode::Digit3]);
+        assert_eq!(pilot.problems.len(), 1, "{:?}", pilot.problems);
+        warn_modal(&mut pilot, None, &[KeyCode::Digit3]);
+        assert_eq!(pilot.problems.len(), 1, "warned with no modal open");
     }
 
     #[test]
