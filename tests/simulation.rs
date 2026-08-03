@@ -222,14 +222,14 @@ fn enemy_power_compounds_over_a_long_run() {
     let early = {
         let t = app.world().resource::<Threat>();
         let c = app.world().resource::<RunClock>();
-        holdfast::threat::enemy_power(t, c)
+        holdfast::threat::enemy_power(t, c, 1)
     };
 
     advance(&mut app, 600.0);
     let late = {
         let t = app.world().resource::<Threat>();
         let c = app.world().resource::<RunClock>();
-        holdfast::threat::enemy_power(t, c)
+        holdfast::threat::enemy_power(t, c, 1)
     };
 
     assert!(
@@ -253,6 +253,6 @@ fn a_long_run_never_produces_a_non_finite_value() {
     assert!(threat.reward_mult().is_finite());
     assert!(clock.time_power().is_finite());
     assert!(cycle.budget.is_finite());
-    assert!(holdfast::threat::enemy_power(threat, clock).is_finite());
+    assert!(holdfast::threat::enemy_power(threat, clock, 60).is_finite());
     assert!(threat.level <= holdfast::threat::MAX_INTENT + 3.0);
 }

@@ -172,8 +172,25 @@ impl RunClock {
 }
 
 /// Combined enemy power scalar. One function so tuning happens in one place.
-pub fn enemy_power(threat: &Threat, clock: &RunClock) -> f32 {
-    clock.time_power() * threat.power_mult()
+pub fn enemy_power(threat: &Threat, clock: &RunClock, level: u32) -> f32 {
+    clock.time_power() * threat.power_mult() * level_power(level)
+}
+
+/// How much harder the opposition gets for every level the player takes.
+///
+/// Difficulty used to follow the clock alone, and a player who levelled
+/// quickly simply outran it - playtesting described the result as becoming "a
+/// hurricane of destruction", which is a compliment about the build and a
+/// complaint about the game.
+///
+/// This is not rubber-banding. The growth per level is far below what a card
+/// gives the player, so getting stronger still means *being* stronger; it just
+/// stops the curve from being a formality. It also fits the central pillar:
+/// levelling faster is one more way to speed the game up, and speeding the
+/// game up is supposed to cost something.
+#[must_use]
+pub fn level_power(level: u32) -> f32 {
+    1.0 + f32::from(u16::try_from(level.saturating_sub(1)).unwrap_or(u16::MAX)) * 0.085
 }
 
 // -- the wave cycle ---------------------------------------------------------
@@ -545,12 +562,12 @@ mod tests {
     fn enemy_power_combines_both_clocks() {
         let mut t = Threat::default();
         let mut clock = RunClock::default();
-        let base = enemy_power(&t, &clock);
+        let base = enemy_power(&t, &clock, 1);
         t.level = 6.0;
-        assert!(enemy_power(&t, &clock) > base);
+        assert!(enemy_power(&t, &clock, 1) > base);
         t.level = 1.0;
         clock.elapsed = 900.0;
-        assert!(enemy_power(&t, &clock) > base);
+        assert!(enemy_power(&t, &clock, 1) > base);
     }
 
     // -- wave cycle ---------------------------------------------------------
@@ -622,5 +639,49 @@ mod tests {
             c.prep_length = (34.0 - wave as f32 * 0.9).max(12.0);
             assert!(c.prep_length >= 12.0, "prep dropped to {}", c.prep_length);
         }
+    }
+    #[test]
+    fn difficulty_follows_the_player_up_the_level_curve() {
+        // The complaint this exists to answer: level fast enough and the
+        // opposition stops mattering.
+        let t = Threat::default();
+        let clock = RunClock::default();
+        let fresh = enemy_power(&t, &clock, 1);
+        let veteran = enemy_power(&t, &clock, 30);
+        assert!(
+            veteran > fresh * 3.0,
+            "a level-30 player faces {veteran} against {fresh} at level 1"
+        );
+    }
+
+    #[test]
+    fn levelling_never_makes_the_game_easier() {
+        let t = Threat::default();
+        let clock = RunClock::default();
+        let mut last = 0.0;
+        for level in 1..=80 {
+            let power = enemy_power(&t, &clock, level);
+            assert!(power >= last, "power dipped at level {level}");
+            last = power;
+        }
+    }
+
+    #[test]
+    fn the_level_term_is_weaker_than_the_upgrades_it_answers() {
+        // If it matched the player's own growth it would be rubber-banding,
+        // and getting stronger would stop meaning anything.
+        let per_level = level_power(2) - level_power(1);
+        assert!(
+            per_level < 0.12,
+            "{per_level} per level erases the player's progress"
+        );
+        assert!(per_level > 0.0, "the term does nothing at all");
+    }
+
+    #[test]
+    fn a_hundred_levels_does_not_overflow_the_curve() {
+        let t = Threat::default();
+        let clock = RunClock::default();
+        assert!(enemy_power(&t, &clock, u32::MAX).is_finite());
     }
 }

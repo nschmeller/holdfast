@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 
 use crate::allies::{AllyKind, Economy};
+use crate::environments::EnvKind;
 use crate::palette as pal;
 use crate::player::PlayerStats;
 use crate::rng::Rng;
@@ -62,8 +63,11 @@ impl Progression {
             if self.level.is_multiple_of(3) {
                 self.skill_points += 1;
             }
-            // Superlinear but gentle: level 30 costs roughly 12x level 1.
-            self.to_next = 12.0 * (1.0 + self.level as f32 * 0.34).powf(1.12);
+            // Superlinear, and steeper than it was: the old curve let a good
+            // build bank a level every twenty seconds indefinitely, so the
+            // card count ran away from everything it was supposed to be
+            // measured against.
+            self.to_next = 12.0 * (1.0 + self.level as f32 * 0.34).powf(1.32);
         }
     }
 
@@ -681,6 +685,7 @@ fn reset_progress(
 
 /// Opens the level-up screen when levels are banked.
 fn check_level_up(
+    env: Res<EnvKind>,
     progression: Res<Progression>,
     offer: Res<CardOffer>,
     loadout: Res<Loadout>,
@@ -692,7 +697,7 @@ fn check_level_up(
     if progression.pending_levels == 0 || !offer.cards.is_empty() {
         return;
     }
-    let cards = build_offer(&mut rng, &loadout, &boosts);
+    let cards = build_offer(&mut rng, &loadout, &boosts, *env);
     commands.insert_resource(CardOffer {
         cards,
         reroll_available: true,
@@ -702,13 +707,18 @@ fn check_level_up(
 
 /// Three distinct options, weighted so a new weapon is exciting but not
 /// guaranteed, and never offering the same thing twice.
-pub fn build_offer(rng: &mut Rng, loadout: &Loadout, boosts: &AppliedBoosts) -> Vec<Card> {
+pub fn build_offer(
+    rng: &mut Rng,
+    loadout: &Loadout,
+    boosts: &AppliedBoosts,
+    env: EnvKind,
+) -> Vec<Card> {
     let mut pool: Vec<Card> = Vec::new();
 
     for kind in loadout.offerable() {
         match loadout.level_of(kind) {
             None => pool.push(Card {
-                title: kind.name().to_string(),
+                title: kind.name(env).to_string(),
                 detail: kind.blurb().to_string(),
                 kind: CardKind::NewWeapon(kind),
                 rarity: 2,
@@ -721,7 +731,7 @@ pub fn build_offer(rng: &mut Rng, loadout: &Loadout, boosts: &AppliedBoosts) -> 
                     format!("Level {next}. More damage, faster, wider.")
                 };
                 pool.push(Card {
-                    title: format!("{} +", kind.name()),
+                    title: format!("{} +", kind.name(env)),
                     detail,
                     kind: CardKind::LevelWeapon(kind),
                     rarity: if next >= MAX_LEVEL { 3 } else { 1 },
@@ -856,7 +866,7 @@ pub fn card_color(rarity: usize) -> Color {
 }
 
 /// Recruit costs shown on the squad panel.
-pub fn recruit_hint(economy: &Economy) -> String {
+pub fn recruit_hint(economy: &Economy, env: EnvKind) -> String {
     AllyKind::ALL
         .iter()
         .map(|k| {
@@ -864,7 +874,7 @@ pub fn recruit_hint(economy: &Economy) -> String {
             format!(
                 "{}{} {}",
                 if affordable { "" } else { "-" },
-                k.name(),
+                k.name(env),
                 k.core_cost() as u32
             )
         })
@@ -1153,7 +1163,7 @@ mod tests {
         let mut loadout = Loadout::default();
         loadout.reset();
         let boosts = AppliedBoosts::default();
-        let cards = build_offer(&mut rng, &loadout, &boosts);
+        let cards = build_offer(&mut rng, &loadout, &boosts, EnvKind::Desk);
         assert_eq!(cards.len(), 3);
         assert!(cards.iter().all(|c| !c.title.is_empty()));
         assert!(cards.iter().all(|c| c.rarity <= 3));
@@ -1166,7 +1176,7 @@ mod tests {
         loadout.reset();
         let boosts = AppliedBoosts::default();
         for _ in 0..200 {
-            let cards = build_offer(&mut rng, &loadout, &boosts);
+            let cards = build_offer(&mut rng, &loadout, &boosts, EnvKind::Desk);
             let mut titles: Vec<_> = cards.iter().map(|c| c.title.clone()).collect();
             titles.sort();
             let before = titles.len();
@@ -1187,7 +1197,7 @@ mod tests {
             }
         }
         let boosts = AppliedBoosts::default();
-        let cards = build_offer(&mut rng, &loadout, &boosts);
+        let cards = build_offer(&mut rng, &loadout, &boosts, EnvKind::Desk);
         assert_eq!(cards.len(), 3, "the pool must never run dry");
     }
 
@@ -1270,5 +1280,41 @@ mod tests {
         for r in 0..=5 {
             let _ = card_color(r);
         }
+    }
+    #[test]
+    fn later_levels_cost_meaningfully_more_than_early_ones() {
+        // A flat-ish curve is what let a good build bank a level every twenty
+        // seconds forever.
+        let mut p = Progression::default();
+        let first = p.to_next;
+        for _ in 0..30 {
+            let need = p.to_next;
+            p.gain(need);
+        }
+        assert!(
+            p.to_next > first * 8.0,
+            "level {} still costs only {} against {first} at level 1",
+            p.level,
+            p.to_next
+        );
+    }
+
+    #[test]
+    fn a_fixed_xp_income_slows_down_as_the_run_goes_on() {
+        // Levels per minute has to fall, or the card count runs away from
+        // every curve it is measured against.
+        let mut p = Progression::default();
+        let income = 400.0;
+        p.gain(income);
+        let early = p.level;
+        for _ in 0..12 {
+            p.gain(income);
+        }
+        let total = p.level;
+        let late_rate = f64::from(total - early) / 12.0;
+        assert!(
+            late_rate < f64::from(early - 1),
+            "still gaining {late_rate} levels per batch after {total} levels"
+        );
     }
 }

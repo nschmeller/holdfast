@@ -126,6 +126,7 @@ impl Plugin for HudPlugin {
                     update_vitals,
                     update_clock,
                     update_threat,
+                    update_controls,
                     update_economy,
                     update_weapons,
                     update_hint,
@@ -349,14 +350,7 @@ fn bottom_right(root: &mut ChildSpawnerCommands) {
             p.spawn((text("ZONES 0", 15.0, pal::HUD_DIM), ZoneLabel));
             p.spawn((text("KILLS 0", 13.0, pal::HUD_DIM), KillLabel));
         });
-        col.spawn((
-            text(
-                "SPACE plan   B build   R recruit   T research",
-                12.0,
-                pal::HUD_DIM,
-            ),
-            ControlsLabel,
-        ));
+        col.spawn((text("SPACE / B  plan", 12.0, pal::HUD_DIM), ControlsLabel));
     });
 }
 
@@ -579,6 +573,35 @@ fn update_threat(
     }
 }
 
+/// Keep the control hints honest about what is actually available.
+///
+/// A static footer that lists four keys, three of which silently do nothing
+/// for the first four minutes, is worse than no footer: it reads as a broken
+/// game rather than a locked system.
+fn update_controls(unlocks: Res<Unlocks>, mut labels: Query<&mut Text, With<ControlsLabel>>) {
+    let mut parts = vec!["SPACE / B  plan".to_string()];
+    if unlocks.build {
+        parts.push("1-5 + ENTER  build".into());
+    }
+    if unlocks.allies {
+        parts.push("R  recruit".into());
+        parts.push("F / G  squad".into());
+    }
+    if unlocks.research {
+        parts.push("T  research".into());
+    }
+    if unlocks.threat_dial {
+        parts.push("- / =  threat".into());
+        parts.push("O  overclock".into());
+    }
+    let line = parts.join("   ");
+    for mut text in &mut labels {
+        if text.0 != line {
+            text.0.clone_from(&line);
+        }
+    }
+}
+
 fn update_economy(
     economy: Res<Economy>,
     squad: Res<Squad>,
@@ -628,6 +651,7 @@ fn update_economy(
 
 /// Rebuilds the weapon list only when the loadout actually changes.
 fn update_weapons(
+    env: Res<EnvKind>,
     mut commands: Commands,
     loadout: Res<Loadout>,
     list: Query<Entity, With<WeaponList>>,
@@ -652,7 +676,7 @@ fn update_weapons(
                 BackgroundColor(pal::HUD_PANEL),
                 children![
                     text(
-                        slot.kind.name(),
+                        slot.kind.name(*env),
                         14.0,
                         if maxed { pal::ACCENT } else { pal::HUD_TEXT }
                     ),
@@ -730,6 +754,7 @@ fn update_boss(
 }
 
 fn update_plan(
+    env: Res<EnvKind>,
     plan: Res<crate::command::PlanMode>,
     economy: Res<Economy>,
     stats: Res<crate::player::PlayerStats>,
@@ -756,7 +781,7 @@ fn update_plan(
             format!(
                 "PLAN  -  [{}] {}  {} scrap  -  ENTER to place, SPACE to resume",
                 plan.selected + 1,
-                kind.name(),
+                kind.name(*env),
                 cost
             )
         },

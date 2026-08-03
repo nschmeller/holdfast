@@ -973,9 +973,9 @@ fn write_snapshot(
     json.num("scrap_per_sec", sheet.economy.scrap_rate);
     json.end();
 
-    write_forces(&mut json, &sheet, &field, hero_pos);
+    write_forces(&mut json, &sheet, &field, hero_pos, env);
     write_field(&mut json, &field, hero_pos);
-    write_meta(&mut json, &meta, &sheet);
+    write_meta(&mut json, &meta, &sheet, env);
 
     json.arr("events");
     for event in std::mem::take(&mut pilot.events) {
@@ -993,11 +993,11 @@ fn write_snapshot(
     }
 }
 
-fn write_forces(json: &mut Json, sheet: &Sheet, field: &Field, hero: Vec2) {
+fn write_forces(json: &mut Json, sheet: &Sheet, field: &Field, hero: Vec2, env: EnvKind) {
     json.arr("weapons");
     for slot in &sheet.loadout.slots {
         json.item();
-        json.text("name", slot.kind.name());
+        json.text("name", slot.kind.name(env));
         json.int("level", slot.level);
         json.end();
     }
@@ -1023,7 +1023,7 @@ fn write_forces(json: &mut Json, sheet: &Sheet, field: &Field, hero: Vec2) {
     json.arr("members");
     for (ally, health) in &field.allies {
         json.item();
-        json.text("kind", ally.kind.name());
+        json.text("kind", ally.kind.name(env));
         json.int("level", ally.level);
         json.num("hp", health.current);
         json.end();
@@ -1034,7 +1034,7 @@ fn write_forces(json: &mut Json, sheet: &Sheet, field: &Field, hero: Vec2) {
     json.arr("turrets");
     for (turret, body, health) in &field.turrets {
         json.item();
-        json.text("kind", turret.kind.name());
+        json.text("kind", turret.kind.name(env));
         json.int("level", turret.level);
         json.num("hp", health.current);
         json.num("dist", body.pos.distance(hero));
@@ -1106,7 +1106,7 @@ fn write_field(json: &mut Json, field: &Field, hero: Vec2) {
     json.end();
 }
 
-fn write_meta(json: &mut Json, meta: &Meta, sheet: &Sheet) {
+fn write_meta(json: &mut Json, meta: &Meta, sheet: &Sheet, env: EnvKind) {
     json.obj("unlocks");
     json.flag("build", meta.unlocks.build);
     json.flag("territory", meta.unlocks.territory);
@@ -1118,7 +1118,7 @@ fn write_meta(json: &mut Json, meta: &Meta, sheet: &Sheet) {
     json.obj("plan_mode");
     json.flag("active", meta.plan.active);
     json.vec2("cursor", meta.plan.cursor);
-    json.text("selected", meta.plan.selected_kind().name());
+    json.text("selected", meta.plan.selected_kind().name(env));
     json.flag("valid_site", meta.plan.valid);
     json.maybe(
         "message",

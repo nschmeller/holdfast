@@ -397,6 +397,7 @@ fn direct_spawns(
     mut director: ResMut<Director>,
     threat: Res<Threat>,
     clock: Res<RunClock>,
+    progression: Res<crate::progress::Progression>,
     obstacles: Res<ObstacleField>,
     env: Res<EnvKind>,
     art: Res<GameArt>,
@@ -405,7 +406,7 @@ fn direct_spawns(
 ) {
     let dt = time.delta_secs();
     let minutes = clock.elapsed / 60.0;
-    let power = enemy_power(&threat, &clock);
+    let power = enemy_power(&threat, &clock, progression.level);
 
     // -- boss ---------------------------------------------------------------
     director.boss_timer -= dt;

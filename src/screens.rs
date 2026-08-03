@@ -9,7 +9,7 @@ use crate::allies::Economy;
 use crate::common::{RunEntity, SfxEvent, format_count, format_time};
 use crate::environments::{EnvDirty, EnvKind};
 use crate::hud::text;
-use crate::onboarding::Unlocks;
+use crate::onboarding::{HintQueue, Unlocks};
 use crate::palette as pal;
 use crate::player::PlayerStats;
 use crate::progress::{
@@ -419,6 +419,7 @@ fn build_levelup(mut commands: Commands, offer: Res<CardOffer>, mut sfx: Message
 fn levelup_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    env: Res<EnvKind>,
     mut offer: ResMut<CardOffer>,
     mut progression: ResMut<Progression>,
     mut stats: ResMut<PlayerStats>,
@@ -433,7 +434,7 @@ fn levelup_input(
 ) {
     // Reroll.
     if keys.just_pressed(KeyCode::KeyR) && offer.reroll_available {
-        offer.cards = build_offer(&mut rng, &loadout, &boosts);
+        offer.cards = build_offer(&mut rng, &loadout, &boosts, *env);
         offer.reroll_available = false;
         sfx.write(SfxEvent::at(crate::audio::Sfx::Tick, 1.0));
         // Rebuild the screen with the new offer.
@@ -667,6 +668,7 @@ fn research_input(
 // -- pause ------------------------------------------------------------------
 
 fn build_pause(
+    env: Res<EnvKind>,
     mut commands: Commands,
     clock: Res<RunClock>,
     progression: Res<Progression>,
@@ -702,7 +704,7 @@ fn build_pause(
                         col.spawn(text("WEAPONS", 16.0, pal::ACCENT));
                         for slot in &loadout.slots {
                             col.spawn(text(
-                                format!("{}  lv {}", slot.kind.name(), slot.level),
+                                format!("{}  lv {}", slot.kind.name(*env), slot.level),
                                 14.0,
                                 pal::HUD_TEXT,
                             ));
@@ -864,10 +866,20 @@ fn gameover_input(
 fn global_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     unlocks: Res<Unlocks>,
+    clock: Res<RunClock>,
+    mut hints: ResMut<HintQueue>,
     mut next: ResMut<NextState<AppState>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         next.set(AppState::Paused);
+    }
+    if keys.just_pressed(KeyCode::KeyT) && !unlocks.research {
+        crate::onboarding::locked_hint(
+            &mut hints,
+            "RESEARCH",
+            crate::onboarding::UNLOCK_RESEARCH,
+            clock.elapsed,
+        );
     }
     if keys.just_pressed(KeyCode::KeyT) && unlocks.research {
         next.set(AppState::SkillTree);

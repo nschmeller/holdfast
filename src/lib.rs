@@ -14,6 +14,7 @@ pub mod common;
 pub mod devtools;
 pub mod enemy;
 pub mod environments;
+pub mod factions;
 pub mod fog;
 pub mod fx;
 pub mod hud;
@@ -167,6 +168,7 @@ pub fn run() {
         audio::AudioFxPlugin,
         camera::CameraPlugin,
         environments::ArenaPlugin,
+        factions::FactionPlugin,
         world::WorldPlugin,
         fog::FogPlugin,
         player::PlayerPlugin,

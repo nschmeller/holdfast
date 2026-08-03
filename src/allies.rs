@@ -15,6 +15,7 @@ use crate::common::{
     VisualScale, damp, to_world, yaw_towards,
 };
 use crate::enemy::{Enemy, StatusEffects};
+use crate::environments::EnvKind;
 use crate::player::{Player, PlayerStats};
 use crate::threat::Threat;
 use crate::{AppState, GameSet, RunSetup};
@@ -85,13 +86,33 @@ pub enum AllyKind {
 impl AllyKind {
     pub const ALL: [Self; 4] = [Self::Scout, Self::Gunner, Self::Bulwark, Self::Medic];
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Scout => "Scout",
-            Self::Gunner => "Gunner",
-            Self::Bulwark => "Bulwark",
-            Self::Medic => "Medic",
-        }
+    /// Per-world names, indexed by `env as usize`.
+    ///
+    /// Four roles across five worlds.
+    const NAMES: [[&str; EnvKind::COUNT]; 4] = [
+        // Scout
+        ["Scout", "Sprite", "Runner", "Recon Drone", "Wisp"],
+        // Gunner
+        ["Gunner", "Slinger", "Marksman", "Turret Drone", "Adept"],
+        // Bulwark
+        ["Bulwark", "Beetle", "Riot Shield", "Aegis Frame", "Golem"],
+        // Medic
+        [
+            "Medic",
+            "Moth Healer",
+            "Field Medic",
+            "Repair Drone",
+            "Acolyte",
+        ],
+    ];
+
+    /// What this is called in `env`.
+    ///
+    /// The mechanic never changes; only what the world calls it does. Firing a
+    /// pencil at a forest is the sort of detail that quietly tells a player
+    /// nobody was paying attention.
+    pub fn name(self, env: EnvKind) -> &'static str {
+        Self::NAMES[self as usize][env as usize]
     }
 
     pub fn blurb(self) -> &'static str {
@@ -219,14 +240,59 @@ impl TurretKind {
         Self::Generator,
     ];
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Tack => "Tack Turret",
-            Self::Lobber => "Lobber",
-            Self::Shocker => "Shocker",
-            Self::Barricade => "Barricade",
-            Self::Generator => "Generator",
-        }
+    /// Per-world names, indexed by `env as usize`.
+    ///
+    /// Five structures across five worlds.
+    const NAMES: [[&str; EnvKind::COUNT]; 5] = [
+        // Tack
+        [
+            "Tack Turret",
+            "Thorn Turret",
+            "Nail Post",
+            "Sentry Node",
+            "Warding Spike",
+        ],
+        // Lobber
+        [
+            "Lobber",
+            "Acorn Lobber",
+            "Mortar Pot",
+            "Arc Mortar",
+            "Hex Mortar",
+        ],
+        // Shocker
+        [
+            "Shocker",
+            "Bramble Snare",
+            "Steam Vent",
+            "Stasis Emitter",
+            "Frost Sigil",
+        ],
+        // Barricade
+        [
+            "Barricade",
+            "Log Wall",
+            "Sandbags",
+            "Hard-Light Wall",
+            "Ward Stone",
+        ],
+        // Generator
+        [
+            "Generator",
+            "Compost Heap",
+            "Genset",
+            "Power Cell",
+            "Mana Well",
+        ],
+    ];
+
+    /// What this is called in `env`.
+    ///
+    /// The mechanic never changes; only what the world calls it does. Firing a
+    /// pencil at a forest is the sort of detail that quietly tells a player
+    /// nobody was paying attention.
+    pub fn name(self, env: EnvKind) -> &'static str {
+        Self::NAMES[self as usize][env as usize]
     }
 
     pub fn blurb(self) -> &'static str {
@@ -995,7 +1061,7 @@ mod tests {
     #[test]
     fn every_ally_is_described_and_priced() {
         for kind in AllyKind::ALL {
-            assert!(!kind.name().is_empty());
+            assert!(!kind.name(EnvKind::Desk).is_empty());
             assert!(!kind.blurb().is_empty());
             assert!(kind.core_cost() > 0.0);
             let (hp, speed, damage, range, cooldown) = kind.stats();
@@ -1078,7 +1144,7 @@ mod tests {
     #[test]
     fn every_structure_is_described_and_priced() {
         for kind in TurretKind::ALL {
-            assert!(!kind.name().is_empty());
+            assert!(!kind.name(EnvKind::Desk).is_empty());
             assert!(!kind.blurb().is_empty());
             assert!(kind.scrap_cost() > 0.0);
             let (hp, ..) = kind.stats();

@@ -12,6 +12,7 @@ use crate::allies::{
 use crate::arena::ObstacleField;
 use crate::art::{GameArt, Glow};
 use crate::common::{Body, RunEntity, SfxEvent, to_world};
+use crate::environments::EnvKind;
 use crate::onboarding::{HintQueue, HintTone, Unlocks};
 use crate::player::Player;
 use crate::threat::{Threat, WaveCycle};
@@ -102,7 +103,9 @@ fn toggle_plan_mode(
     mut hints: ResMut<HintQueue>,
     player: Query<&Body, With<Player>>,
 ) {
-    if !keys.just_pressed(KeyCode::Space) {
+    // B as well as Space: the HUD advertises "B build", and a key the
+    // interface promises has to exist.
+    if !keys.just_pressed(KeyCode::Space) && !keys.just_pressed(KeyCode::KeyB) {
         return;
     }
     plan.active = !plan.active;
@@ -195,6 +198,7 @@ fn plan_cursor(
 #[allow(clippy::too_many_arguments)]
 fn plan_actions(
     keys: Res<ButtonInput<KeyCode>>,
+    env: Res<EnvKind>,
     unlocks: Res<Unlocks>,
     economy: Res<Economy>,
     stats: Res<crate::player::PlayerStats>,
@@ -222,7 +226,7 @@ fn plan_actions(
             let kind = TurretKind::ALL[i];
             plan.say(format!(
                 "{} - {} scrap",
-                kind.name(),
+                kind.name(*env),
                 (kind.scrap_cost() * (1.0 - stats.build_discount)) as u32
             ));
             sfx.write(SfxEvent::at(crate::audio::Sfx::Tick, 0.5));
@@ -321,6 +325,7 @@ fn threat_input(
 fn squad_input(
     keys: Res<ButtonInput<KeyCode>>,
     unlocks: Res<Unlocks>,
+    clock: Res<crate::threat::RunClock>,
     economy: Res<Economy>,
     mut squad: ResMut<Squad>,
     mut recruits: MessageWriter<RecruitRequest>,
@@ -331,6 +336,17 @@ fn squad_input(
     mut sfx: MessageWriter<SfxEvent>,
 ) {
     if !unlocks.allies {
+        // Say so rather than swallowing the keystroke. Silence here reads as a
+        // broken binding, which is precisely how it got reported.
+        if keys.any_just_pressed([KeyCode::KeyF, KeyCode::KeyG, KeyCode::KeyR]) {
+            crate::onboarding::locked_hint(
+                &mut hints,
+                "SQUAD",
+                crate::onboarding::UNLOCK_ALLIES,
+                clock.elapsed,
+            );
+            sfx.write(SfxEvent::at(crate::audio::Sfx::Deny, 0.5));
+        }
         return;
     }
 

@@ -10,6 +10,7 @@ use crate::art::GameArt;
 use crate::combat::{Damageable, EnemyGrid, ShotVisual, SpawnHazard, SpawnShot};
 use crate::common::{Body, BurstEvent, DamageEvent, DamageSource, RunEntity, SfxEvent};
 use crate::enemy::{Enemy, StatusEffects};
+use crate::environments::EnvKind;
 use crate::player::{Player, PlayerStats};
 use crate::rng::Rng;
 use crate::{AppState, GameSet, RunSetup};
@@ -45,19 +46,99 @@ impl WeaponKind {
         Self::LaserPointer,
     ];
 
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::PencilDart => "Pencil Dart",
-            Self::RulerSweep => "Ruler Sweep",
-            Self::RubberBand => "Rubber Band",
-            Self::Stapler => "Stapler",
-            Self::Highlighter => "Highlighter",
-            Self::TackMines => "Tack Mines",
-            Self::CoffeeNova => "Coffee Nova",
-            Self::ClipOrbit => "Clip Orbit",
-            Self::FanBlast => "Fan Blast",
-            Self::LaserPointer => "Laser Pointer",
-        }
+    /// Per-world names, indexed by `env as usize`.
+    ///
+    /// Ten archetypes across five worlds, so the loadout reads as native wherever the run is.
+    const NAMES: [[&str; EnvKind::COUNT]; 10] = [
+        // PencilDart
+        [
+            "Pencil Dart",
+            "Thorn Dart",
+            "Rivet Gun",
+            "Pulse Lance",
+            "Mote Bolt",
+        ],
+        // RulerSweep
+        [
+            "Ruler Sweep",
+            "Branch Sweep",
+            "Rebar Sweep",
+            "Arc Blade",
+            "Ward Sweep",
+        ],
+        // RubberBand
+        [
+            "Rubber Band",
+            "Whip Vine",
+            "Ricochet Bolt",
+            "Bounce Round",
+            "Echo Shard",
+        ],
+        // Stapler
+        [
+            "Stapler",
+            "Burr Spray",
+            "Scrap Shotgun",
+            "Flechette Burst",
+            "Splinter Hex",
+        ],
+        // Highlighter
+        [
+            "Highlighter",
+            "Sap Lance",
+            "Cutting Torch",
+            "Rail Beam",
+            "Sunbeam Rune",
+        ],
+        // TackMines
+        [
+            "Tack Mines",
+            "Seed Pods",
+            "Glass Traps",
+            "Proximity Nodes",
+            "Glyph Traps",
+        ],
+        // CoffeeNova
+        [
+            "Coffee Nova",
+            "Spore Bloom",
+            "Steam Burst",
+            "Plasma Nova",
+            "Mana Nova",
+        ],
+        // ClipOrbit
+        [
+            "Clip Orbit",
+            "Hornet Ring",
+            "Bolt Orbit",
+            "Drone Ring",
+            "Orbiting Sigils",
+        ],
+        // FanBlast
+        [
+            "Fan Blast",
+            "Gale Gust",
+            "Downdraft",
+            "Repulsor Cone",
+            "Banish Wind",
+        ],
+        // LaserPointer
+        [
+            "Laser Pointer",
+            "Firefly Beam",
+            "Targeting Laser",
+            "Lock Beam",
+            "Doom Gaze",
+        ],
+    ];
+
+    /// What this is called in `env`.
+    ///
+    /// The mechanic never changes; only what the world calls it does. Firing a
+    /// pencil at a forest is the sort of detail that quietly tells a player
+    /// nobody was paying attention.
+    pub fn name(self, env: EnvKind) -> &'static str {
+        Self::NAMES[self as usize][env as usize]
     }
 
     pub fn blurb(self) -> &'static str {
@@ -720,7 +801,7 @@ mod tests {
     #[test]
     fn every_weapon_is_described() {
         for kind in WeaponKind::ALL {
-            assert!(!kind.name().is_empty());
+            assert!(!kind.name(EnvKind::Desk).is_empty());
             assert!(!kind.blurb().is_empty());
             assert!(kind.mastery().starts_with("MASTERY:"));
         }
@@ -728,7 +809,10 @@ mod tests {
 
     #[test]
     fn weapon_names_are_unique() {
-        let mut names: Vec<_> = WeaponKind::ALL.iter().map(|k| k.name()).collect();
+        let mut names: Vec<_> = WeaponKind::ALL
+            .iter()
+            .map(|k| k.name(EnvKind::Desk))
+            .collect();
         let total = names.len();
         names.sort_unstable();
         names.dedup();

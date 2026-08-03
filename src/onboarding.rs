@@ -16,11 +16,11 @@ use crate::{AppState, GameSet, RunSetup};
 
 /// When each subsystem comes online, in run-seconds. Ordered so the player is
 /// only ever learning one new verb at a time.
-const UNLOCK_BUILD: f32 = 45.0;
-const UNLOCK_TERRITORY: f32 = 100.0;
-const UNLOCK_ALLIES: f32 = 165.0;
-const UNLOCK_RESEARCH: f32 = 240.0;
-const UNLOCK_THREAT: f32 = 300.0;
+pub const UNLOCK_BUILD: f32 = 45.0;
+pub const UNLOCK_TERRITORY: f32 = 100.0;
+pub const UNLOCK_ALLIES: f32 = 165.0;
+pub const UNLOCK_RESEARCH: f32 = 240.0;
+pub const UNLOCK_THREAT: f32 = 300.0;
 
 // Five independent feature switches. A bitfield would be smaller and far less
 // readable at every call site, and these are read far more often than stored.
@@ -70,6 +70,24 @@ pub enum HintTone {
     Discovery,
     /// Advisory nudge.
     Tip,
+}
+
+/// Tell the player why a key did nothing.
+///
+/// Every locked system used to fail silently, which is indistinguishable from
+/// a broken keybinding - and that is exactly how it was reported.
+pub fn locked_hint(hints: &mut HintQueue, system: &str, at: f32, now: f32) {
+    let left = (at - now).max(0.0).ceil() as u32;
+    hints.push(
+        format!("{system} LOCKED"),
+        if left > 0 {
+            format!("Comes online at {}:{:02}.", at as u32 / 60, at as u32 % 60)
+        } else {
+            "Not available yet.".to_string()
+        },
+        HintTone::Tip,
+    );
+    let _ = left;
 }
 
 #[derive(Debug, Resource, Default)]
