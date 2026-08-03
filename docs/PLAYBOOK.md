@@ -16,19 +16,30 @@ what to try next. Numbers beat adjectives.
 round 5, level 67, 1312 kills, peak threat 8.00 — but this run ended by a
 deliberate `quit` while still fully healthy, not death, so **no dossier row
 exists for it** — see `castellan` below for why and what the live numbers
-were. The last row actually written to `holdfast-runs.tsv` remains **430.7
-seconds** (siege, round 4, level 50, 1166 kills, peak threat 3.24, `forts=1`
-— a fort captured, joining `warlord`'s two captures earlier the same round).
-Up from 374.4s (fortress, round 3, level 34, 331 kills, peak threat 8.00 —
-the dial's hard ceiling, reached and held with the player at full HP for the
-entire climb). Up from 337.7s (turtle, round 2), up from a starting baseline
-of 148s. See `siege`, `fortress` and `castellan` below.
+were. The highest row actually written to `holdfast-runs.tsv` is now **511.7
+seconds** (marshal, round 8, level 60, 944 kills, peak threat 3.74,
+`forts=1`, also a deliberate healthy `quit` — since round 5's fix, `quit`
+writes a row too). Up from 430.7s (siege, round 4, level 50, 1166 kills,
+peak threat 3.24, `forts=1` — a fort captured, joining `warlord`'s two
+captures earlier the same round). Up from 374.4s (fortress, round 3, level
+34, 331 kills, peak threat 8.00 — the dial's hard ceiling, reached and held
+with the player at full HP for the entire climb). Up from 337.7s (turtle,
+round 2), up from a starting baseline of 148s. See `siege`, `fortress`,
+`castellan` and `marshal` below.
 **Fort-holding is no longer the open question either — `castellan` (round
 5) took the same "plant the ring at the fort before it flips" idea `siege`
 left on the table, and it closed the frontier completely: a fort was taken,
 survived at the instant of the flip, lost, retaken repeatedly, and held
 through both a researched war and the threat dial's 8.00 ceiling
 simultaneously, for well over a hundred seconds of cumulative ownership.**
+**Holding *two* forts at once is the next frontier, and `marshal` (round 8)
+closed it with a "no" that is a design property, not a bug: two forts ~189
+units apart were each captured cleanly with a turret-and-ally ring left
+behind, and each reverted to its original owner within roughly a minute of
+the player leaving, every single time it was tried. Presence is zero-sum —
+a ring holds ground until a real siege arrives, but it cannot substitute for
+the player against a determined multi-faction `MassOnFort` response. See
+`marshal` below for the numbers and what a bigger ring might still buy.**
 
 ### Confirmed by measurement
 
@@ -1726,3 +1737,157 @@ here (Tack Lobbers finishing a run that had already escaped melee range)
 is a new failure mode nobody has named before and is worth a dedicated look —
 does `flee`/`kite` account for ranged attackers' effective range at all, or
 only melee proximity?
+
+### marshal — the multi-fort empire, eight attempts to the first capture, then two forts ~189 units apart (round 8)
+Assignment: hold two forts at once and find the ceiling. Read the source first
+(`src/forts.rs`) to get the capture arithmetic exactly, since every prior round
+that touched forts had to reverse-engineer it live: presence is `player 1.0 +
+allies*0.7 + structures*0.5` inside `FORT_CAPTURE_RADIUS=7.5`, weighed against
+`defenders = garrison*0.34` (only same-faction monsters count as defenders;
+everyone else is a "rival" that pressures a *player-held* fort but doesn't
+help a capture). While the player holds it, `net` cannot go negative unless
+`pressure - friendly > LOSS_MARGIN(1.0)` — otherwise it settles back to fully
+held on its own, exactly as the assignment promised. Also found in source and
+worth logging precisely: `Stance::Guard`'s auto-anchor (`squad_input` in
+`src/command.rs`) only ever targets `Zone`s, never forts — the assignment's
+claim that "G sends them to guard a spot" is true only for `Stance::Hold`
+(press `G` once more to cycle Follow→Hold; it anchors each ally at its
+*current* position, which is why walking them to the fort first, then
+pressing `G`, works and pressing `G` from anywhere else does not).
+
+**Seven straight deaths before the first capture, and the reason was never
+the fort — it was the approach.** Attempts 1-7 (levels 7 to 25, five
+different regions, tactics ranging from aggressive wide `kite`-leveling to
+disciplined compact farming) all died to ambient density between 60 and 260
+enemies *before or immediately upon* reaching a fort's ring, never to a
+siege that had actually started going well. The pattern that broke it in
+attempt 8: **farm in one fixed spot with `defend x y r` (not `kite`, which
+explores continuously), then make exactly one long `goto` straight to a
+clean fort (garrison ≤2) with no detours.** `defend` at a single point held
+density flat at 5-30 enemies from level 1 to level 10 for over 300 real
+seconds — kiting the same stretch produced 60-150+ within the first two
+minutes every single time. `EXPLORED sq units` correlated almost exactly with
+ambient `ENEMIES total` across every attempt: `tick_nests` in `src/forts.rs`
+spawns from *any* nest within `ASSAULT_RANGE=66` of the player's current
+position regardless of the *fort's* distance to the player, so wide travel
+activates every nest cluster passed near and none of them ever go back to
+sleep — a genuine, previously-undocumented cost of exploring, not just of
+standing near a fort.
+
+**The capture itself, once reached with a real build, is fast and survives
+being swarmed** — the previous rounds' "eleven seconds is a siege" undersold
+it once density gets extreme. First capture: approached a clean VOID fort
+(garrison 0) at level 11 with 6 mid-leveled weapons, immediately built 5
+Tack/Shocker turrets via Plan Mode (`SPACE`, arrows, `1`/`3`, `ENTER` — the
+12% time scale gave real breathing room mid-build, confirmed directly: HP
+that was falling in real time climbed the instant Plan Mode opened), then
+recruited a full 4-ally squad. Progress went 7%→29%→46%→61%→87%→**captured**
+over about 90 real seconds while density oscillated 60-90 enemies within
+12m, HP never dropping below 25% and mostly staying above 70% once the ring
+was actually in place. `hints.push_once("fort-first", "FORT TAKEN"...)` fires
+its headline text only once *per run* — the underlying capture (stats,
+economy, coverage) fires every time, so a second silent capture reads only
+in `raw`'s `forts` array (`owner: "YOU"`, `capture: 1.0`), not in the digest
+hints.
+
+**Q1 (can two forts be held at once) — answered, and the answer is no, not
+passively.** Captured a second fort **188.97 units away** (VOID again;
+`(-153.788,-11.695)` to `(-135.406,-199.735)`, computed from `raw` positions)
+using the same ring-then-squad recipe, this time from a level-57, 745-max-HP
+character that no longer needed to be careful (307 enemies, 65 within 12m,
+HP never left 90%+). Set the squad to `Hold` at fort 1 before leaving. Both
+forts were reclaimed by their original owner (VOID both times) within
+roughly 30-90 real seconds of the player's presence leaving the capture
+radius — confirmed three separate times across the run (fort 1 lost while
+travelling to fort 2; fort 2 lost while travelling back to recapture fort 1;
+fort 1 recaptured a second time and *still* only holds while the player is
+physically in the ring). The turret-and-ally ring (1-5 turrets + up to 4
+allies, `0.5`/`0.7` presence each = 2.5-5.3 total) is real defensive value —
+it visibly slows the loss and the fort settles back toward full-held the
+instant the player returns — but it was never once enough on its own against
+the `MassOnFort` response a capture provokes. `threat.holdings` /
+`economy.scrap_per_sec_from_forts` in `raw` confirmed this precisely without
+having to guess: it read `0.35`/`~2.9-3.5` (one fort's worth) at every single
+check taken this run, **never `0.70`** — the two captures never overlapped
+in wall-clock time despite both nominally being "held" moments apart.
+**Whoever tries next should build a much bigger ring before ever leaving
+fort 1** (I had scrap surplus in the thousands unspent every time — 8-12
+turrets costs under 300 Scrap and was never tried) and/or split allies 2-and-2
+between forts rather than 4-at-one, since a 4-ally/0-turret fort held less
+than a 3-turret/2-ally one did in this run's informal comparison.
+
+**Q2 (what does the empire pay) — confirmed exactly, numbers from `raw`,
+not inferred.** `threat.holdings` is `held * 0.35` and never higher than
+`0.35` this run because holdings never overlapped (see above) — so the
+"does it compound" question is still open, just for a different reason than
+expected: the *ceiling* was never approached, the *floor* (staying in one
+place long enough for two forts to coexist) was the actual blocker.
+`economy.scrap_per_sec_from_forts` tracked `FORT_SCRAP(2.4) * income_mult`
+precisely — read `2.4`, `2.88`, `2.9`, `3.456` across the run as Logistics/
+income cards stacked, always matching the held-count × base × multiplier
+exactly, confirming last round's source-reading and finally giving it a live
+number.
+
+**Q4 (does an ally squad capture a fort alone) — still untested**, and this
+round found the mechanic (`Hold` stance, not `Guard`) without ever trying the
+from-scratch version: sending a squad at an *enemy-owned* fort with the
+player elsewhere. Next round should walk allies to a low-garrison fort,
+switch to `Hold`, then leave completely (not just retreat to the ring's edge)
+and watch `raw`'s `capture` value climb on its own.
+
+**MassOnFort at scale, confirmed exactly as the assignment described.**
+`raw`'s `factions` array read `SWARM:MassOnFort(64%) RUST:MassOnFort(40%)
+VOID:MassOnFort(95%)` simultaneously, multiple times, the instant a capture
+completed — three factions massing on one fort at once, not two. The
+posture cleared back to `HuntPlayer(0%)` for all three within about 15-20
+seconds each time contest ended (fort settled either way), consistent with
+`WarRoom`'s 4-second review interval plus a few review cycles to disengage.
+
+**Operational, for whoever plays next.** (1) **`raw`'s `forts` array is only
+the 8 nearest to the player** (`write_war` in `src/pilot.rs` does
+`.take(8)`) — once you are more than ~80-100 units from a held fort with
+denser ground between, it silently drops off the list. There is currently no
+way to check a distant held fort's status without physically returning to
+it or reasoning from the `log.txt` hint stream (`FORT LOST: THE <faction>
+took it back.` fires every loss, unlike the capture headline). Whoever wants
+to measure exact hold duration next should watch the log, not poll `raw`.
+(2) **`O` is Overclock, everywhere, not just outside Plan Mode** — reached
+for it once meaning to cycle something else and it fired a 22-second threat
+surge unintentionally (harmless this run since the build could tank it, but
+worth flagging: it is not gated by any state, doesn't share a cooldown
+warning in the digest until it's already firing). (3) Building in Plan Mode
+during an active siege is not just safe, it is a *reversal* — HP climbing
+the instant `SPACE` was pressed, repeatedly and reproducibly, because the
+12% time scale slows the incoming damage far more than it slows placing a
+turret. (4) A single `defend x y r seconds` call that spans a level-up still
+gets interrupted exactly like `kite`/`flee` (the level-up screen eats the
+rest of the batch) — this cost real turns every single attempt; batch the
+card tap and the next steering verb together as the playbook has said since
+round 3, and it still isn't automatic.
+
+**Numbers.** Eight lives total this session (`marshal-multifort` through
+`-8`); the first seven all ended in death with `forts=0` (193-341s, levels
+7-25, 67-373 kills — see `holdfast-runs.tsv`, not narrated individually here
+since none reached the assignment). The eighth ended by a deliberate `quit`
+while fully healthy, which still wrote a dossier row:
+`marshal-multifort-8 DESK 511.7 60 944 3 4 0 1 0 3.74 243 19953 6137 37 0.667`
+— level 60, 944 kills, 3 structures/4 allies live at the moment of quit, a
+fort actively held (`forts=1`), peak threat 3.74, 6137 Scrap and 37 Cores
+unspent (the usual failure, at a new scale — an 8-12 turret ring on fort 1
+alone would have cost under 5% of the banked Scrap).
+
+**Takeaway: the fort-empire frontier moves from "can you take one" (closed
+since round 5) to "can you hold more than one at a time" — and this round's
+answer is that presence is genuinely a zero-sum resource in this game by
+design, not by bug.** A fort not actively occupied by the player, however
+heavily garrisoned with turrets and allies, loses a contested tug-of-war
+against a determined three-faction siege within about a minute. That is
+consistent with `LOSS_MARGIN` and `DEFENDER_WEIGHT` as written — it is not a
+missing feature, it is the intended cost of expansion. The empire's ceiling
+in this run wasn't threat, distance, or Scrap; it was the number of things
+one player can be near at once. Next: a much bigger single ring (8-12
+structures, tested — not just assumed — against the density this round
+measured), the ally-alone capture from Q4, and a genuine attempt to hold
+*three* forts by pre-building rings at all three before capturing any of
+them, since Scrap was never the bottleneck once the first fort's income
+came online.

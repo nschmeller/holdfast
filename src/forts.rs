@@ -157,7 +157,7 @@ fn strength_from_home(pos: Vec2) -> f32 {
 ///
 /// A fort three screens away throwing monsters at nothing is wasted
 /// simulation and, worse, an invisible drip of enemies from nowhere.
-const ASSAULT_RANGE: f32 = 66.0;
+pub const ASSAULT_RANGE: f32 = 66.0;
 
 /// How far a seeder walks before it settles.
 const SEEDER_TRAVEL: f32 = 34.0;
@@ -312,14 +312,64 @@ impl Default for Plan {
 pub struct WarRoom {
     plans: [Plan; Faction::COUNT],
     review: f32,
+    /// How long each faction has been massing on the same prize without taking
+    /// it, and how long it has since given up for.
+    ///
+    /// Without this a reclaim never ends. Every four seconds each faction picks
+    /// the best fort to take, a fort the player holds is the most attractive
+    /// thing on the board, and so up to four factions committed to the same ring
+    /// permanently. A garrison of five turrets and four allies is worth 5.3
+    /// presence, which nineteen monsters overcome - and a three-faction reclaim
+    /// puts sixty to three hundred in the area. Nobody has ever held two forts,
+    /// or one for longer than ninety seconds unattended, and that is why.
+    ///
+    /// An assault you can outlast is a fight. One that never stops is a wall,
+    /// and a wall reads exactly like a bug.
+    siege: [f32; Faction::COUNT],
+    regroup: [f32; Faction::COUNT],
     /// Human-readable summary for the HUD and for the pilot bridge.
     pub headline: Option<String>,
 }
+
+/// How long a faction will press an unsuccessful reclaim before regrouping.
+const SIEGE_PATIENCE: f32 = 42.0;
+
+/// And how long it leaves the fort alone afterwards.
+///
+/// Long enough to repair a ring and spend what the fort has paid, short enough
+/// that holding ground is never quiet for long.
+const SIEGE_REGROUP: f32 = 34.0;
 
 impl WarRoom {
     #[must_use]
     pub fn plan(&self, faction: Faction) -> Plan {
         self.plans[faction.index()]
+    }
+
+    /// Whether this faction is currently willing to press a reclaim.
+    #[must_use]
+    pub fn will_besiege(&self, faction: Faction) -> bool {
+        self.regroup[faction.index()] <= 0.0
+    }
+
+    /// Age the siege and regroup clocks. `pressing` is true while this faction
+    /// is committed to taking a fort it does not own.
+    pub fn tick_resolve(&mut self, faction: Faction, pressing: bool, dt: f32) {
+        let i = faction.index();
+        if self.regroup[i] > 0.0 {
+            self.regroup[i] -= dt;
+            self.siege[i] = 0.0;
+            return;
+        }
+        if pressing {
+            self.siege[i] += dt;
+            if self.siege[i] >= SIEGE_PATIENCE {
+                self.siege[i] = 0.0;
+                self.regroup[i] = SIEGE_REGROUP;
+            }
+        } else {
+            self.siege[i] = 0.0;
+        }
     }
 
     pub fn reset(&mut self) {
@@ -1085,7 +1135,10 @@ fn plan_war(
     }
     // Slow on purpose. A director that re-decides every frame produces
     // monsters that pirouette on the spot instead of committing to anything.
-    war.review = 4.0;
+    // The siege clocks advance by one review interval per pass, since that is
+    // how often this runs.
+    let elapsed = 4.0;
+    war.review = elapsed;
 
     let Some((health, hero)) = player_health.iter().next() else {
         return;
@@ -1138,7 +1191,20 @@ fn plan_war(
             })
             .collect();
 
-        let plan = decide(faction, softness, strength, &views, &tuning);
+        let mut plan = decide(faction, softness, strength, &views, &tuning);
+
+        // A faction that has pressed a reclaim for `SIEGE_PATIENCE` without
+        // getting anywhere goes back to hunting for a while. Otherwise the
+        // reclaim never lifts and a held fort cannot be kept at all.
+        let pressing = plan.posture == Posture::MassOnFort;
+        war.tick_resolve(faction, pressing, elapsed);
+        if pressing && !war.will_besiege(faction) {
+            plan = Plan {
+                posture: Posture::HuntPlayer,
+                ..plan
+            };
+        }
+
         if plan.posture == Posture::MassOnFort && war.plans[faction.index()].posture != plan.posture
         {
             headline = Some(format!("{} IS MASSING", faction.name()));
@@ -1412,6 +1478,41 @@ mod tests {
         let pressure: f32 = (0..monsters).map(|_| DEFENDER_WEIGHT).sum();
         let excess = pressure - friendly - LOSS_MARGIN;
         if excess > 0.0 { -excess } else { 1.0 }
+    }
+
+    #[test]
+    fn a_reclaim_eventually_lifts() {
+        // Up to four factions committed to the same ring permanently, because a
+        // fort the player holds is always the most attractive thing on the
+        // board. Five turrets and four allies come to 5.3 presence, which
+        // nineteen monsters beat, and a three-faction reclaim puts sixty to
+        // three hundred in the area - so nobody has ever held two forts, or one
+        // unattended for longer than ninety seconds.
+        let mut war = WarRoom::default();
+        assert!(war.will_besiege(Faction::Swarm), "starts unwilling");
+        let mut pressed = 0.0;
+        while war.will_besiege(Faction::Swarm) && pressed < 300.0 {
+            war.tick_resolve(Faction::Swarm, true, 4.0);
+            pressed += 4.0;
+        }
+        assert!(pressed <= SIEGE_PATIENCE + 4.0, "pressed for {pressed}s");
+        // And it comes back, so holding ground is never quiet for long.
+        let mut rested = 0.0;
+        while !war.will_besiege(Faction::Swarm) && rested < 300.0 {
+            war.tick_resolve(Faction::Swarm, false, 4.0);
+            rested += 4.0;
+        }
+        assert!(rested <= SIEGE_REGROUP + 4.0, "rested for {rested}s");
+    }
+
+    #[test]
+    fn a_faction_doing_something_else_never_tires() {
+        // The clock is about pressing a reclaim, not about the passage of time.
+        let mut war = WarRoom::default();
+        for _ in 0..200 {
+            war.tick_resolve(Faction::Void, false, 4.0);
+        }
+        assert!(war.will_besiege(Faction::Void));
     }
 
     #[test]

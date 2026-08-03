@@ -337,6 +337,46 @@ pub struct BossBarTarget;
 
 // -- the director -----------------------------------------------------------
 
+/// How far a monster can be from the player before it stops mattering.
+///
+/// Nothing was ever culled. Nests only spawn while the player is within
+/// `ASSAULT_RANGE`, so they are not the leak - but every monster they ever
+/// produced followed forever, and the director's cap does not count them. So a
+/// run that travelled widely dragged a permanent accumulated horde behind it: a
+/// strategist measured 60 to 260 enemies regardless of character level, found
+/// that levelling in one place kept density flat at 5 to 30 for five minutes,
+/// and concluded correctly that exploring was being punished permanently. That
+/// is the attrition spiral that has ended nearly every run in the dossier.
+///
+/// Comfortably outside the chunk unload radius (120 units) and nearly three
+/// times the assault range, so nothing being fought or defended is ever
+/// forgotten - only something genuinely outrun.
+const FORGET_DISTANCE: f32 = 165.0;
+
+/// Release monsters the player has left far behind.
+///
+/// A silent despawn, not a kill: it pays nothing, counts nothing, and drops no
+/// loot. The player did not defeat these, they walked away from them.
+fn forget_the_left_behind(
+    mut commands: Commands,
+    mut director: ResMut<Director>,
+    player: Query<&Body, With<Player>>,
+    enemies: Query<(Entity, &Body, &Enemy), Without<Player>>,
+) {
+    let Some(hero) = player.iter().next().map(|b| b.pos) else {
+        return;
+    };
+    for (entity, body, enemy) in &enemies {
+        // Bosses are an event with a health bar, not ambient pressure. Letting
+        // one evaporate because the player ran would rob them of the kill.
+        if enemy.rank == Rank::Boss || body.pos.distance(hero) <= FORGET_DISTANCE {
+            continue;
+        }
+        director.alive = director.alive.saturating_sub(1);
+        commands.entity(entity).try_despawn();
+    }
+}
+
 /// How much faster elites arrive while the player stands in a pool of light.
 ///
 /// The pool's payoff is a quarter more damage, 1.4 health a second and the
@@ -414,6 +454,7 @@ impl Plugin for EnemyPlugin {
             )
             .add_systems(Update, enemy_contact.in_set(GameSet::Combat))
             .add_systems(Update, enemy_fall_off.in_set(GameSet::Resolve))
+            .add_systems(Update, forget_the_left_behind.in_set(GameSet::Reap))
             .add_systems(
                 OnExit(AppState::Menu),
                 reset_director.in_set(RunSetup::Reset),
@@ -1324,6 +1365,24 @@ mod tests {
     }
 
     // -- status effects -----------------------------------------------------
+
+    #[test]
+    fn nothing_being_fought_is_ever_forgotten() {
+        // The forget radius has to sit outside everything the player might be
+        // engaged with, or a monster would evaporate mid-fight.
+        let forget = FORGET_DISTANCE;
+        let engaged = crate::forts::ASSAULT_RANGE * 2.0;
+        assert!(
+            forget > engaged,
+            "a fort's assault reaches {engaged} and {forget} would forget it mid-flight"
+        );
+        // And outside the streamed world, so it is never visible on screen.
+        let unloaded = crate::world::CHUNK_SIZE * crate::world::UNLOAD_RADIUS as f32;
+        assert!(
+            FORGET_DISTANCE > unloaded,
+            "{FORGET_DISTANCE} is inside the {unloaded}-unit chunk window"
+        );
+    }
 
     #[test]
     fn standing_in_the_light_costs_something_that_mounts() {
