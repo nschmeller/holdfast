@@ -302,7 +302,7 @@ impl Plugin for FortPlugin {
             .add_systems(Update, (place_forts, place_nests))
             .add_systems(
                 Update,
-                (plan_war, assign_objectives, tick_seeders)
+                (plan_war, assign_objectives, feud_targets, tick_seeders)
                     .chain()
                     .in_set(GameSet::Think),
             )
@@ -822,6 +822,52 @@ fn assign_objectives(
         };
 
         commands.entity(entity).try_insert(next);
+    }
+}
+
+/// Monsters at war with each other actually fight.
+///
+/// Without this, inciting a war is a line in the HUD and nothing else. A
+/// faction at war looks for the nearest enemy of its rival and goes at it
+/// instead of the player - which is the entire product the player just bought
+/// with their Cores.
+fn feud_targets(
+    diplomacy: Res<Diplomacy>,
+    mut commands: Commands,
+    combatants: Query<(Entity, &Body, &Allegiance), With<Enemy>>,
+) {
+    if diplomacy.active_wars().is_empty() {
+        return;
+    }
+    // Small N: only monsters belonging to a faction that is currently at war
+    // with another are considered, and those are the ones the player paid for.
+    let at_war: Vec<(Entity, Vec2, Faction)> = combatants
+        .iter()
+        .filter(|(_, _, a)| {
+            Faction::MONSTERS
+                .iter()
+                .any(|other| diplomacy.hostile(a.0, *other))
+        })
+        .map(|(e, b, a)| (e, b.pos, a.0))
+        .collect();
+
+    for (entity, pos, faction) in &at_war {
+        let quarry = at_war
+            .iter()
+            .filter(|(other, _, side)| other != entity && diplomacy.hostile(*faction, *side))
+            .min_by(|a, b| {
+                a.1.distance_squared(*pos)
+                    .total_cmp(&b.1.distance_squared(*pos))
+            });
+        if let Some((_, target, _)) = quarry {
+            commands.entity(*entity).try_insert(Objective {
+                kind: ObjectiveKind::HuntPlayer,
+                pos: *target,
+                fort: None,
+                // Short, so they re-acquire as the brawl moves.
+                review: 1.5,
+            });
+        }
     }
 }
 

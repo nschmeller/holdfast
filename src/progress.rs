@@ -275,6 +275,13 @@ pub struct ResearchNode {
     pub boost: StatBoost,
     /// Repeatable end-of-branch nodes never cap out.
     pub endless: bool,
+    /// Non-zero on nodes that set two monster factions at war when bought.
+    ///
+    /// Research is otherwise a wall of percentages. This is the one line in
+    /// the tree that does something to the *world* rather than to the player,
+    /// and it is the payoff for having read the map: turn the neighbours on
+    /// each other and walk through the middle while they are busy.
+    pub discord: f32,
 }
 
 impl ResearchNode {
@@ -328,6 +335,18 @@ fn default_nodes() -> Vec<ResearchNode> {
         cost,
         boost,
         endless,
+        discord: 0.0,
+    };
+    let discord = |title, detail, cost, boost, seconds| ResearchNode {
+        branch: Command,
+        title,
+        detail,
+        rank: 0,
+        max_rank: 1,
+        cost,
+        boost,
+        endless: true,
+        discord: seconds,
     };
     vec![
         // MIGHT
@@ -486,6 +505,23 @@ fn default_nodes() -> Vec<ResearchNode> {
             8.0,
             StatBoost::Income,
             true,
+        ),
+        // The two nodes that act on the world rather than the player. Late and
+        // expensive on purpose: knowing which two factions to set against each
+        // other means having explored enough to know who is out there.
+        discord(
+            "Whisper Campaign",
+            "Sets the two strongest nearby factions at war for 45s",
+            14.0,
+            StatBoost::Income,
+            45.0,
+        ),
+        discord(
+            "Blood Feud",
+            "As above, but 110s - and they remember it",
+            26.0,
+            StatBoost::Luck,
+            110.0,
         ),
     ]
 }
@@ -1316,5 +1352,28 @@ mod tests {
             late_rate < f64::from(early - 1),
             "still gaining {late_rate} levels per batch after {total} levels"
         );
+    }
+    #[test]
+    fn the_tree_offers_a_way_to_start_a_war() {
+        // The one node that acts on the world rather than the player.
+        let research = Research::default();
+        let discord: Vec<_> = research.nodes.iter().filter(|n| n.discord > 0.0).collect();
+        assert!(!discord.is_empty(), "no way to incite anybody");
+        for node in &discord {
+            assert!(node.endless, "a one-shot war node is a dead end late on");
+            assert!(
+                node.cost >= 10.0,
+                "{} is too cheap to be a decision",
+                node.title
+            );
+            assert_eq!(node.branch, Branch::Command);
+        }
+    }
+
+    #[test]
+    fn ordinary_research_does_not_start_wars() {
+        let research = Research::default();
+        let ordinary = research.nodes.iter().filter(|n| n.discord <= 0.0).count();
+        assert!(ordinary > 10, "only {ordinary} plain nodes");
     }
 }

@@ -594,6 +594,7 @@ fn build_research(
 fn research_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut incite: MessageWriter<crate::factions::InciteRequest>,
     mut cursor: ResMut<ResearchCursor>,
     mut research: ResMut<Research>,
     mut economy: ResMut<Economy>,
@@ -635,6 +636,15 @@ fn research_input(
             let maxed = research.nodes[ni].maxed();
             if !maxed && economy.spend_cores(cost) {
                 research.nodes[ni].rank += 1;
+                let discord = research.nodes[ni].discord;
+                if discord > 0.0 {
+                    // Endless node: every rank buys another war, longer each
+                    // time, so it stays worth taking late.
+                    let rank = research.nodes[ni].rank as f32;
+                    incite.write(crate::factions::InciteRequest {
+                        seconds: discord * (0.7 + rank * 0.3),
+                    });
+                }
                 recompute.write(RecomputeStats);
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Gear));
             } else {

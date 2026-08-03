@@ -975,16 +975,50 @@ fn enemy_status_tick(
 /// Contact damage against the player, allies and structures.
 fn enemy_contact(
     time: Res<Time>,
-    mut enemies: Query<(&mut Enemy, &Body), Without<Player>>,
+    diplomacy: Res<crate::factions::Diplomacy>,
+    mut enemies: Query<(&mut Enemy, &Body, Option<&crate::factions::Allegiance>), Without<Player>>,
     targets: Query<(Entity, &Body, &crate::combat::Damageable)>,
+    rivals: Query<(Entity, &Body, &crate::factions::Allegiance), With<Enemy>>,
     mut damage: MessageWriter<DamageEvent>,
 ) {
     let dt = time.delta_secs();
-    for (mut enemy, ebody) in &mut enemies {
+    let feuding = !diplomacy.active_wars().is_empty();
+
+    for (mut enemy, ebody, allegiance) in &mut enemies {
         if enemy.falling || enemy.touch_cd > 0.0 {
             enemy.touch_cd = (enemy.touch_cd - dt).max(0.0);
             continue;
         }
+
+        // Monsters whose factions are at war hurt each other. Only checked
+        // while a war is running, so the usual case costs one bool.
+        if feuding && let Some(mine) = allegiance {
+            let mut struck = false;
+            for (other, obody, theirs) in &rivals {
+                if !diplomacy.hostile(mine.0, theirs.0) {
+                    continue;
+                }
+                let reach = ebody.radius + obody.radius;
+                if ebody.pos.distance_squared(obody.pos) <= reach * reach {
+                    let dir = (obody.pos - ebody.pos).normalize_or_zero();
+                    damage.write(DamageEvent {
+                        target: other,
+                        amount: enemy.damage,
+                        crit: false,
+                        knockback: dir,
+                        knockback_force: 6.0,
+                        source: DamageSource::Enemy,
+                    });
+                    enemy.touch_cd = 0.55;
+                    struck = true;
+                    break;
+                }
+            }
+            if struck {
+                continue;
+            }
+        }
+
         for (entity, tbody, dmg) in &targets {
             if !dmg.hostile_target {
                 continue;

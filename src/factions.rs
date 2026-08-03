@@ -298,12 +298,21 @@ impl Diplomacy {
     }
 }
 
+/// Ask for a war between whichever two factions it would most help to have
+/// fighting. Raised by research; resolved here, where the map is known.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct InciteRequest {
+    pub seconds: f32,
+}
+
 #[derive(Debug)]
 pub struct FactionPlugin;
 
 impl Plugin for FactionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Diplomacy>()
+            .add_message::<InciteRequest>()
+            .add_systems(Update, resolve_incitements.in_set(GameSet::Think))
             .add_systems(
                 OnExit(AppState::Menu),
                 reset_diplomacy.in_set(RunSetup::Reset),
@@ -328,6 +337,63 @@ fn tick_diplomacy(
             "They are not looking at you.",
             crate::onboarding::HintTone::Discovery,
         );
+    }
+}
+
+/// The two factions worth setting against each other, given how much of each
+/// is nearby.
+///
+/// Both have to actually be present. Inciting a war between two powers the
+/// player cannot see is a line of text, not a tactic, and they paid Cores for
+/// it.
+#[must_use]
+pub fn pick_feuding_pair(weight: &[f32; Faction::COUNT]) -> Option<(Faction, Faction)> {
+    let mut ranked: Vec<(Faction, f32)> = Faction::MONSTERS
+        .iter()
+        .map(|f| (*f, weight[f.index()]))
+        .collect();
+    ranked.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+    match (ranked.first(), ranked.get(1)) {
+        (Some(&(a, wa)), Some(&(b, wb))) if wa > 0.0 && wb > 0.0 => Some((a, b)),
+        _ => None,
+    }
+}
+
+/// Turn "start a war" into "start *that* war".
+///
+/// Picks the two factions with the most strength near the player, because a
+/// war between two powers on the far side of the map is a line of text rather
+/// than a tactic. The player spent Cores on this; it has to land somewhere
+/// they will see it.
+fn resolve_incitements(
+    mut requests: MessageReader<InciteRequest>,
+    mut diplomacy: ResMut<Diplomacy>,
+    mut hints: ResMut<crate::onboarding::HintQueue>,
+    player: Query<&crate::common::Body, With<crate::player::Player>>,
+    monsters: Query<(&crate::common::Body, &Allegiance)>,
+) {
+    for request in requests.read() {
+        let Some(hero) = player.iter().next().map(|b| b.pos) else {
+            continue;
+        };
+
+        let mut weight = [0.0f32; Faction::COUNT];
+        for (body, allegiance) in &monsters {
+            // Nearer bodies count for more, so "strongest nearby" means what
+            // it says rather than "biggest faction anywhere".
+            let d = body.pos.distance(hero);
+            weight[allegiance.0.index()] += 1.0 / (1.0 + d / 40.0);
+        }
+
+        if let Some((a, b)) = pick_feuding_pair(&weight) {
+            diplomacy.incite(a, b, request.seconds);
+        } else {
+            hints.push(
+                "NOBODY TO TURN",
+                "There is only one power in earshot. Travel, then try again.",
+                crate::onboarding::HintTone::Tip,
+            );
+        }
     }
 }
 
@@ -537,5 +603,36 @@ mod tests {
         for (i, faction) in Faction::ALL.iter().enumerate() {
             assert_eq!(faction.index(), i, "{faction:?} is out of order");
         }
+    }
+    fn weights(pairs: &[(Faction, f32)]) -> [f32; Faction::COUNT] {
+        let mut w = [0.0; Faction::COUNT];
+        for (f, v) in pairs {
+            w[f.index()] = *v;
+        }
+        w
+    }
+
+    #[test]
+    fn a_feud_needs_two_powers_actually_present() {
+        // One faction in earshot is not a war, it is a mugging.
+        assert_eq!(pick_feuding_pair(&weights(&[])), None);
+        assert_eq!(pick_feuding_pair(&weights(&[(Faction::Swarm, 9.0)])), None);
+    }
+
+    #[test]
+    fn a_feud_picks_the_two_strongest_nearby() {
+        let w = weights(&[
+            (Faction::Swarm, 1.0),
+            (Faction::Rust, 8.0),
+            (Faction::Bloom, 5.0),
+            (Faction::Void, 0.2),
+        ]);
+        assert_eq!(pick_feuding_pair(&w), Some((Faction::Rust, Faction::Bloom)));
+    }
+
+    #[test]
+    fn a_feud_ignores_factions_that_are_not_there() {
+        let w = weights(&[(Faction::Void, 3.0), (Faction::Swarm, 0.5)]);
+        assert_eq!(pick_feuding_pair(&w), Some((Faction::Void, Faction::Swarm)));
     }
 }
