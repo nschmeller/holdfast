@@ -215,8 +215,19 @@ pub struct FortView {
 /// is exactly the kind of thing that is easy to get subtly and permanently
 /// wrong without a test saying otherwise.
 #[must_use]
-pub fn decide(faction: Faction, player_softness: f32, strength: u32, forts: &[FortView]) -> Plan {
-    let temperament = faction.temperament();
+pub fn decide(
+    faction: Faction,
+    player_softness: f32,
+    strength: u32,
+    forts: &[FortView],
+    tuning: &crate::tactician::Tactics,
+) -> Plan {
+    // A language model, if one is attached, gets to lean on the temperament -
+    // never to replace it. The faction still plays like itself; it just plays
+    // like itself more or less keenly.
+    let mut temperament = faction.temperament();
+    temperament.ambition *= tuning.ambition;
+    temperament.expansion *= tuning.expansion;
 
     // Anything of ours actively being taken outranks every other consideration:
     // losing a fort is worse than missing a chance at one.
@@ -697,6 +708,7 @@ fn plan_war(
     time: Res<Time>,
     mut war: ResMut<WarRoom>,
     diplomacy: Res<Diplomacy>,
+    tuning: Res<crate::tactician::Tactics>,
     player_health: Query<(&Health, &Body), With<Player>>,
     forts: Query<(Entity, &Fort, &Allegiance, &Body)>,
     enemies: Query<(&Body, Option<&Allegiance>), With<Enemy>>,
@@ -760,7 +772,7 @@ fn plan_war(
             })
             .collect();
 
-        let plan = decide(faction, softness, strength, &views);
+        let plan = decide(faction, softness, strength, &views, &tuning);
         if plan.posture == Posture::MassOnFort && war.plans[faction.index()].posture != plan.posture
         {
             headline = Some(format!("{} IS MASSING", faction.name()));
@@ -774,6 +786,7 @@ fn plan_war(
 fn assign_objectives(
     time: Res<Time>,
     war: Res<WarRoom>,
+    tuning: Res<crate::tactician::Tactics>,
     mut commands: Commands,
     player: Query<&Body, With<Player>>,
     mut enemies: Query<(Entity, &Enemy, Option<&Allegiance>, Option<&mut Objective>)>,
@@ -802,7 +815,7 @@ fn assign_objectives(
         // that re-rolls its side of the split every few seconds walks in
         // circles between two objectives.
         let share = f32::from(u16::try_from(entity.index().index() % 100).unwrap_or(0)) / 100.0;
-        let on_fort = plan.focus.is_some() && share < plan.commitment;
+        let on_fort = plan.focus.is_some() && share < (plan.commitment * tuning.cohesion).min(0.95);
 
         let next = if on_fort {
             Objective {
@@ -909,6 +922,12 @@ fn holding_visuals(
 mod tests {
     use super::*;
 
+    /// No model attached, which is what every assertion about the built-in
+    /// director should be made against.
+    fn neutral() -> crate::tactician::Tactics {
+        crate::tactician::Tactics::default()
+    }
+
     fn view(id: u32, owner: Faction, defenders: u32, distance: f32, falling: bool) -> FortView {
         FortView {
             entity: Entity::from_raw_u32(id).unwrap(),
@@ -922,7 +941,7 @@ mod tests {
 
     #[test]
     fn a_faction_with_nothing_to_take_hunts_the_player() {
-        let plan = decide(Faction::Swarm, 0.2, 10, &[]);
+        let plan = decide(Faction::Swarm, 0.2, 10, &[], &neutral());
         assert_eq!(plan.posture, Posture::HuntPlayer);
         assert_eq!(plan.commitment, 0.0);
     }
@@ -935,7 +954,7 @@ mod tests {
             view(1, Faction::Swarm, 0, 8.0, true),
             view(2, Faction::Player, 0, 12.0, false),
         ];
-        let plan = decide(Faction::Swarm, 0.9, 20, &forts);
+        let plan = decide(Faction::Swarm, 0.9, 20, &forts, &neutral());
         assert_eq!(plan.posture, Posture::Defend);
         assert_eq!(plan.focus, Some(Entity::from_raw_u32(1).unwrap()));
         assert!(plan.commitment > 0.25);
@@ -944,7 +963,7 @@ mod tests {
     #[test]
     fn a_faction_masses_on_a_weakly_held_fort_it_can_take() {
         let forts = [view(1, Faction::Player, 0, 10.0, false)];
-        let plan = decide(Faction::Void, 0.0, 30, &forts);
+        let plan = decide(Faction::Void, 0.0, 30, &forts, &neutral());
         assert_eq!(plan.posture, Posture::MassOnFort);
         assert!(plan.commitment > 0.4);
     }
@@ -953,21 +972,21 @@ mod tests {
     fn a_faction_too_weak_to_take_a_fort_goes_back_to_hunting() {
         // Throwing three monsters at a garrison of twenty is not strategy.
         let forts = [view(1, Faction::Player, 20, 10.0, false)];
-        let plan = decide(Faction::Swarm, 0.3, 3, &forts);
+        let plan = decide(Faction::Swarm, 0.3, 3, &forts, &neutral());
         assert_eq!(plan.posture, Posture::HuntPlayer);
     }
 
     #[test]
     fn a_dying_player_is_worth_chasing_over_a_distant_fort() {
         let forts = [view(1, Faction::Player, 2, 260.0, false)];
-        let plan = decide(Faction::Swarm, 1.0, 40, &forts);
+        let plan = decide(Faction::Swarm, 1.0, 40, &forts, &neutral());
         assert_eq!(plan.posture, Posture::HuntPlayer);
     }
 
     #[test]
     fn a_healthy_player_next_to_a_soft_fort_gets_ignored() {
         let forts = [view(1, Faction::Player, 0, 6.0, false)];
-        let plan = decide(Faction::Void, 0.0, 40, &forts);
+        let plan = decide(Faction::Void, 0.0, 40, &forts, &neutral());
         assert_ne!(plan.posture, Posture::HuntPlayer);
     }
 
@@ -977,7 +996,7 @@ mod tests {
             view(1, Faction::Player, 1, 150.0, false),
             view(2, Faction::Player, 1, 20.0, false),
         ];
-        let plan = decide(Faction::Void, 0.1, 40, &forts);
+        let plan = decide(Faction::Void, 0.1, 40, &forts, &neutral());
         assert_eq!(plan.focus, Some(Entity::from_raw_u32(2).unwrap()));
     }
 
@@ -987,14 +1006,14 @@ mod tests {
             view(1, Faction::Player, 12, 30.0, false),
             view(2, Faction::Player, 0, 45.0, false),
         ];
-        let plan = decide(Faction::Void, 0.1, 40, &forts);
+        let plan = decide(Faction::Void, 0.1, 40, &forts, &neutral());
         assert_eq!(plan.focus, Some(Entity::from_raw_u32(2).unwrap()));
     }
 
     #[test]
     fn a_faction_never_besieges_its_own_fort() {
         let forts = [view(1, Faction::Swarm, 0, 5.0, false)];
-        let plan = decide(Faction::Swarm, 0.1, 40, &forts);
+        let plan = decide(Faction::Swarm, 0.1, 40, &forts, &neutral());
         assert_eq!(plan.posture, Posture::HuntPlayer, "{plan:?}");
     }
 
@@ -1003,8 +1022,8 @@ mod tests {
         // The whole point of four factions: identical circumstances, different
         // answers.
         let forts = [view(1, Faction::Player, 4, 40.0, false)];
-        let ambitious = decide(Faction::Void, 0.35, 18, &forts);
-        let cautious = decide(Faction::Bloom, 0.35, 18, &forts);
+        let ambitious = decide(Faction::Void, 0.35, 18, &forts, &neutral());
+        let cautious = decide(Faction::Bloom, 0.35, 18, &forts, &neutral());
         assert_ne!(
             (ambitious.posture, cautious.posture),
             (Posture::HuntPlayer, Posture::HuntPlayer),
@@ -1026,7 +1045,7 @@ mod tests {
         ];
         for faction in Faction::MONSTERS {
             for board in &boards {
-                let plan = decide(faction, 0.4, 25, board);
+                let plan = decide(faction, 0.4, 25, board, &neutral());
                 assert!(
                     (0.0..=0.95).contains(&plan.commitment),
                     "{faction:?} committed {}",
@@ -1046,7 +1065,7 @@ mod tests {
         for defenders in 0..8 {
             for softness in [0.2, 0.4, 0.6] {
                 let forts = [view(1, Faction::Player, defenders, 45.0, false)];
-                let plan = decide(Faction::Swarm, softness, 22, &forts);
+                let plan = decide(Faction::Swarm, softness, 22, &forts, &neutral());
                 if plan.posture == Posture::Split {
                     split_seen = true;
                     assert!(plan.commitment > 0.1 && plan.commitment < 0.9);
@@ -1062,5 +1081,53 @@ mod tests {
         assert!(hostile.progress < 0.0);
         assert_eq!(hostile.planted, 0);
         assert!(hostile.assault > 0.0 && hostile.seeding > 0.0);
+    }
+    #[test]
+    fn a_model_can_lean_on_a_faction_without_replacing_it() {
+        // The dials scale the temperament; they do not overwrite it. Two
+        // factions given the same push must still differ.
+        let board = [view(1, Faction::Player, 4, 40.0, false)];
+        let mut keen = neutral();
+        keen.ambition = 2.0;
+
+        let void_calm = decide(Faction::Void, 0.35, 18, &board, &neutral());
+        let void_keen = decide(Faction::Void, 0.35, 18, &board, &keen);
+        let bloom_keen = decide(Faction::Bloom, 0.35, 18, &board, &keen);
+
+        assert!(
+            void_keen.commitment >= void_calm.commitment,
+            "pushing ambition made Void less committed"
+        );
+        assert_ne!(
+            (void_keen.posture, void_keen.commitment),
+            (bloom_keen.posture, bloom_keen.commitment),
+            "the same push made two temperaments identical"
+        );
+    }
+
+    #[test]
+    fn a_clamped_but_extreme_tuning_still_produces_a_legal_plan() {
+        // The clamp lets 0.4 and 2.0 through; both ends have to be survivable.
+        let board = [
+            view(1, Faction::Player, 2, 30.0, false),
+            view(2, Faction::Swarm, 1, 15.0, true),
+        ];
+        for value in [0.4_f32, 2.0] {
+            let tuning = crate::tactician::Tactics {
+                ambition: value,
+                aggression: value,
+                expansion: value,
+                cohesion: value,
+                ..neutral()
+            };
+            for faction in Faction::MONSTERS {
+                let plan = decide(faction, 0.5, 20, &board, &tuning);
+                assert!(
+                    (0.0..=0.95).contains(&plan.commitment),
+                    "{faction:?} at {value} committed {}",
+                    plan.commitment
+                );
+            }
+        }
     }
 }

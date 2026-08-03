@@ -244,10 +244,10 @@ fn read_move_input(
 /// without ever having made a mistake they could have avoided. Shoving through
 /// a mass of monsters has to be *expensive* - slow enough that walking into one
 /// is a real decision - but it must always be possible.
-const CROWD_FLOOR: f32 = 0.42;
+const CROWD_FLOOR: f32 = 0.58;
 
 /// How much each overlapping body drags on the player.
-const CROWD_DRAG: f32 = 0.16;
+const CROWD_DRAG: f32 = 0.11;
 
 /// How far past the player's own radius to look for bodies pressing on them.
 /// Comfortably wider than the largest monster, so none is missed.

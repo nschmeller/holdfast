@@ -173,7 +173,27 @@ impl RunClock {
 
 /// Combined enemy power scalar. One function so tuning happens in one place.
 pub fn enemy_power(threat: &Threat, clock: &RunClock, level: u32) -> f32 {
-    clock.time_power() * threat.power_mult() * level_power(level)
+    clock.time_power() * threat.power_mult() * level_power(level) * opening_grace(clock.elapsed)
+}
+
+/// How much of its full strength the opposition brings in the opening.
+///
+/// The first ninety seconds are the only part of a run the player has no tools
+/// for: one weapon, no structures, no squad, no research, and a level curve
+/// that has not started paying out. Playtesting kept ending at thirty to forty
+/// seconds, which is not difficulty, it is a game that never began.
+///
+/// This ramps rather than switching, so there is no moment where the fight
+/// visibly changes gear, and it is a separate multiplier rather than a bend in
+/// `time_power` so the long curve it modifies stays readable on its own.
+#[must_use]
+pub fn opening_grace(elapsed: f32) -> f32 {
+    const GRACE: f32 = 90.0;
+    const OPENING: f32 = 0.45;
+    if elapsed >= GRACE {
+        return 1.0;
+    }
+    OPENING + (1.0 - OPENING) * (elapsed / GRACE)
 }
 
 /// How much harder the opposition gets for every level the player takes.
@@ -683,5 +703,40 @@ mod tests {
         let t = Threat::default();
         let clock = RunClock::default();
         assert!(enemy_power(&t, &clock, u32::MAX).is_finite());
+    }
+    #[test]
+    fn the_opening_is_survivable_and_the_grace_runs_out() {
+        // The first ninety seconds are the only stretch with no tools at all.
+        assert!(
+            opening_grace(0.0) < 0.5,
+            "the opening hits at full strength"
+        );
+        assert!(opening_grace(45.0) > opening_grace(0.0));
+        assert!((opening_grace(90.0) - 1.0).abs() < 1e-6);
+        assert!(
+            (opening_grace(600.0) - 1.0).abs() < 1e-6,
+            "grace never ends"
+        );
+    }
+
+    #[test]
+    fn the_grace_ramps_without_a_step() {
+        // A visible gear change would read as a bug.
+        let mut last = opening_grace(0.0);
+        for i in 1..=180 {
+            let now = opening_grace(i as f32);
+            assert!(now >= last, "grace went backwards at {i}s");
+            assert!(now - last < 0.02, "a step at {i}s");
+            last = now;
+        }
+    }
+
+    #[test]
+    fn the_opening_is_easier_than_the_same_moment_later() {
+        let t = Threat::default();
+        let early = RunClock::default();
+        let mut later = RunClock::default();
+        later.elapsed = 120.0;
+        assert!(enemy_power(&t, &early, 1) < enemy_power(&t, &later, 1));
     }
 }

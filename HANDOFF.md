@@ -93,7 +93,7 @@ survives a fresh clone as soon as that config is set again.
     export PATH="$HOME/.cargo/bin:$PATH"
     cargo fmt
     cargo clippy --all-targets -- -D warnings   # must print nothing
-    cargo test                                  # 287 tests today
+    cargo test                                  # 378 tests today
 
 Lints are deliberately brutal: `pedantic` + `nursery` + `cargo` + `style`,
 `unsafe_code = "forbid"`. Every `allow` in `Cargo.toml` carries a written
@@ -106,21 +106,22 @@ Done: the core loop, five worlds, ten weapons, gear, the research tree, allies,
 territory, turrets, the threat dial and wave cycle, onboarding, procedural
 audio and FX, the third-person overlook camera, both test harnesses.
 
-Not done, roughly in the order to take them:
+Also done since: infinite chunked worlds, fog of war, forts and nests and
+seeders, four monster factions with regional territory and player-incited
+wars, save and resume, the web/iOS/Android builds, achievements and lifetime
+stats, and the optional LLM tactician.
 
-1. **Forts, spawners, seeders, cooperative enemy AI** - the biggest remaining
-   feature. Spelled out below; do not lose any of it.
-2. **Monster factions and regional territory** - also spelled out below.
-3. **WASM for itch.io** - fast first paint, progress bar, WebGPU with a WebGL2
-   fallback.
-4. **Save and resume.**
-5. **iOS**, then **Android**.
-6. **Achievements and lifetime stats** - the user asked for this to be last.
-7. **LLM-tuned enemy AI** - after achievements. Use a foundation-model API *if
-   one happens to be reachable on the machine*, to keep retuning the enemy
-   director so it plays wily and unpredictable. Most machines will not have
-   one, so the hand-written heuristics stay the default and this is strictly a
-   garnish. Must never block a frame.
+What is left:
+
+1. **Touch controls.** iOS and Android build, but a keyboard-only game does not
+   survive a touchscreen. See `mobile/README.md` - the input layer is already
+   shaped for it, the design is not done.
+2. **Wrapper projects.** No Xcode project and no Gradle project exist, so
+   neither mobile build has ever run on a device.
+3. **The native model bridges.** `holdfast_set_model_bridge` is written and
+   tested; the Swift and Kotlin sides that would call it are not.
+4. **A longer balance pass.** The level-linked difficulty curve is new and has
+   only been checked over short runs.
 
 ## Forts, spawners and the faction war (the spec, in full)
 

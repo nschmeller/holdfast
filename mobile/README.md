@@ -101,3 +101,63 @@ the simulation. What a touch build needs:
 That is a design job, not a port, and it is deliberately not done here. Getting
 the build green first means the design work can be checked on a device instead
 of guessed at.
+
+## The device's own model
+
+`src/tactician.rs` will let a language model retune the enemy AI while you
+play. On a desktop it finds Ollama or LM Studio over a socket. On a phone the
+model lives behind a Swift or Kotlin framework that Rust cannot call, so the
+wrapper makes the call and hands the text back through one function pointer:
+
+```c
+void holdfast_set_model_bridge(
+    char *(*ask)(const char *prompt),
+    void  (*free_reply)(char *reply));
+```
+
+Call it once, before `holdfast_main` or `android_main`. Rust owns the prompt
+and the parsing; the platform owns the model. Return null when unavailable and
+the game quietly falls back to its own director - which is also what happens on
+every device that has no such model, so the fallback is the well-tested path.
+
+### iOS 26 and later
+
+```swift
+import FoundationModels
+
+@_cdecl("holdfast_ask_model")
+func holdfastAskModel(_ prompt: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>? {
+    guard SystemLanguageModel.default.isAvailable else { return nil }
+    let text = String(cString: prompt)
+    // The bridge is synchronous and is called from a background thread, so
+    // blocking here is correct; do not hop to the main actor.
+    let reply = /* await session.respond(to: text) */ ""
+    return strdup(reply)
+}
+
+@_cdecl("holdfast_free_reply")
+func holdfastFreeReply(_ p: UnsafeMutablePointer<CChar>) { free(p) }
+```
+
+Then in `main.m`, before `holdfast_main()`:
+
+```objc
+extern void holdfast_set_model_bridge(char *(*)(const char *), void (*)(char *));
+extern char *holdfast_ask_model(const char *);
+extern void holdfast_free_reply(char *);
+
+holdfast_set_model_bridge(holdfast_ask_model, holdfast_free_reply);
+```
+
+On anything older than iOS 26, or any device where `isAvailable` is false,
+return null and nothing else changes.
+
+### Android
+
+Same shape through Gemini Nano. The JNI side calls
+`GenerativeModel.generateContent` from AICore, `strdup`s the result, and
+registers the pair before `android_main`. Devices without AICore return null.
+
+Neither of these is written yet - the wrapper projects do not exist. The Rust
+half is done and tested, and `HOLDFAST_LLM` reaching Ollama is how it is
+exercised during development.

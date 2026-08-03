@@ -484,7 +484,7 @@ fn direct_spawns(
     // -- trickle ------------------------------------------------------------
     if director.alive < director.cap {
         // Base rate ramps with time, then the dial multiplies it.
-        let base_rate = 1.5 + minutes * 0.75;
+        let base_rate = (1.5 + minutes * 0.75) * crate::threat::opening_grace(clock.elapsed);
         // ...and then the crowd already present divides it. Forts and nests
         // put monsters on the field that the director never asked for, and
         // without this the two sources stack into an unreadable soup: a first
@@ -718,6 +718,7 @@ pub struct EnvTint(pub Color);
 #[allow(clippy::too_many_arguments)]
 fn enemy_think(
     time: Res<Time>,
+    tuning: Res<crate::tactician::Tactics>,
     gust: Res<Gust>,
     obstacles: Res<ObstacleField>,
     mut rng: ResMut<Rng>,
@@ -757,7 +758,7 @@ fn enemy_think(
             Vec2::X
         };
 
-        let speed = enemy.speed * status.speed_mult();
+        let speed = enemy.speed * status.speed_mult() * tuning.aggression.clamp(0.6, 1.6);
         let mut desired = dir * speed;
 
         // Walk around cover rather than into it.

@@ -31,6 +31,7 @@ pub mod rng;
 pub mod save;
 pub mod screens;
 pub mod stats;
+pub mod tactician;
 pub mod threat;
 pub mod weapons;
 pub mod world;
@@ -236,6 +237,7 @@ pub fn run() {
         screens::ScreensPlugin,
         save::SavePlugin,
         stats::StatsPlugin,
+        tactician::TacticianPlugin,
         devtools::DevToolsPlugin,
         pilot::PilotPlugin,
     ));
