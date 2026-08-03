@@ -141,6 +141,14 @@ impl WeaponKind {
         Self::NAMES[self as usize][env as usize]
     }
 
+    /// What this weapon does, in one line.
+    ///
+    /// Describes the *mechanic* and never names a prop, because the name already
+    /// carries the local flavour and these do not: "Paperclips orbit you" was
+    /// shown for the Arcane Sanctum's Orbiting Sigils, and "Cone of wind" for
+    /// the Grid's Vent Surge. A blurb that names an object is wrong in four
+    /// worlds out of five, and fifty hand-written variants would be fifty
+    /// chances to get it wrong again. Mechanics read correctly everywhere.
     pub fn blurb(self) -> &'static str {
         match self {
             Self::PencilDart => "Fires at the nearest threat. Reliable, always on.",
@@ -148,10 +156,10 @@ impl WeaponKind {
             Self::RubberBand => "Ricochets off walls and props. Loves tight rooms.",
             Self::Stapler => "Short-range spread. Brutal up close, useless far away.",
             Self::Highlighter => "Pierces a whole line of enemies.",
-            Self::TackMines => "Drops mines behind you. Rewards kiting.",
+            Self::TackMines => "Leaves a trail behind you. Rewards kiting.",
             Self::CoffeeNova => "Scalding ring centred on you. Big, slow, satisfying.",
-            Self::ClipOrbit => "Paperclips orbit you and shred whatever touches them.",
-            Self::FanBlast => "Cone of wind. Low damage, huge knockback - use the edge.",
+            Self::ClipOrbit => "Circles you and shreds whatever touches it.",
+            Self::FanBlast => "Wide cone. Low damage, huge knockback - use the edge.",
             Self::LaserPointer => "Snaps to the biggest threat on the field.",
         }
     }
@@ -722,6 +730,31 @@ pub fn friendly_damageable() -> Damageable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_blurb_names_a_prop_from_one_particular_world() {
+        // "Paperclips orbit you" was shown for the Arcane Sanctum's Orbiting
+        // Sigils. A blurb that names an object is wrong in four worlds of five.
+        const LOCAL: [&str; 8] = [
+            "paperclip",
+            "pencil",
+            "stapler",
+            "coffee",
+            "wind",
+            "sigil",
+            "thorn",
+            "rune",
+        ];
+        for kind in WeaponKind::ALL {
+            let blurb = kind.blurb().to_ascii_lowercase();
+            for word in LOCAL {
+                assert!(
+                    !blurb.contains(word),
+                    "{kind:?} blurb names {word:?}: {blurb:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn a_fresh_loadout_has_exactly_the_starter_weapon() {

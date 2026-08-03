@@ -364,6 +364,7 @@ fn apply_hazards_to_player(
     hazards: Query<(&Hazard, &Body), Without<Player>>,
     mut players: Query<(Entity, &Body, &mut StatusEffects), With<Player>>,
     mut damage: MessageWriter<DamageEvent>,
+    mut seen: MessageWriter<crate::coverage::Seen>,
 ) {
     let dt = time.delta_secs();
     for (entity, body, mut status) in &mut players {
@@ -375,6 +376,14 @@ fn apply_hazards_to_player(
             if body.pos.distance_squared(hbody.pos) > reach * reach {
                 continue;
             }
+            // All four hazard items were on the coverage checklist with no
+            // writer anywhere, so the sweep could never pass 94% and the
+            // checklist was lying to whoever used it to decide what to test.
+            // Standing in one is the only sensible reading of "exercised".
+            seen.write(crate::coverage::Seen::of(
+                "hazard",
+                &format!("{:?}", hazard.kind),
+            ));
             if hazard.dps > 0.0 {
                 damage.write(DamageEvent {
                     target: entity,

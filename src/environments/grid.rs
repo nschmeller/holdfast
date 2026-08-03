@@ -144,7 +144,7 @@ pub(super) fn chunk(c: &mut ChunkCtx) {
             c.hazard(HazardSpec {
                 pos: p + dir * (t * len),
                 radius: 1.5,
-                kind: HazardKind::Scald,
+                kind: HazardKind::Shock,
                 dps: 26.0,
                 slow: 1.0,
                 duty: Some((period + i as f32 * 0.6, 0.4)),

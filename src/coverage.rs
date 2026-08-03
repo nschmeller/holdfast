@@ -293,6 +293,28 @@ mod tests {
     }
 
     #[test]
+    fn every_hazard_on_the_checklist_is_placed_by_some_world() {
+        // `Shock` sat on the list, and in the enum, and no world had ever
+        // placed one - so the sweep could not reach 100% however well anybody
+        // played, and the checklist was lying about what was left to do.
+        let mut rng = crate::rng::Rng::seeded(0x51E7);
+        let mut placed = BTreeSet::new();
+        for env in EnvKind::ALL {
+            for x in -6..=6 {
+                for z in -6..=6 {
+                    let content = env.generate_chunk(IVec2::new(x, z), &mut rng);
+                    for hazard in content.hazards {
+                        placed.insert(format!("hazard:{:?}", hazard.kind));
+                    }
+                }
+            }
+        }
+        for tag in expected().iter().filter(|t| t.starts_with("hazard:")) {
+            assert!(placed.contains(tag), "{tag} is on the list but unplaceable");
+        }
+    }
+
+    #[test]
     fn the_checklist_is_worth_the_trouble() {
         // Small enough to finish, large enough to be a real sweep.
         let all = expected();

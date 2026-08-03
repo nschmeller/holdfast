@@ -651,30 +651,112 @@ impl Equipped {
     }
 }
 
-const GEAR_NAMES: [[&str; 4]; 3] = [
+/// Gear names, by slot, then rarity, then world.
+///
+/// Columns follow `EnvKind`: Desk, Forest, Rooftop, Grid, Arcane - the same
+/// shape as the weapon and monster tables. There is no world-neutral way to
+/// write these: a name is pure flavour, and a Paper Crown in the Arcane Sanctum
+/// is exactly the complaint that started the theming work. So all sixty are
+/// written out.
+const GEAR_NAMES: [[[&str; EnvKind::COUNT]; 4]; 3] = [
+    // HEAD
     [
-        "Paper Crown",
-        "Bottle Cap Helm",
-        "Thimble Helm",
-        "Crown of Ink",
+        [
+            "Paper Crown",
+            "Leaf Cap",
+            "Gutter Cap",
+            "Static Cap",
+            "Cloth Circlet",
+        ],
+        [
+            "Bottle Cap Helm",
+            "Acorn Helm",
+            "Tin Helm",
+            "Fuse Helm",
+            "Bone Circlet",
+        ],
+        [
+            "Thimble Helm",
+            "Bark Crown",
+            "Aerial Crown",
+            "Node Crown",
+            "Sigil Crown",
+        ],
+        [
+            "Crown of Ink",
+            "Crown of Thorns",
+            "Crown of Antennae",
+            "Crown of Circuits",
+            "Crown of Ninefold Sight",
+        ],
     ],
+    // BODY
     [
-        "Tape Wrap",
-        "Foil Vest",
-        "Cardboard Plate",
-        "Mantle of Reams",
+        [
+            "Tape Wrap",
+            "Moss Wrap",
+            "Tarp Wrap",
+            "Cable Wrap",
+            "Linen Wrap",
+        ],
+        [
+            "Foil Vest",
+            "Husk Vest",
+            "Sheet Vest",
+            "Mesh Vest",
+            "Warded Vest",
+        ],
+        [
+            "Cardboard Plate",
+            "Bark Plate",
+            "Ducting Plate",
+            "Bus Plate",
+            "Reliquary Plate",
+        ],
+        [
+            "Mantle of Reams",
+            "Mantle of Root",
+            "Mantle of Girders",
+            "Mantle of Lattices",
+            "Mantle of Psalms",
+        ],
     ],
+    // TRINKET
     [
-        "Lucky Clip",
-        "Warm Battery",
-        "Compass Charm",
-        "The Last Staple",
+        [
+            "Lucky Clip",
+            "Lucky Pebble",
+            "Lucky Washer",
+            "Lucky Resistor",
+            "Lucky Bead",
+        ],
+        [
+            "Warm Battery",
+            "Warm Seed",
+            "Warm Coil",
+            "Warm Capacitor",
+            "Warm Reliquary",
+        ],
+        [
+            "Compass Charm",
+            "Dowsing Charm",
+            "Weathervane Charm",
+            "Beacon Charm",
+            "Divining Charm",
+        ],
+        [
+            "The Last Staple",
+            "The Last Ember",
+            "The Last Rivet",
+            "The Last Fuse",
+            "The Last Candle",
+        ],
     ],
 ];
 
 /// Roll a gear piece. `luck` and threat both push the rarity roll upward, which
 /// is the main way the pacing dial pays out in power rather than numbers.
-pub fn roll_gear(rng: &mut Rng, luck: f32, rarity_bonus: f32) -> GearPiece {
+pub fn roll_gear(rng: &mut Rng, luck: f32, rarity_bonus: f32, world: EnvKind) -> GearPiece {
     const MAX_TIER_CHANCE: f32 = 0.85;
     let slot = GearSlot::ALL[rng.below(3)];
     let mut rarity = 0;
@@ -698,7 +780,7 @@ pub fn roll_gear(rng: &mut Rng, luck: f32, rarity_bonus: f32) -> GearPiece {
     }
 
     GearPiece {
-        name: GEAR_NAMES[slot as usize][rarity].to_string(),
+        name: GEAR_NAMES[slot as usize][rarity][world as usize].to_string(),
         slot,
         rarity,
         boosts,
@@ -1136,6 +1218,34 @@ mod tests {
     }
 
     #[test]
+    fn gear_is_named_for_the_world_it_drops_in() {
+        // A Paper Crown in the Arcane Sanctum is the complaint that started the
+        // theming work. Every slot, every rarity, every world.
+        for (slot, rarities) in GEAR_NAMES.iter().enumerate() {
+            for (rarity, row) in rarities.iter().enumerate() {
+                let unique: std::collections::BTreeSet<_> = row.iter().collect();
+                assert_eq!(
+                    unique.len(),
+                    EnvKind::COUNT,
+                    "slot {slot} rarity {rarity} reuses a name across worlds: {row:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_drop_takes_the_name_of_the_world_it_fell_in() {
+        let mut a = Rng::seeded(0x9001);
+        let mut b = Rng::seeded(0x9001);
+        let desk = roll_gear(&mut a, 0.0, 0.0, EnvKind::Desk);
+        let sanctum = roll_gear(&mut b, 0.0, 0.0, EnvKind::Arcane);
+        // Same seed, so the same slot and rarity - only the name should differ.
+        assert_eq!(desk.slot, sanctum.slot);
+        assert_eq!(desk.rarity, sanctum.rarity);
+        assert_ne!(desk.name, sanctum.name, "{} in the Sanctum", desk.name);
+    }
+
+    #[test]
     fn skill_points_have_something_to_buy() {
         // They accumulated, saved, loaded and displayed while nothing in the
         // game could spend them.
@@ -1350,7 +1460,7 @@ mod tests {
     fn rolled_gear_is_always_well_formed() {
         let mut rng = rng();
         for _ in 0..5000 {
-            let g = roll_gear(&mut rng, 0.0, 0.0);
+            let g = roll_gear(&mut rng, 0.0, 0.0, EnvKind::Desk);
             assert!(g.rarity <= 3, "rarity {} out of range", g.rarity);
             assert!(!g.boosts.is_empty());
             assert!(!g.name.is_empty());
@@ -1364,8 +1474,12 @@ mod tests {
         const N: usize = 4000;
         let mut plain = rng();
         let mut lucky = rng();
-        let plain_total: usize = (0..N).map(|_| roll_gear(&mut plain, 0.0, 0.0).rarity).sum();
-        let lucky_total: usize = (0..N).map(|_| roll_gear(&mut lucky, 0.3, 0.3).rarity).sum();
+        let plain_total: usize = (0..N)
+            .map(|_| roll_gear(&mut plain, 0.0, 0.0, EnvKind::Desk).rarity)
+            .sum();
+        let lucky_total: usize = (0..N)
+            .map(|_| roll_gear(&mut lucky, 0.3, 0.3, EnvKind::Desk).rarity)
+            .sum();
         assert!(
             lucky_total > plain_total,
             "luck {lucky_total} did not beat plain {plain_total}"
@@ -1379,7 +1493,7 @@ mod tests {
         // made every drop Legendary. The tier cap is what stops that.
         let mut rng = rng();
         let legendaries = (0..N)
-            .filter(|_| roll_gear(&mut rng, 5.0, 5.0).rarity == 3)
+            .filter(|_| roll_gear(&mut rng, 5.0, 5.0, EnvKind::Desk).rarity == 3)
             .count();
         let share = legendaries as f64 / N as f64;
         assert!(share < 0.12, "legendary share was {share}");
@@ -1390,7 +1504,7 @@ mod tests {
         const N: usize = 8000;
         let mut rng = rng();
         let commons = (0..N)
-            .filter(|_| roll_gear(&mut rng, 0.0, 0.0).rarity == 0)
+            .filter(|_| roll_gear(&mut rng, 0.0, 0.0, EnvKind::Desk).rarity == 0)
             .count();
         let share = commons as f64 / N as f64;
         assert!((0.6..0.72).contains(&share), "common share was {share}");

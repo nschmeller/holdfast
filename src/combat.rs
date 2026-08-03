@@ -783,6 +783,11 @@ fn hazard_ticks(
             if hazard.slow < 1.0 {
                 status.apply_slow(1.0 - hazard.slow, 0.25);
             }
+            if hazard.kind == HazardKind::Shock {
+                // Short, and refreshed while they stand in it, so a conduit
+                // holds a crowd rather than deleting it.
+                status.apply_stun(0.35);
+            }
         }
     }
 }

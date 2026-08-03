@@ -157,11 +157,14 @@ impl Plugin for OnboardingPlugin {
     }
 }
 
-fn reset_onboarding(mut unlocks: ResMut<Unlocks>, mut hints: ResMut<HintQueue>) {
+fn reset_onboarding(env: Res<EnvKind>, mut unlocks: ResMut<Unlocks>, mut hints: ResMut<HintQueue>) {
     unlocks.reset();
     hints.reset();
+    // Named after wherever you actually are. This said "HOLD THE DESK" in the
+    // Undergrowth, the Sanctum and everywhere else - the same class of mistake
+    // as shooting pencil darts in the forest.
     hints.push(
-        "HOLD THE DESK",
+        format!("HOLD {}", env.title()),
         "WASD to move. You attack automatically.",
         HintTone::Tip,
     );

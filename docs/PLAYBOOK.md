@@ -1247,3 +1247,164 @@ system alone; (3) deliberately seek out one of the closer chasm/pool pairs
 (they exist, ~12 units apart was found this round) and fight from the
 single tile that is simultaneously in the pool and at the rim, rather than
 treating them as two separate stops the way this round did for lack of time.
+
+### tourist — world tour, all five worlds played for the first time in one session (round 6)
+Assignment: every previous round (eleven runs, five rounds) played DESK and
+DESK only. Tour all five worlds, drive `pilot.py todo`'s coverage checklist
+down, and answer the one question nobody could: is a world mechanically
+different to play, or only differently painted?
+
+**Coverage went 0% → 51% (32/63) in one continuous session, touching every
+world.** `EnvKind::COUNT=5`: Desk ("THE DESK"), Forest ("THE UNDERGROWTH",
+short name `WILD`), Rooftop ("BLOCK 9 ROOFTOP", `CITY`), Grid ("GRID ZERO"),
+Arcane ("THE ARCANE SANCTUM"). All five were deployed into, fought in for
+several minutes each, and left via the menu rather than by dying, so a single
+process's `Coverage` resource (in-memory, per-run-session, not per-world)
+accumulated across all of them. Final death was in a second Forest visit:
+**306.5s, level 30, 317 kills, peak threat 2.20**, killed by THE STOMPER
+(BossHolePunch's Forest name) landing three shockwave hits in under a second
+immediately followed by wave 6 arriving at 11 HP — a clean, specific cause,
+not the usual undifferentiated crowd-freeze. Result:
+`tourist-worldtour-forest2 WILD 306.5 30 317 1 1 0 0 0 2.20 389 40086 1034 9 0.508`.
+
+**Answer to the central question: the weapon/monster/turret layer is a pure
+reskin; the terrain/hazard layer is not.** Checked both claims against source,
+not just play:
+
+- `WeaponKind::name(env)`, `EnemyKind::name(env)` and the turret equivalent in
+  `allies.rs` are honest lookup tables indexed `[kind][env]` — ten weapons,
+  twelve monsters and five turrets each get five real names (Pencil Dart ->
+  Rivet Gun -> Mote Bolt etc.) with **identical underlying stats** (`base()`
+  in `weapons.rs` takes no `EnvKind` parameter at all). A Rooftop Rivet Gun
+  and a Desk Pencil Dart are the same weapon in every number that matters.
+  This is deliberate and it works — confirmed by pulling every weapon
+  archetype across the five worlds this session (Pencil/Rivet/Pulse/Mote/
+  Thorn Dart, Coffee/Steam/Plasma/Mana Nova, etc.) and never seeing a stat
+  discrepancy.
+- **The terrain each world generates is genuinely, numerically different**,
+  confirmed by reading all five `environments/*.rs` hazard/pool blocks:
+  light pools are **1.25x damage in Desk/Forest/Rooftop but 1.30x in Grid and
+  Arcane**, with radius varying 5.5-6.5 (`c.pool(p, radius, damage_bonus)` -
+  grid.rs:70 uses `(5.5, 0.3)`, arcane.rs:64 uses `(6.5, 0.3)`, the other three
+  use `0.25`). Grid's signature hazard, "plasma conduits" (grid.rs:129-155),
+  is a **fundamentally different shape and threat level from every other
+  world's terrain hazard**: a line (not a circle, built from overlapping
+  discs along a rolled direction), 26 DPS (the highest of any world's terrain
+  hazard), pulsing on a 4.5-6.5s period at 40% uptime — you have to read a
+  rhythm, not just avoid a spot. Rooftop's steam vents are circular, 18 DPS,
+  35% duty. Forest's mud is pure slow (0.38-0.52x, **zero damage**) with a
+  rare separate 5-DPS stinging pool — matches its "mud slows everything"
+  quirk exactly. **Arcane's ley hub is the most mechanically distinct hazard
+  in the entire game**: `HazardKind::Font`, **negative DPS** (-7 on the
+  spokes, -14 at the hub) which the damage pipeline reads as *healing*, and
+  the source comment says outright it heals "friend or foe" — matching the
+  quirk text ("Ley lines heal whoever holds them. So the enemy wants them
+  too.") precisely. I did not personally stand in one this session (16%
+  per-chunk chance, never rolled one in range) but the mechanic is real and
+  sourced, not aspirational text.
+
+**Two concrete mis-themed bugs, precisely the class the user originally
+flagged.**
+1. `onboarding.rs:164`, `reset_onboarding`: the very first hint of every run,
+   in every world, is the hardcoded string `"HOLD THE DESK"` / `"WASD to
+   move."` — confirmed live in Forest, Rooftop, Grid and Arcane, all showing
+   `HINT HOLD THE DESK` in the digest despite the world clearly being none of
+   those things. Every other onboarding hint (`SALVAGE ONLINE`, `TERRITORY
+   CONTESTED`, etc.) is generic enough not to leak, but this one names the
+   wrong world outright, on line one of every run that isn't Desk.
+2. `WeaponKind::blurb()` (`weapons.rs:144`) is a single flat string per
+   archetype, **not indexed by `EnvKind` the way `name()` is** — so
+   ClipOrbit's card always reads "Paperclips orbit you and shred whatever
+   touches them" even when the weapon is drawn as "Hornet Ring" (Forest),
+   "Bolt Orbit" (Grid) or "Orbiting Sigils" (Arcane); CoffeeNova is always
+   "Scalding ring..." even as "Mana Nova" in Arcane; RubberBand is always
+   "Ricochets off walls and props" even as "Whip Vine" in a forest with no
+   walls. Confirmed live: picked up "Orbiting Sigils" in Arcane and the card
+   text still said paperclips. This is the *exact* "pencil darts in the
+   forest" failure mode, just relocated from the weapon's name (which is
+   fixed) to its description (which isn't).
+
+**A related, non-bug but notable gap: gear is not reskinned at all.**
+`GEAR_NAMES` in `progress.rs` (Paper Crown, Tape Wrap, Lucky Clip, etc.) has
+no `EnvKind` dimension whatsoever — a "Tape Wrap" body piece with desk
+flavour dropped in Forest, Rooftop, Grid and Arcane alike this session. The
+task brief only called out monsters/weapons/research as themed-per-world, so
+this isn't a violation of spec, but it's the one visible-to-the-player system
+the reskin pass never reached, and it shows: gear is the one card-offer
+screen every run that still says something desk-specific regardless of
+world.
+
+**The coverage checklist itself cannot reach 100%, and the reason is in the
+source, not bad luck.** `grep -rn "Seen::of(\"hazard\"\|coverage::Seen(format!(\"hazard\"" src/*.rs`
+returns nothing — of the four `hazard:*` entries in `coverage::expected()`
+(`Scald`, `Sticky`, `Shock`, `Font`), **none has a writer anywhere in the
+codebase**. `coverage.rs`'s own `note_milestones` comment records that a
+prior fix already found and patched ten dead deed-writers ("the checklist
+was lying to whoever used it") but the hazard category was evidently missed
+in that pass — it is still exactly as dead now as the deeds were before that
+fix. Worse for `Shock` specifically: `grep -n "HazardKind::Shock"
+src/environments/*.rs` returns **zero matches** — none of the five world
+generators ever places one, so it is unreachable twice over (no writer, and
+nothing to trigger it even if there were one). **Maximum achievable coverage
+given the current source is 59/63 = 93.65%, not 100%** — worth fixing
+(wire a `Seen::of("hazard", ...)` into whatever system already applies
+`HazardKind` dot-damage/slow to the player, `combat.rs` almost certainly) so
+the next round's checklist stops lying about four items nobody can ever
+check off.
+
+**Operational notes for whoever plays multiple worlds next.**
+- **`Coverage` is a Bevy `Resource`, held in the running process's memory —
+  killing and relaunching the binary resets it to 0%, even though the world
+  select carousel and everything else look identical.** This cost real time
+  this session: an early instance had to be killed (see below) and its
+  Forest coverage was gone the moment the replacement launched. The fix:
+  **never quit between worlds** — from `GameOver`, press `ESC` to return
+  straight to `Menu` (no restart); from mid-run, `ESC` (pause) then
+  `BACKSPACE` ("abandon the run") does the same. Both keep the same process
+  alive and its `Coverage` resource intact, confirmed directly (persisted
+  8%→100%+ across four world switches with no drop).
+- **Two of this session's early `holdfast` processes looked hung** — `see`
+  returned state stuck ~50s behind wall-clock, no new `log.txt` lines,
+  `queued` never draining. Killed both by PID (my own, never by binary
+  name) and relaunched. Given `sapper`'s report the same round of processes
+  being silently OS-killed under <2GB free memory, and this machine running
+  4-5 concurrent `holdfast`/`cargo` processes throughout, the likelier
+  explanation is severe frame-time starvation under contention rather than a
+  confirmed game hang — a `quit` issued to the *second* stuck instance did
+  eventually log `quit requested` and exit cleanly once system load dropped,
+  which a genuine deadlock would not do.
+- **`tools/pilot.py`'s `digest()` crashed mid-session** with
+  `KeyError: 'regen_inside'` on every `see`/`do` call once a light-pool entry
+  was rendered — a concurrent, uncommitted edit to `src/pilot.rs`/
+  `tools/pilot.py` (visible in `git diff`, presumably in response to
+  `sapper`'s finding this same round that light-pool regen is undocumented)
+  added new fields to the digest formatter that the already-running binary's
+  JSON doesn't emit yet. `raw` and `todo` don't call `digest()` and kept
+  working throughout. Worked around by writing a tiny local stand-in
+  (`dostub.py`, appends to `commands` and polls `queued==0` without ever
+  calling the crashing formatter) rather than editing the shared
+  `tools/pilot.py` out from under whoever was mid-edit on it.
+- Recruiting allies (`R`) picks a **random** kind from what's missing/
+  available, not a chosen one — four `tap R` this session produced two
+  Sprites (Scout) before a Slinger (Gunner) ever showed, so getting a
+  specific ally kind for coverage may take several tries.
+- Level-up chains under heavy passive kill throughput (a maxed 6-weapon
+  loadout plus 3 allies plus a turret, by level 20+) can back up several
+  levels deep; resolving them is instant per card (no time cost) once you
+  stop trying to interleave movement commands with them — batch `tap 1`
+  five times in a row if the queue is backed up, then move.
+
+**Takeaway: the theming assignment is half-done.** Names and colours are
+correctly, completely reskinned per world with identical mechanics
+underneath (by design, and it holds up under inspection). The environment
+layer — hazards, pools, terrain shape — is not skin at all; it has real,
+sourced numeric differences that change how a world has to be played (Grid's
+lethal rhythm-hazard vs. Forest's harmless-but-omnipresent mud vs. Arcane's
+inverted healing-hazard). But two visible text surfaces (the opening hint,
+every weapon's card blurb) leak Desk-specific flavour into every other world,
+and the coverage checklist itself cannot be completed as shipped because a
+whole category (hazards) has no tracking hook at all. Next: fix the two
+blurb/hint leaks and the hazard `Seen` gap first (cheap, mechanical, and they
+were found by grep, not luck); then actually stand in an Arcane ley line
+mid-fight and confirm live that the "heals the enemy too" claim changes how a
+fight there should be played, which nobody has done yet.

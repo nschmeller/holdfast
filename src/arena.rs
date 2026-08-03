@@ -248,7 +248,13 @@ pub enum HazardKind {
     Scald,
     /// Slows whatever stands in it.
     Sticky,
-    /// Brief stun pulse.
+    /// Locks whatever stands in it in place, and hurts it.
+    ///
+    /// Stuns *enemies* only. A hazard that froze the player would be a death
+    /// fluffed on a dodge, and this game's rule is that losing ground is a
+    /// decision made minutes ago. So a conduit is a tool: monsters caught in one
+    /// stop moving, which is what makes the Grid's rhythmic lines worth fighting
+    /// beside rather than merely worth avoiding.
     Shock,
     /// Heals whatever stands in it - which includes the enemy. Carried by a
     /// negative `dps`, so the damage pipeline needs no special case beyond a

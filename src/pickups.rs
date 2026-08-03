@@ -379,6 +379,7 @@ fn collect(
     mut equipped: ResMut<Equipped>,
     stats: Res<PlayerStats>,
     threat: Res<Threat>,
+    world: Res<crate::environments::EnvKind>,
     mut rng: ResMut<Rng>,
     mut player: Query<(&Body, &mut Health), With<Player>>,
     pickups: Query<(Entity, &Pickup, &Body), Without<Player>>,
@@ -428,7 +429,7 @@ fn collect(
                 sfx.write(SfxEvent::new(crate::audio::Sfx::Heal));
             }
             PickupKind::Gear => {
-                let piece = roll_gear(&mut rng, stats.luck, threat.rarity_bonus());
+                let piece = roll_gear(&mut rng, stats.luck, threat.rarity_bonus(), *world);
                 let better = equipped
                     .get(piece.slot)
                     .is_none_or(|cur| piece.score() >= cur.score());
