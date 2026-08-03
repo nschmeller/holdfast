@@ -79,6 +79,12 @@ const SNAPSHOT_PERIOD: f32 = 0.2;
 /// memory without bound.
 const MAX_QUEUED: usize = 4096;
 
+/// How long a `tap` holds its keys down.
+///
+/// Long enough to survive a state transition, short enough that two taps in a
+/// row are still two distinct presses.
+const TAP_HOLD: f32 = 0.1;
+
 /// The gap a kiting player tries to keep. Inside most weapon ranges, outside
 /// contact range - which is the band where the game is actually winnable.
 const KITE_RANGE: f32 = 9.0;
@@ -818,10 +824,25 @@ fn run_queue(
                 }
             }
             Cmd::Tap(list) => {
-                for key in list {
-                    keys.press(key);
-                    pilot.tapped.push(key);
+                // Held for a few frames, not one.
+                //
+                // A single-frame press races Bevy's state transitions: if the
+                // tap lands on the frame the game enters `LevelUp`, the system
+                // that reads card keys has not started running yet and the
+                // press is gone. That is why card selection looked
+                // intermittent to testers - "works sometimes" - while never
+                // failing when tried by hand a second after the transition.
+                // `just_pressed` still fires exactly once, so holding longer
+                // cannot double-pick.
+                for key in &list {
+                    keys.press(*key);
+                    pilot.held.insert(*key);
                 }
+                pilot.active = Some(Active {
+                    remaining: TAP_HOLD,
+                    release: list,
+                    steer: None,
+                });
             }
             Cmd::Hold(list, secs) => {
                 for key in &list {

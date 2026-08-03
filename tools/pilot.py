@@ -84,6 +84,15 @@ def digest(s):
     head = f"[{s['state']}] {s['world']}  t={s['run']['elapsed']:.0f}s  kills={s['run']['kills']}"
     out.append(head)
 
+    # At the menu there is no run, and the resources still hold the last one's
+    # values. Reporting them reads as ghost state, which is how it got filed as
+    # a bug. Say what is actually true instead.
+    if s["state"] == "Menu":
+        out.append(
+            "No run in progress. The numbers below belong to the previous run "
+            "until you deploy."
+        )
+
     p = s["player"]
     if p.get("hp") is not None:
         hp = f"{p['hp']:.0f}/{p['max_hp']:.0f}"
