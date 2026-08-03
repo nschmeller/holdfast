@@ -118,7 +118,7 @@ fn toggle_plan_mode(
         hints.push_once(
             "plan-keys",
             "PLANNING",
-            "Arrows aim the cursor, WASD still walks. 1-5 pick, ENTER builds, SPACE resumes.",
+            "Arrows aim the cursor. WASD still walks - at plan pace, like everything else. 1-5 pick, ENTER builds, SPACE resumes.",
             HintTone::Tip,
         );
     }

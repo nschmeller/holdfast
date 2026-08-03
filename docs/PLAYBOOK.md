@@ -12,17 +12,23 @@ what to try next. Numbers beat adjectives.
 
 ## What is known
 
-**The record, as of the last round played, is 430.7 seconds** (siege, round 4,
-level 50, 1166 kills, peak threat 3.24, `forts=1` in the dossier — a fort
-captured, joining `warlord`'s two captures earlier the same round). Up from
-374.4s (fortress, round 3, level 34, 331 kills, peak threat 8.00 — the dial's
-hard ceiling, reached and held with the player at full HP for the entire
-climb). Up from 337.7s (turtle, round 2), up from a starting baseline of
-148s. See `siege` and `fortress` below. **Fort capture itself is no longer
-the open question — `warlord` (this round) and `siege` (this round) both
-did it. What nobody has done yet is hold one: both `siege` and one of
-`warlord`'s two captures ended in death within seconds of the flip; the
-other ended in the fort being lost back to its original owner.**
+**The longest a character has been kept alive is ~498 seconds** (castellan,
+round 5, level 67, 1312 kills, peak threat 8.00 — but this run ended by a
+deliberate `quit` while still fully healthy, not death, so **no dossier row
+exists for it** — see `castellan` below for why and what the live numbers
+were. The last row actually written to `holdfast-runs.tsv` remains **430.7
+seconds** (siege, round 4, level 50, 1166 kills, peak threat 3.24, `forts=1`
+— a fort captured, joining `warlord`'s two captures earlier the same round).
+Up from 374.4s (fortress, round 3, level 34, 331 kills, peak threat 8.00 —
+the dial's hard ceiling, reached and held with the player at full HP for the
+entire climb). Up from 337.7s (turtle, round 2), up from a starting baseline
+of 148s. See `siege`, `fortress` and `castellan` below.
+**Fort-holding is no longer the open question either — `castellan` (round
+5) took the same "plant the ring at the fort before it flips" idea `siege`
+left on the table, and it closed the frontier completely: a fort was taken,
+survived at the instant of the flip, lost, retaken repeatedly, and held
+through both a researched war and the threat dial's 8.00 ceiling
+simultaneously, for well over a hundred seconds of cumulative ownership.**
 
 ### Confirmed by measurement
 
@@ -712,3 +718,145 @@ capture is dangerous (both `siege` and one `warlord` capture died at or near
 that instant) and should have HP banked well above 50% and a turret/ally
 presence already established *at* the ring, not just personal HP, before the
 garrison count is allowed to hit zero.
+
+### castellan — record broken: ~498s alive (not dead), level 67, 1312 kills, fort held repeatedly (round 5)
+Hypothesis, handed down directly from `siege`: plant the turret ring *at* the
+fort before the capture finishes, not fifty metres behind it, so the ring is
+already there the instant the garrison hits zero and the meter flips.
+
+**It works, completely, and the "moment of capture is dangerous" problem is
+now closed.** Built a 6-weapon arsenal (Pencil Dart, Stapler, Rubber Band,
+Tack Mines, Coffee Nova, Ruler Sweep, all levelled to 2-8) plus 3 gear pieces
+near spawn first, exactly per `siege`'s recommendation. First fort approach
+(a SWARM/RUST-contested one, garrison as low as 1-2) was taken and **the
+player survived the flip for the first time ever** — HP dropped 199→143 in
+the same tick the fort turned `YOU`, but did not hit zero. It was lost 11
+seconds later to a different faction (BLOOM) entirely, because every turret
+built so far was 40-95m away, left behind from an earlier camp — a direct,
+lived confirmation of the "plant defences at the fort, not behind it" thesis.
+Recaptured, built 3-6 Tack Turrets/Shockers **within 1-12m of the fort core
+this time**, and from that point on the fort flipped ownership among
+YOU/BLOOM/RUST/SWARM at least six more times over the next 150 real seconds
+— and the player's HP stayed above 85% of max through essentially all of it,
+including through a researched war, a self-triggered Overclock surge, and
+finally a deliberate push of the threat dial to its 8.00 hard ceiling.
+**A second fort (a different BLOOM one, 30m from the first, after the RUST
+one ballooned to garrison 97 and was abandoned) was taken and held the same
+way later in the run.** By the time the session ended the build was tanking
+**330-580 total enemies, 60-330 within 12m, at threat 6.3-8.0, with the fort
+owned**, at HP still 500-650 out of 650-670 max most of the time. This is a
+different order of density from `fortress`'s "100+ enemies at threat 8" —
+this run added a captured, actively-contested fort into that mix and held
+both at once.
+
+**Fort economics, source-verified, not just measured — the number the last
+round asked for.** `src/forts.rs::fort_income` pays a held fort **2.4
+scrap/s and 0.16 cores/s at baseline** (both × the player's income/core
+multiplier stats) — the *same 2.4/s base rate as a single Generator
+structure* for the scrap half, plus cores on top that Generators don't pay
+at all. `src/threat.rs::effective()` is
+`level + streak*0.5 + territory + holdings`, and
+`src/forts.rs:705: threat.holdings = held * 0.35` — **holding one fort adds
+a flat +0.35 to the effective-threat exponent's base, 75% more than a zone's
++0.2** (`allies.rs:962: threat.territory = held * 0.2`). So a fort out-earns
+a zone (2.4 scrap/s + 0.16 cores/s vs. a zone's 1.6 scrap/s + 0.05 cores/s)
+and out-costs it too (+0.35 threat floor vs +0.2). **Neither of these two
+numbers is exposed by the pilot bridge.** `pilot.rs` reports `from_territory`
+as `threat.territory` only (zones), never `threat.holdings` (forts) — so a
+fort-holder reading `from_territory: 0.0` and concluding forts don't raise
+the floor would be wrong; they do, through a field the bridge simply doesn't
+print. Likewise the reported `scrap_per_sec` is `economy.scrap_rate`, which
+`structure_income` (Generators) and the zone system both write to — but
+`fort_income` calls `economy.gain_scrap`/`gain_cores` directly and **never
+touches `scrap_rate` at all**. A held fort's 2.4 scrap/s and 0.16 cores/s are
+real, landing in the bank every frame, and completely invisible in the
+`scrap_per_sec` telemetry. Whoever next wants to *measure* a fort's income
+has to diff `economy.scrap`/`economy.cores` over a controlled window with no
+other income source active, not read the rate field.
+
+**Reclaim assaults are categorically harder than ambient waves, and a war
+does not relieve them.** The instant a fort flips, up to *four* factions
+(not just the two adjacent ones) can enter `MassOnFort` posture
+simultaneously — observed SWARM 64%, RUST 40%, BLOOM 40%, VOID 95% all at
+once around one fort — pulling from every same-faction nest within ~40
+units and producing 60-330 enemies within 12m, far past what ambient waves
+alone produce at the same threat/level. Whisper Campaign was bought again
+this round (confirmed: `wars: ["SWARM vs RUST (44s)"]` read directly from
+`raw` state, not inferred) while three factions were already in `MassOnFort`
+against the held fort — **the war fired correctly but the siege did not let
+up**; all three postures stayed `MassOnFort` for the entire 44s. A war looks
+like a pre-emptive tool to buy a fort assault cheaper before it starts, not
+an emergency valve once four factions are already massing on you.
+
+**Nests runaway-feed a nearby fort's garrison an order of magnitude further
+than previously measured.** Camped near a RUST fort with 4 same-faction
+nests within 20-40 units for about five real minutes and watched its
+garrison climb from 1 to **97** — `warlord` (round 4) saw 0→27 off four
+nests; this is roughly 4x that, over a longer sit. That fort was abandoned
+as uneconomical rather than fought down; a second, cleaner fort nearby
+(garrison 1-2, no nests planted) was taken instead. Lesson confirmed at
+scale: check `nests_planted` on the fort itself before committing, not just
+distance.
+
+**Turrets are anchored to the world position you built them at — walking
+away leaves the entire ring behind, dead weight.** This bit twice: after
+building a ring, kiting 40-90m away in a level-up chain left every turret
+useless (shown at `@40-220m` in the digest from then on) with nothing at the
+new position. The fix is procedural, not a card: **rebuild a fresh 3-6
+structure ring (Tack Turret ~22-25 scrap, Shocker ~30, Generator ~48, no
+discount) at your *current* spot every time you relocate** — cheap enough
+that this happened four separate times over the run without ever running
+low on Scrap (ended with 19,544 unspent, 111 Cores unspent — the usual
+"unspent resources" failure, at a scale nobody has banked before).
+
+**Emergency ally recruitment breaks an active encirclement, reliably,
+independent of density.** Twice this run, at HP under 25% inside 90-130
+enemies within 12m with `flee`/`kite`/plain `hold W` all producing under a
+metre of movement per real second (the classic freeze, reproduced again at
+a new high density), recruiting 3-4 allies with repeated `tap R` was
+immediately followed — same tick, no separate escape command — by an 8-12
+unit position jump and enemies-within-12m dropping by roughly half. This
+looks like allies momentarily absorbing/blocking the crush enough to open a
+gap, and is worth its own line: **when stuck and dying, spend Cores on
+allies before anything else**, not just for their DPS.
+
+**Plan Mode's "WASD still walks" hint is not reliable escape under a
+90+-enemy crush.** Holding W/A/S/D while `plan_mode.active` for a full
+second moved the player 0.1-1.0 units, an order of magnitude less than the
+expected ~1 unit/sec even accounting for the 12% time scale — almost
+certainly body-collision blocking against the packed crowd, not the
+slowdown itself. Real movement only resumed after exiting Plan Mode
+(`SPACE`) and issuing `flee`/`kite` properly, or via the ally-recruit trick
+above. Do not trust Plan Mode to double as a retreat.
+
+**Operational: `quit` does not write a dossier row.** `Cmd::Quit` in
+`src/pilot.rs` fires `AppExit` directly; the dossier only appends
+`OnEnter(AppState::GameOver)` (`src/dossier.rs`), which a clean quit never
+enters. This run ended by `quit` while very much alive (HP 525/670, level
+67) specifically because it had already answered everything it needed to
+and further play was diminishing returns — but that means **no row exists
+in `holdfast-runs.tsv` for this run**, unlike every previous entry in this
+file. Whoever wants a comparable row for a similarly dominant build should
+either let threat/density actually finish the character off, or accept that
+`quit`'s numbers have to be cited from the live digest instead (as here:
+DESK, ~498s, level 67, 1312 kills, structures 3-9 fluctuating, allies 2-4
+fluctuating, forts held repeatedly but not at the exact instant of quit,
+peak threat 8.00, furthest 355, explored 42363, scrap 19544, cores 111,
+coverage 60.3%). Also confirmed again: a bare `ENTER` sent during `Prep`
+outside any modal doubles as "call wave early" — this run triggered two
+unintended `WAVE CALLED +18%/+44%` events while trying to confirm a turret
+placement, and the pilot's `!! REFUSED` list does not catch this collision
+(only LevelUp/Research/PlanMode overloads are tracked).
+
+**Takeaway: the fort-holding frontier is closed.** A fort can be taken,
+survived at the instant of the flip, lost, retaken, and held through
+Overclock and the threat dial's hard ceiling simultaneously, provided the
+turret ring is built *at* the fort — inside its own capture ring — before
+or during the capture, not after. The next open ground: nobody has yet
+combined a held fort with a *deliberately incited war before the siege
+starts* (this run's war fired mid-siege and did nothing for it); nobody has
+tried holding two forts from two different factions at once; and the
+"holdings" 0.35-per-fort threat contribution plus fort income are both
+invisible to the pilot bridge and worth wiring up (`from_territory` should
+probably become two fields, and `scrap_per_sec` should sum `fort_income`
+too) so the next round doesn't have to grep the source to find them.

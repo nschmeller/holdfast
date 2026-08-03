@@ -616,10 +616,11 @@ fn update_economy(
     )>,
 ) {
     for mut t in &mut set.p0() {
-        t.0 = if economy.scrap_rate > 0.0 {
+        t.0 = if economy.income_per_second() > 0.0 {
             format!(
                 "SCRAP {}  (+{:.1}/s)",
-                economy.scrap as u32, economy.scrap_rate
+                economy.scrap as u32,
+                economy.income_per_second()
             )
         } else {
             format!("SCRAP {}", economy.scrap as u32)

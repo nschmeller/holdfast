@@ -18,9 +18,9 @@
 
 use std::fmt::Write as _;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-use crate::AppState;
 use crate::allies::{Economy, Zone, ZoneOwner};
 use crate::coverage::Coverage;
 use crate::environments::EnvKind;
@@ -29,6 +29,7 @@ use crate::fog::FogMap;
 use crate::forts::Fort;
 use crate::progress::Progression;
 use crate::threat::{RunClock, Threat};
+use crate::{AppState, RunSetup};
 
 /// What the player did, and how it went.
 #[derive(Debug, Clone, Default)]
@@ -98,58 +99,121 @@ impl Row {
 #[derive(Resource, Debug, Default)]
 pub struct DeclaredStrategy(pub String);
 
+/// Whether this run has already been written down.
+///
+/// A run can end twice: by death, and by the process being asked to stop. Both
+/// should produce a row and neither should produce two.
+#[derive(Resource, Debug, Default)]
+struct Recorded(bool);
+
 #[derive(Debug)]
 pub struct DossierPlugin;
 
 impl Plugin for DossierPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DeclaredStrategy>()
-            .add_systems(OnEnter(AppState::GameOver), record_run);
+            .init_resource::<Recorded>()
+            .add_systems(
+                OnExit(AppState::Menu),
+                forget_last_run.in_set(RunSetup::Reset),
+            )
+            .add_systems(OnEnter(AppState::GameOver), record_death)
+            .add_systems(Update, record_departure);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn record_run(
-    strategy: Res<DeclaredStrategy>,
-    env: Res<EnvKind>,
-    clock: Res<RunClock>,
-    threat: Res<Threat>,
-    progression: Res<Progression>,
-    economy: Res<Economy>,
-    fog: Res<FogMap>,
-    coverage: Res<Coverage>,
-    zones: Query<&Zone>,
-    forts: Query<&crate::factions::Allegiance, With<Fort>>,
-    turrets: Query<(), With<crate::allies::Turret>>,
-    allies: Query<(), With<crate::allies::Ally>>,
-    diplomacy: Res<crate::factions::Diplomacy>,
+fn forget_last_run(mut recorded: ResMut<Recorded>) {
+    recorded.0 = false;
+}
+
+fn record_death(mut recorded: ResMut<Recorded>, run: RunSummary) {
+    if recorded.0 {
+        return;
+    }
+    recorded.0 = true;
+    append(&run.row());
+}
+
+/// A run ended on purpose still counts.
+///
+/// The dossier only appended on `GameOver`, so a tester that answered its
+/// question and quit while healthy - which is the *best* kind of run, and what
+/// the strongest run so far did - left no row at all. Its numbers had to be
+/// quoted out of a live digest by hand.
+fn record_departure(
+    mut leaving: MessageReader<AppExit>,
+    state: Res<State<AppState>>,
+    mut recorded: ResMut<Recorded>,
+    run: RunSummary,
 ) {
-    let row = Row {
-        world: env.short_name().to_string(),
-        seconds: clock.elapsed,
-        level: progression.level,
-        kills: clock.kills,
-        structures: u32::try_from(turrets.iter().count()).unwrap_or(u32::MAX),
-        allies: u32::try_from(allies.iter().count()).unwrap_or(u32::MAX),
-        zones_held: u32::try_from(
-            zones
-                .iter()
-                .filter(|z| z.owner == ZoneOwner::Player)
-                .count(),
-        )
-        .unwrap_or(u32::MAX),
-        forts_held: u32::try_from(forts.iter().filter(|a| a.0 == Faction::Player).count())
+    if leaving.read().count() == 0 || recorded.0 || *state.get() == AppState::Menu {
+        return;
+    }
+    recorded.0 = true;
+    append(&run.row());
+}
+
+/// Everything a row is made of, in one parameter so both endings can build one.
+#[derive(SystemParam)]
+struct RunSummary<'w, 's> {
+    strategy: Res<'w, DeclaredStrategy>,
+    env: Res<'w, EnvKind>,
+    clock: Res<'w, RunClock>,
+    threat: Res<'w, Threat>,
+    progression: Res<'w, Progression>,
+    economy: Res<'w, Economy>,
+    fog: Res<'w, FogMap>,
+    coverage: Res<'w, Coverage>,
+    zones: Query<'w, 's, &'static Zone>,
+    forts: Query<'w, 's, &'static crate::factions::Allegiance, With<Fort>>,
+    turrets: Query<'w, 's, (), With<crate::allies::Turret>>,
+    allies: Query<'w, 's, (), With<crate::allies::Ally>>,
+    diplomacy: Res<'w, crate::factions::Diplomacy>,
+}
+
+impl RunSummary<'_, '_> {
+    fn row(&self) -> Row {
+        let Self {
+            strategy,
+            env,
+            clock,
+            threat,
+            progression,
+            economy,
+            fog,
+            coverage,
+            zones,
+            forts,
+            turrets,
+            allies,
+            diplomacy,
+        } = self;
+        Row {
+            world: env.short_name().to_string(),
+            seconds: clock.elapsed,
+            level: progression.level,
+            kills: clock.kills,
+            structures: u32::try_from(turrets.iter().count()).unwrap_or(u32::MAX),
+            allies: u32::try_from(allies.iter().count()).unwrap_or(u32::MAX),
+            zones_held: u32::try_from(
+                zones
+                    .iter()
+                    .filter(|z| z.owner == ZoneOwner::Player)
+                    .count(),
+            )
             .unwrap_or(u32::MAX),
-        wars: u32::try_from(diplomacy.active_wars().len()).unwrap_or(u32::MAX),
-        peak_threat: threat.effective(),
-        furthest: clock.furthest,
-        explored: fog.explored_area(),
-        scrap_unspent: economy.scrap,
-        cores_unspent: economy.cores,
-        coverage: coverage.fraction(),
-        strategy: strategy.0.clone(),
-    };
-    append(&row);
+            forts_held: u32::try_from(forts.iter().filter(|a| a.0 == Faction::Player).count())
+                .unwrap_or(u32::MAX),
+            wars: u32::try_from(diplomacy.active_wars().len()).unwrap_or(u32::MAX),
+            peak_threat: threat.effective(),
+            furthest: clock.furthest,
+            explored: fog.explored_area(),
+            scrap_unspent: economy.scrap,
+            cores_unspent: economy.cores,
+            coverage: coverage.fraction(),
+            strategy: strategy.0.clone(),
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

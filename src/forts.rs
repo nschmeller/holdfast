@@ -116,6 +116,20 @@ const WARDEN_INTERVAL: f32 = 9.0;
 /// The pressure is supposed to come from the wardens.
 const CONTEST_URGENCY: f32 = 2.5;
 
+/// Scrap a second from one held fort. The same base a Generator pays.
+const FORT_SCRAP: f32 = 2.4;
+
+/// Cores a second from one held fort. Nothing else in the game pays these
+/// passively, which is most of why a fort is worth holding: the research tree
+/// is priced in Cores.
+const FORT_CORES: f32 = 0.16;
+
+/// What one held fort adds to the threat floor.
+///
+/// Almost twice a zone's 0.2, because a fort is worth more than a zone and every
+/// source of strength in this game is also a source of pressure.
+const FORT_THREAT: f32 = 0.35;
+
 /// How much more a faction wants a fort the player is holding than one a rival
 /// is holding.
 ///
@@ -702,12 +716,14 @@ fn fort_income(
 ) {
     let dt = time.delta_secs();
     let held = forts.iter().filter(|a| a.0 == Faction::Player).count() as f32;
-    threat.holdings = held * 0.35;
+    threat.holdings = held * FORT_THREAT;
+    let scrap = held * FORT_SCRAP * stats.income_mult;
+    economy.fort_rate = scrap;
     if held <= 0.0 {
         return;
     }
-    economy.gain_cores(held * 0.16 * dt * stats.core_mult);
-    economy.gain_scrap(held * 2.4 * dt * stats.income_mult);
+    economy.gain_cores(held * FORT_CORES * dt * stats.core_mult);
+    economy.gain_scrap(scrap * dt);
 }
 
 /// Emplaced guns. The reason presence is not free.

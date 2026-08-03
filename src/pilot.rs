@@ -1459,6 +1459,10 @@ fn write_snapshot(
     json.num("effective", pacing.threat.effective());
     json.num("reward_mult", pacing.threat.reward_mult());
     json.num("from_territory", pacing.threat.territory);
+    // Forts contribute more to the floor than zones do - 0.35 each against 0.2
+    // - and this was invisible, so a fort-holder could not tell what its
+    // holdings were costing it.
+    json.num("from_forts", pacing.threat.holdings);
     json.flag("surging", pacing.threat.surging());
     json.flag("surge_ready", pacing.threat.can_surge());
     json.end();
@@ -1475,7 +1479,8 @@ fn write_snapshot(
     json.obj("economy");
     json.num("scrap", sheet.economy.scrap);
     json.num("cores", sheet.economy.cores);
-    json.num("scrap_per_sec", sheet.economy.scrap_rate);
+    json.num("scrap_per_sec", sheet.economy.income_per_second());
+    json.num("scrap_per_sec_from_forts", sheet.economy.fort_rate);
     json.end();
 
     write_forces(&mut json, &sheet, &field, hero_pos, env);

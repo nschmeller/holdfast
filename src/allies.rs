@@ -27,7 +27,15 @@ pub struct Economy {
     pub scrap: f32,
     pub cores: f32,
     /// Accumulated for the HUD's per-second readout.
+    /// Scrap a second from zones and structures.
     pub scrap_rate: f32,
+    /// Scrap a second from held forts.
+    ///
+    /// Its own field rather than added to `scrap_rate`, because `zone_income`
+    /// *assigns* that one and lives in another plugin's system chain - so
+    /// whichever ran second would silently win. Read them through
+    /// `income_per_second`.
+    pub fort_rate: f32,
     pub lifetime_scrap: f32,
     pub lifetime_cores: f32,
 }
@@ -60,6 +68,12 @@ impl Economy {
         } else {
             false
         }
+    }
+
+    /// Everything coming in, per second.
+    #[must_use]
+    pub fn income_per_second(&self) -> f32 {
+        self.scrap_rate + self.fort_rate
     }
 
     pub fn gain_scrap(&mut self, amount: f32) {
@@ -1058,6 +1072,24 @@ fn zone_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn income_from_two_plugins_does_not_cancel_out() {
+        // `zone_income` assigns its figure and `fort_income` lives in another
+        // plugin's chain, so sharing one field meant whichever ran second won
+        // silently. A fort-holder read a rate with its forts left out.
+        let economy = Economy {
+            scrap_rate: 4.8,
+            fort_rate: 2.4,
+            ..Economy::default()
+        };
+        assert!((economy.income_per_second() - 7.2).abs() < 1e-4);
+    }
+
+    #[test]
+    fn no_holdings_means_no_income() {
+        assert!((Economy::default().income_per_second() - 0.0).abs() < 1e-6);
+    }
 
     /// The net presence on a zone, as `zone_capture` computes it.
     fn zone_net(standing_there: bool, allies: u32, turrets: u32, monsters: u32) -> f32 {
