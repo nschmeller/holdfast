@@ -63,15 +63,35 @@ echo "         and tick 'Mobile friendly' off - this game is keyboard-only."
 
 if [[ "${1:-}" == "--serve" ]]; then
   echo
-  echo "==> http://localhost:8080"
   # Cross-origin isolation headers, in case a future build wants threads.
+  #
+  # Picks the first free port rather than dying on a busy one: a stale server
+  # left over from an earlier check made `--serve` fail with a raw Python
+  # traceback, which is a confusing way to be told "something else is on 8080".
   cd "$OUT" && python3 -c "
-import http.server, socketserver
+import http.server, socketserver, sys
+
 class H(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
         self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
         super().end_headers()
-socketserver.TCPServer(('', 8080), H).serve_forever()
+
+    def log_message(self, *a):
+        pass
+
+for port in range(8080, 8091):
+    try:
+        server = socketserver.TCPServer(('', port), H)
+    except OSError:
+        print(f'port {port} is busy, trying the next one', file=sys.stderr)
+        continue
+    print(f'==> serving on http://localhost:{port}  (ctrl-c to stop)')
+    with server:
+        server.serve_forever()
+    break
+else:
+    print('every port from 8080 to 8090 is busy; free one and retry', file=sys.stderr)
+    raise SystemExit(1)
 "
 fi
