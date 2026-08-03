@@ -25,6 +25,12 @@ that the wasm build needs no JS shims and there are no asset files to load.
   This has caused a build failure to be reported as a success once already.
 - **Iterate in debug.** The user watches the window while work happens and has
   said stutters are fine. Release builds are for shipping only.
+- **The backend sometimes reports no monitors at all.** Seen for a whole
+  session on macOS: `Query<&Monitor>` stays empty, so nothing can be tiled and
+  the window silently never moves - which looks exactly like broken placement
+  arithmetic and cost an hour of chasing the wrong thing. Pass
+  `HOLDFAST_SCREEN=-520,-1440,2560,1440` (the DELL's rectangle) and placement
+  works regardless. Do this by default when launching for the user.
 - **Windows must open on the external monitor.** In the entity-sorted monitor
   list, index **0** is the 2560x1440 DELL at `[-520, -1440]`; index 1 is the
   laptop's own 3024x1964 panel, which is also the *primary*. So pass
@@ -53,8 +59,9 @@ and appends events to `<dir>/log.txt`. Drive it with `tools/pilot.py`:
 
 Launch two side by side on the external monitor:
 
-    HOLDFAST_PILOT=$PT/a HOLDFAST_MONITOR=0 HOLDFAST_TILE=0:2 ./target/debug/holdfast &
-    HOLDFAST_PILOT=$PT/b HOLDFAST_MONITOR=0 HOLDFAST_TILE=1:2 ./target/debug/holdfast &
+    S=-520,-1440,2560,1440
+    HOLDFAST_SCREEN=$S HOLDFAST_PILOT=$PT/a HOLDFAST_TILE=0:2 ./target/debug/holdfast &
+    HOLDFAST_SCREEN=$S HOLDFAST_PILOT=$PT/b HOLDFAST_TILE=1:2 ./target/debug/holdfast &
 
 Screenshots occasionally come back solid black at exactly 56997 bytes. That is
 a capture race, not a rendering bug - retry and the same scene appears.

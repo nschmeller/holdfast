@@ -18,6 +18,7 @@
 //! | `HOLDFAST_MONITOR_NAME=DELL` | Pick the monitor by name instead of by index |
 //! | `HOLDFAST_TILE=0:2` | Take slot 0 of 2 side-by-side slots on that monitor |
 //! | `HOLDFAST_RES=960x600` | Override the window size |
+//! | `HOLDFAST_SCREEN=x,y,w,h` | Where the target screen is, when the backend will not say |
 //!
 //! See `pilot` for the other half of the harness: a live command channel that
 //! lets an outside process play the game rather than merely observe it.
@@ -50,6 +51,13 @@ pub struct DevConfig {
     /// Case-insensitive fragment of the monitor's name, which survives
     /// replugging in a way the index does not.
     pub monitor_name: Option<String>,
+    /// `x,y,w,h` of the screen to tile onto, given explicitly.
+    ///
+    /// The backend does not always report any monitors at all - it has been
+    /// seen to report none for a whole session on macOS - and when it does not,
+    /// there is no way to compute a tile from inside the process. This is the
+    /// escape hatch: say where the screen is and placement works regardless.
+    pub screen: Option<(i32, i32, i32, i32)>,
 }
 
 impl DevConfig {
@@ -93,6 +101,7 @@ impl DevConfig {
             monitor_name: env::var("HOLDFAST_MONITOR_NAME")
                 .ok()
                 .filter(|v| !v.is_empty()),
+            screen: env::var("HOLDFAST_SCREEN").ok().and_then(|v| quad(&v)),
         }
     }
 
@@ -108,11 +117,24 @@ impl DevConfig {
             || self.tile.is_some()
             || self.resolution.is_some()
             || self.monitor_name.is_some()
+            || self.screen.is_some()
     }
 }
 
 fn truthy(key: &str) -> bool {
     env::var(key).is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// Parse `x,y,w,h`.
+fn quad(value: &str) -> Option<(i32, i32, i32, i32)> {
+    let parts: Vec<i32> = value
+        .split(',')
+        .map(|p| p.trim().parse().ok())
+        .collect::<Option<_>>()?;
+    match parts[..] {
+        [x, y, w, h] if w > 0 && h > 0 => Some((x, y, w, h)),
+        _ => None,
+    }
 }
 
 /// Parse `a<sep>b` into a pair of positive integers.
@@ -222,6 +244,8 @@ struct WindowPlaced {
     /// Frames to wait before believing the position read back.
     settle: u8,
     corrections: u8,
+    /// Set once the "no monitors" wait has been reported.
+    warned: bool,
 }
 
 /// Lay the window into a horizontal slice of the chosen monitor.
@@ -264,7 +288,20 @@ fn tile_window(
         (None, None, None) => return,
         _ => (0, 1),
     };
-    if monitors.is_empty() {
+    // Where the screen is. Three sources, in order of how much they can be
+    // trusted: told to us, reported by the backend, or nothing at all.
+    let told = config.screen;
+    if told.is_none() && monitors.is_empty() {
+        // Report the wait once. A window that silently never moves is
+        // indistinguishable from a bug in the placement arithmetic, and that
+        // ambiguity has already cost an hour.
+        if !placed.warned {
+            placed.warned = true;
+            warn!(
+                "devtools: the backend reports no monitors, so the window cannot be \
+                 tiled. Pass HOLDFAST_SCREEN=x,y,w,h to place it anyway."
+            );
+        }
         return;
     }
 
@@ -300,18 +337,24 @@ fn tile_window(
                 .is_some_and(|n| n.to_ascii_lowercase().contains(&wanted))
         })
     });
-    let chosen = by_name
+    let reported = by_name
         .or_else(|| all.get(config.monitor.unwrap_or(0)))
-        .or_else(|| all.first());
-    let Some((_, monitor, _)) = chosen else {
+        .or_else(|| all.first())
+        .map(|(_, monitor, _)| {
+            (
+                monitor.physical_position.x,
+                monitor.physical_position.y,
+                i32::try_from(monitor.physical_width).unwrap_or(1920),
+                i32::try_from(monitor.physical_height).unwrap_or(1080),
+            )
+        });
+    let Some((origin_x, origin_y, screen_w, screen_h)) = told.or(reported) else {
         return;
     };
-    let monitor = *monitor;
+    let origin = IVec2::new(origin_x, origin_y);
 
     let of = i32::try_from(of).unwrap_or(1).max(1);
     let slot = i32::try_from(slot).unwrap_or(0).min(of - 1);
-    let screen_w = i32::try_from(monitor.physical_width).unwrap_or(1920);
-    let screen_h = i32::try_from(monitor.physical_height).unwrap_or(1080);
 
     // Lay out n windows with a gap between each and a margin at both ends,
     // then centre the whole row: leftover pixels become symmetric slack rather
@@ -330,7 +373,7 @@ fn tile_window(
     let height = budget.min(width * MAX_ASPECT / 16).max(240);
     let top = (screen_h - height) / 2 + CHROME / 2;
 
-    let want = monitor.physical_position + IVec2::new(left + (width + GAP) * slot, top);
+    let want = origin + IVec2::new(left + (width + GAP) * slot, top);
     for mut window in &mut windows {
         window.resolution = WindowResolution::new(
             u32::try_from(width).unwrap_or(640),
