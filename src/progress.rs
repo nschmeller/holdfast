@@ -834,8 +834,15 @@ pub fn apply_card(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Health multiplier from levels alone.
+#[must_use]
+pub fn constitution(level: u32) -> f32 {
+    1.0 + f32::from(u16::try_from(level.saturating_sub(1)).unwrap_or(u16::MAX)) * 0.04
+}
+
 fn recompute_stats(
     mut events: MessageReader<RecomputeStats>,
+    progression: Res<Progression>,
     mut stats: ResMut<PlayerStats>,
     boosts: Res<AppliedBoosts>,
     equipped: Res<Equipped>,
@@ -870,6 +877,18 @@ fn recompute_stats(
             node.boost.apply(&mut next);
         }
     }
+
+    // Constitution: a little more health for every level taken, on top of
+    // whatever cards and research have added.
+    //
+    // Without it, health is the one stat the difficulty curve does not have to
+    // beat - enemies scale with the clock and with your level, and the pool
+    // they are chewing through only grows if the card offer happens to include
+    // one of two health cards. Playtesting found a level-6 character on 34
+    // health facing eighty-four monsters, which is not a difficulty curve, it
+    // is a wall. This is deliberately smaller than a health card so taking one
+    // still matters.
+    next.max_hp *= constitution(progression.level);
 
     // Refinements touch everything a little.
     let r = 1.0 + f32::from(u16::try_from(boosts.refinements).unwrap_or(u16::MAX)) * 0.04;
@@ -1375,5 +1394,36 @@ mod tests {
         let research = Research::default();
         let ordinary = research.nodes.iter().filter(|n| n.discord <= 0.0).count();
         assert!(ordinary > 10, "only {ordinary} plain nodes");
+    }
+    #[test]
+    fn health_grows_with_level_but_less_than_a_card_would() {
+        // Enemies scale with the clock and with the player's level; if health
+        // only moves when the offer happens to contain one of two cards, the
+        // curve has nothing to beat.
+        assert!(
+            (constitution(1) - 1.0).abs() < 1e-6,
+            "level one is the baseline"
+        );
+        assert!(constitution(10) > constitution(1));
+        assert!(constitution(30) > constitution(10));
+
+        // A MaxHp card is +22 flat on a 120 base, about 18%. Four levels of
+        // constitution should still be worth less than one card.
+        let four_levels = (constitution(5) - 1.0) * 120.0;
+        assert!(
+            four_levels < 22.0,
+            "levels outpace the card at {four_levels}"
+        );
+    }
+
+    #[test]
+    fn constitution_never_shrinks_the_pool_or_overflows() {
+        let mut last = 0.0;
+        for level in 1..=200 {
+            let now = constitution(level);
+            assert!(now >= last && now.is_finite(), "broke at level {level}");
+            last = now;
+        }
+        assert!(constitution(u32::MAX).is_finite());
     }
 }
