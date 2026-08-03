@@ -274,6 +274,13 @@ only ever reachable through the bridge.
 
 **Fixed after round 5:**
 
+- **Light pools and chasms are finally visible.** They were never reported by the
+  bridge, which is why five rounds called them untested. `raw` now lists both,
+  nearest first: pools with `standing_in_it` and `damage_mult_inside`, chasms with
+  `to_edge`, since knockback beside a hole is worth far more than knockback in the
+  open. On the default desk seed there is **a chasm 36 units from the landing site
+  and a light pool at 91.** They were always right there. Nobody has used either.
+
 - **A run that ends by `quit` now writes a dossier row.** Round 5's run - the
   best yet, ended deliberately while healthy - left no row at all, because the
   dossier only appended on `GameOver`. Both endings write exactly one row now.
