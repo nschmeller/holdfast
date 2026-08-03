@@ -248,6 +248,24 @@ zone cost you the first. **Turrets now count at half a body**, on zones exactly
 as on forts. Two turrets hold a quiet zone; twelve monsters still take it. Nobody
 has held more than one zone at a time yet, and now it is possible.
 
+**"Encirclement freezes movement" was never a gameplay bug.** It was reported in
+every round since the first, always the same shape: HP falling to nothing over
+twenty-plus seconds of literally zero positional change while `kite` or `flee`
+was running. The cause: a key put down by `press` is re-pressed every frame and
+the steering code was forbidden from releasing it, so `press w` followed by
+`kite` left W fighting the S the escape wanted. They cancel exactly, and the
+player stands *completely* still for as long as the escape points south.
+
+A steering verb now takes the movement keys back and says so. **The lesson for
+whoever plays next: do not mix `press`/`release` with the steering verbs.** Pick
+one. And when movement appears to stop, read the `!! REFUSED THIS RUN` line
+before concluding anything about crowds.
+
+For the record, so nobody re-litigates it: nothing in the game stuns the player,
+and the two things that slow them floor out at 0.58 (a crowd) and 0.15 (a
+hazard). The worst case is still three quarters of a unit a second. Zero was
+only ever reachable through the bridge.
+
 Other operational fixes:
 
 - **Arrow keys answer to any spelling** — `UP`, `ArrowUp`, `arrow_up` all work.
